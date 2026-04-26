@@ -40,20 +40,15 @@ type ProxyConfig struct {
 	AWSProfiles []string       `toml:"aws_profiles"` // AWS profile names to expose in the container via credential_process
 	GCP         GCPConfig      `toml:"gcp"`
 	SSHAgent    SSHAgentConfig `toml:"ssh_agent"`
-	GitHub      GitHubConfig   `toml:"github"`
 }
 
-// SSHAgentConfig controls SSH agent socket forwarding into containers.
-// The host $SSH_AUTH_SOCK is bind-mounted at /opt/roost/ssh-agent.sock.
+// SSHAgentConfig controls SSH agent forwarding into containers.
+// When Keys is non-empty, an ephemeral ssh-agent is spawned with only those
+// keys loaded. When Keys is empty and Forward is true, the host $SSH_AUTH_SOCK
+// is forwarded directly.
 type SSHAgentConfig struct {
-	Forward bool `toml:"forward"`
-}
-
-// GitHubConfig controls GitHub HTTPS credential injection via the host gh CLI.
-// When Enabled, git operations inside the container authenticate via the host's
-// gh auth token without exposing the token directly to the container environment.
-type GitHubConfig struct {
-	Enabled bool `toml:"enabled"`
+	Forward bool     `toml:"forward"`
+	Keys    []string `toml:"keys"`
 }
 
 // GCPConfig holds per-project gcloud CLI credential settings.

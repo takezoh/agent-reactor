@@ -7,6 +7,7 @@ package config
 //   - Docker.ExtraArgs, ExtraMounts, ForwardEnv (lists): user + project concat
 //   - Docker.Env, Docker.HostMounts (maps): user keys as base, project keys overwrite
 //   - Proxy.Enabled: user wins (proxy is process-wide)
+//   - Proxy.SSHAgent.Keys: project replaces when non-empty; Forward: OR
 func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 	if project == nil {
 		return user
@@ -27,7 +28,6 @@ func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 			AWSProfiles: user.Proxy.AWSProfiles,
 			GCP:         user.Proxy.GCP,
 			SSHAgent:    user.Proxy.SSHAgent,
-			GitHub:      user.Proxy.GitHub,
 		},
 	}
 	if project.Mode != "" {
@@ -44,6 +44,12 @@ func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 	}
 	if project.Proxy.GCP.Account != "" || len(project.Proxy.GCP.Projects) > 0 {
 		out.Proxy.GCP = project.Proxy.GCP
+	}
+	if len(project.Proxy.SSHAgent.Keys) > 0 {
+		out.Proxy.SSHAgent.Keys = project.Proxy.SSHAgent.Keys
+	}
+	if project.Proxy.SSHAgent.Forward {
+		out.Proxy.SSHAgent.Forward = true
 	}
 	return out
 }

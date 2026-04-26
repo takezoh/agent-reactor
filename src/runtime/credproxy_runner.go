@@ -11,7 +11,6 @@ import (
 	credproxy "github.com/takezoh/agent-roost/auth/credproxy"
 	"github.com/takezoh/agent-roost/auth/credproxy/awssso"
 	"github.com/takezoh/agent-roost/auth/credproxy/gcloudcli"
-	"github.com/takezoh/agent-roost/auth/credproxy/github"
 	"github.com/takezoh/agent-roost/auth/credproxy/sshagent"
 	"github.com/takezoh/agent-roost/config"
 	credproxylib "github.com/takezoh/credproxy/pkg/credproxy"
@@ -38,11 +37,10 @@ func StartCredProxy(ctx context.Context, dataDir string) (*CredProxyRunner, erro
 	// depend on proxyAddr (HTTP handlers run on the server side), so we can
 	// collect routes before the server is started and the port is known.
 	awsSpec := awssso.NewSpecBuilder("", token, dataDir+"/aws")
-	ghSpec := github.NewSpecBuilder("", token, dataDir+"/git")
 	gcpSpec := gcloudcli.NewSpecBuilder(ctx, dataDir+"/gcp")
-	sshSpec := sshagent.NewSpecBuilder()
+	sshSpec := sshagent.NewSpecBuilder(ctx, dataDir+"/ssh")
 
-	earlyProviders := []credproxy.Provider{awsSpec, gcpSpec, sshSpec, ghSpec}
+	earlyProviders := []credproxy.Provider{awsSpec, gcpSpec, sshSpec}
 	var routes []credproxylib.Route
 	for _, p := range earlyProviders {
 		routes = append(routes, p.Routes()...)
@@ -64,8 +62,7 @@ func StartCredProxy(ctx context.Context, dataDir string) (*CredProxyRunner, erro
 	providers := []credproxy.Provider{
 		awssso.NewSpecBuilder(proxyAddr, token, dataDir+"/aws"),
 		gcloudcli.NewSpecBuilder(ctx, dataDir+"/gcp"),
-		sshagent.NewSpecBuilder(),
-		github.NewSpecBuilder(proxyAddr, token, dataDir+"/git"),
+		sshSpec,
 	}
 
 	for _, p := range providers {

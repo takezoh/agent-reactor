@@ -90,6 +90,44 @@ func TestSandboxResolver_ParseError_FallsBackToUser(t *testing.T) {
 	}
 }
 
+func TestSandboxResolver_SSHAgentKeysProjectOverride(t *testing.T) {
+	user := SandboxConfig{
+		Proxy: ProxyConfig{
+			SSHAgent: SSHAgentConfig{Keys: []string{"~/.ssh/id_ed25519_default"}},
+		},
+	}
+	dir := t.TempDir()
+	roostDir := filepath.Join(dir, ".roost")
+	os.MkdirAll(roostDir, 0o755)
+	os.WriteFile(filepath.Join(roostDir, "settings.toml"), []byte(`[sandbox.proxy.ssh_agent]
+keys = ["~/.ssh/id_ed25519_project"]
+`), 0o644)
+
+	r := NewSandboxResolver(user)
+	got := r.Resolve(dir)
+	if len(got.Proxy.SSHAgent.Keys) != 1 || got.Proxy.SSHAgent.Keys[0] != "~/.ssh/id_ed25519_project" {
+		t.Errorf("SSHAgent.Keys = %v, want [~/.ssh/id_ed25519_project] (project replaces)", got.Proxy.SSHAgent.Keys)
+	}
+}
+
+func TestSandboxResolver_SSHAgentForwardProjectEnables(t *testing.T) {
+	user := SandboxConfig{
+		Proxy: ProxyConfig{SSHAgent: SSHAgentConfig{Forward: false}},
+	}
+	dir := t.TempDir()
+	roostDir := filepath.Join(dir, ".roost")
+	os.MkdirAll(roostDir, 0o755)
+	os.WriteFile(filepath.Join(roostDir, "settings.toml"), []byte(`[sandbox.proxy.ssh_agent]
+forward = true
+`), 0o644)
+
+	r := NewSandboxResolver(user)
+	got := r.Resolve(dir)
+	if !got.Proxy.SSHAgent.Forward {
+		t.Errorf("SSHAgent.Forward = false, want true (project OR)")
+	}
+}
+
 func TestSandboxResolver_DockerImageOverride(t *testing.T) {
 	user := SandboxConfig{Mode: "docker", Docker: DockerConfig{Image: "node:22"}}
 	dir := t.TempDir()
