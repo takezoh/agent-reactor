@@ -49,28 +49,16 @@ func UserScopeImage() string {
 	return "roost-user:latest"
 }
 
-// ProjectMaterializeDir returns the project-scoped materialize dir for the given hash.
-func ProjectMaterializeDir(hash string) string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".roost", "projects", hash, "devcontainer")
-}
-
-// UserMaterializeDir returns the user-scoped materialize dir.
-func UserMaterializeDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".roost", "user", "devcontainer")
-}
-
 func projectHash(projectPath string) string {
 	h := sha256.Sum256([]byte(projectPath))
 	return fmt.Sprintf("%x", h[:6])
 }
 
-// LoadSpec reads devcontainer.json from materializeDir for projectPath.
-// materializeDir must already exist (created by roost build).
+// LoadSpec reads devcontainer.json from dcDir for projectPath.
+// dcDir is <project>/.devcontainer or ~/.devcontainer.
 // Call Apply to merge roost-specific overlay before using the spec.
-func LoadSpec(projectPath, materializeDir string) (*DevcontainerSpec, error) {
-	dcPath := filepath.Join(materializeDir, "devcontainer.json")
+func LoadSpec(projectPath, dcDir string) (*DevcontainerSpec, error) {
+	dcPath := filepath.Join(dcDir, "devcontainer.json")
 	doc, err := readDC(dcPath)
 	if err != nil {
 		return nil, fmt.Errorf("devcontainer spec: %w", err)

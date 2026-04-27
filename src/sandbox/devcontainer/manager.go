@@ -93,7 +93,7 @@ func (m *Manager) ensureContainer(ctx context.Context, projectPath string) error
 
 	t = time.Now()
 	resolveCtx, resolveCancel := context.WithTimeout(ctx, 10*time.Second)
-	image, materializeDir, err := ResolveImage(resolveCtx, projectPath)
+	image, dcDir, err := ResolveImage(resolveCtx, projectPath)
 	resolveCancel()
 	slog.Info("devcontainer: stage", "name", "resolve_image", "elapsed", time.Since(t), "project", projectPath)
 	if err != nil {
@@ -101,7 +101,7 @@ func (m *Manager) ensureContainer(ctx context.Context, projectPath string) error
 	}
 
 	t = time.Now()
-	spec, err := m.loadSpec(projectPath, materializeDir)
+	spec, err := m.loadSpec(projectPath, dcDir)
 	slog.Info("devcontainer: stage", "name", "load_spec", "elapsed", time.Since(t), "project", projectPath)
 	if err != nil {
 		return err
@@ -113,14 +113,14 @@ func (m *Manager) ensureContainer(ctx context.Context, projectPath string) error
 	return m.createContainer(ctx, projectPath, image, spec)
 }
 
-func (m *Manager) loadSpec(projectPath, materializeDir string) (*DevcontainerSpec, error) {
-	spec, err := LoadSpec(projectPath, materializeDir)
+func (m *Manager) loadSpec(projectPath, dcDir string) (*DevcontainerSpec, error) {
+	spec, err := LoadSpec(projectPath, dcDir)
 	if err != nil {
 		return nil, fmt.Errorf("devcontainer: load spec: %w", err)
 	}
 
 	if m.overlayFn != nil {
-		overlay, err := m.overlayFn(projectPath, materializeDir)
+		overlay, err := m.overlayFn(projectPath, dcDir)
 		if err != nil {
 			slog.Warn("devcontainer: overlay failed, continuing without overlay", "project", projectPath, "err", err)
 		} else {

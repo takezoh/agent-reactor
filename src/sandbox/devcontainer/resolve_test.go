@@ -36,27 +36,3 @@ func TestUserScopeImage_format(t *testing.T) {
 		t.Errorf("got %q, want %q", img, "roost-user:latest")
 	}
 }
-
-func TestProjectMaterializeDir_format(t *testing.T) {
-	fakeHome := t.TempDir()
-	t.Setenv("HOME", fakeHome)
-
-	dir := ProjectMaterializeDir("abc123")
-	if !strings.Contains(dir, "projects") || !strings.Contains(dir, "abc123") {
-		t.Errorf("unexpected ProjectMaterializeDir: %q", dir)
-	}
-	if !strings.HasSuffix(dir, "devcontainer") {
-		t.Errorf("expected dir to end with 'devcontainer', got: %q", dir)
-	}
-}
-
-func TestUserMaterializeDir_format(t *testing.T) {
-	fakeHome := t.TempDir()
-	t.Setenv("HOME", fakeHome)
-
-	dir := UserMaterializeDir()
-	wantSuffix := ".roost/user/devcontainer"
-	if !strings.HasSuffix(dir, wantSuffix) {
-		t.Errorf("UserMaterializeDir = %q, want suffix %q", dir, wantSuffix)
-	}
-}

@@ -56,12 +56,12 @@ func runProjectBuild(args []string) error {
 		return fmt.Errorf("build: %w", err)
 	}
 
-	configPath, err := sandboxdc.MaterializeProjectConfig(projectPath)
+	configPath, err := sandboxdc.ProjectBaseDC(projectPath)
 	if err != nil {
 		if errors.Is(err, sandboxdc.ErrNoProjectDevcontainer) {
 			return fmt.Errorf("build: no .devcontainer/devcontainer.json found in %s; use 'roost build --user' for user-scope: %w", projectPath, sandboxdc.ErrNoProjectDevcontainer)
 		}
-		return fmt.Errorf("build: materialize: %w", err)
+		return fmt.Errorf("build: %w", err)
 	}
 
 	imageName := sandboxdc.ProjectScopeImageForPath(projectPath)
@@ -87,17 +87,18 @@ func runUserBuild() error {
 		return fmt.Errorf("build: %w", err)
 	}
 
-	workspaceFolder, configPath, err := sandboxdc.MaterializeUserConfig()
+	configPath, err := sandboxdc.UserBaseDC()
 	if err != nil {
 		if errors.Is(err, sandboxdc.ErrNoUserDevcontainer) {
 			return fmt.Errorf("build: no ~/.devcontainer/devcontainer.json found; create one to use user-scope image: %w", sandboxdc.ErrNoUserDevcontainer)
 		}
-		return fmt.Errorf("build: materialize: %w", err)
+		return fmt.Errorf("build: %w", err)
 	}
 
+	home, _ := os.UserHomeDir()
 	imageName := sandboxdc.UserScopeImage()
 	fmt.Fprintf(os.Stdout, "roost build: building user-scope image...\n")
-	image, err := cli.Build(context.Background(), workspaceFolder, configPath, imageName, dc.ExtraBuildArgs)
+	image, err := cli.Build(context.Background(), home, configPath, imageName, dc.ExtraBuildArgs)
 	if err != nil {
 		return fmt.Errorf("build: %w", err)
 	}

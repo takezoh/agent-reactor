@@ -101,7 +101,7 @@ func (l *DevcontainerLauncher) makeCleanup(frameID state.FrameID, inst *sandbox.
 // The returned function is called per-EnsureInstance to compute the roost-specific
 // env/mounts overlay without triggering any image build.
 func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, proxy *CredProxyRunner, dataDir string) sandboxdc.OverlayFunc {
-	return func(projectPath, materializeDir string) (sandboxdc.SpecOverlay, error) {
+	return func(projectPath, dcDir string) (sandboxdc.SpecOverlay, error) {
 		sb := resolveSandbox(projectPath)
 		dc := sb.Devcontainer
 
@@ -136,7 +136,7 @@ func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, proxy *C
 
 		mounts := []string{
 			fmt.Sprintf("type=bind,source=%s,target=/opt/roost/run", runDir),
-			fmt.Sprintf("type=bind,source=%s,target=/opt/roost/devcontainer,readonly", materializeDir),
+			fmt.Sprintf("type=bind,source=%s,target=/opt/roost/devcontainer,readonly", dcDir),
 		}
 
 		return sandboxdc.SpecOverlay{Env: env, Mounts: mounts}, nil

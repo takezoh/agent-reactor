@@ -50,25 +50,19 @@ func TestRunUserBuild_noDevcontainer(t *testing.T) {
 	}
 }
 
-func TestRunProjectBuild_materializesBeforeBuild(t *testing.T) {
-	// Verify that MaterializeProjectConfig is called (i.e., materialize dir is created)
-	// before the CLI binary is invoked. We stop at the CLI-not-found error.
+func TestRunProjectBuild_noDevcontainerCLI(t *testing.T) {
 	project := t.TempDir()
 	dcDir := filepath.Join(project, ".devcontainer")
 	os.MkdirAll(dcDir, 0o755)
 	os.WriteFile(filepath.Join(dcDir, "devcontainer.json"), []byte(`{"image":"ubuntu"}`), 0o644)
 	fakeHome := t.TempDir()
 	t.Setenv("HOME", fakeHome)
-	// Point CLI to a non-existent binary so we fail after materialize.
 	t.Setenv("PATH", t.TempDir())
 
 	err := runProjectBuild([]string{project})
 	if err == nil {
 		t.Fatal("expected error (devcontainer CLI not found)")
 	}
-	// Materialize dir should exist even though build failed at CLI stage.
-	hash := sandboxdc.ProjectScopeImageForPath(project)
-	_ = hash // just ensure the function is callable
 }
 
 // unwrapAll unwraps errors to find a target in the chain.
