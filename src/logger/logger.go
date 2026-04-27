@@ -101,6 +101,9 @@ func parseLevel(level string) slog.Level {
 	}
 }
 
+// LogFile returns the open log file handle, or nil if Init has not been called.
+func LogFile() *os.File { return logFile }
+
 func Close() {
 	if logFile != nil {
 		logFile.Close()

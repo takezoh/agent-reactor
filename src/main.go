@@ -9,6 +9,7 @@ import (
 
 	"github.com/takezoh/agent-roost/config"
 	"github.com/takezoh/agent-roost/logger"
+	"github.com/takezoh/agent-roost/procio"
 )
 
 var (
@@ -47,6 +48,13 @@ func runMain(args []string, stdout, stderr io.Writer) (code int) {
 
 	if loggerErr != nil {
 		return finishMain(kind, loggerErr, false, loggerErr, stdout, stderr)
+	}
+	switch kind {
+	case commandKindCLI:
+		procio.UseTerminal()
+	case commandKindDaemon, commandKindRoost:
+		procio.UseLogFile(logger.LogFile())
+	default:
 	}
 	if cfgErr != nil {
 		slog.Error("config load failed during logger bootstrap", "err", cfgErr)
