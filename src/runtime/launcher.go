@@ -15,6 +15,10 @@ type WrappedLaunch struct {
 	StartDir string
 	Env      map[string]string
 	Cleanup  func() error
+	// ContainerSockDir is set by devcontainer sandbox launchers to the host-side
+	// run directory that is bind-mounted into the container as /opt/roost/run.
+	// When non-empty, the runtime starts the container endpoint for this project.
+	ContainerSockDir string
 }
 
 // AgentLauncher wraps a state.LaunchPlan before it reaches tmux, allowing

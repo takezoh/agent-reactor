@@ -108,6 +108,18 @@ All other keys (e.g. `features`, `customizations`) are ignored.
 
 `PruneOrphans` runs at daemon startup. It lists containers with label `roost-managed=1` and removes any whose `roost-project` label value is absent from sessions.json.
 
+## Container IPC Endpoint
+
+Each sandboxed project gets a dedicated Unix socket at `<dataDir>/run/<project-hash>/roost.sock` on the host. It is bind-mounted read-write into the container at `/opt/roost/run/roost.sock` (via the per-project run dir mount that already exists for credential helper files). The container agent reads `ROOST_SOCKET` (set to `/opt/roost/run/roost.sock`) to locate it.
+
+**API surface**: only `hook-event` is implemented. Commands such as `event`, `surface.send_text`, `peer.send`, `shutdown`, and all others are structurally absent — no handler is registered, so they receive a protocol error without touching state.
+
+**Authentication**: at frame spawn time, a 32-byte `crypto/rand` token is generated and injected into the container via `ROOST_SOCKET_TOKEN`. Every `hook-event` message carries the token; server-side Lookup resolves it to the owning frame ID. No client-supplied frame ID is trusted.
+
+**Warm-start recovery**: tokens are persisted to `<dataDir>/warm/<frameID>.json` (atomic write, `0o600`). On daemon warm restart (containers survive, daemon replaces), `RecoverSandboxFrames` reads `warm/*.json` and re-registers each token for live frames so hook events continue to work immediately. The `warm/` directory is never bind-mounted into containers — a container process cannot read other frames' tokens.
+
+**Cold start**: `warm/` is wiped before `LoadSnapshot` runs, ensuring stale tokens from a previous run do not survive a session-destroying restart.
+
 ## Host Mounts
 
 Bind-mounts into containers are declared in devcontainer.json `mounts`:

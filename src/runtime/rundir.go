@@ -15,18 +15,19 @@ func ProjectRunDir(runBase, projectPath string) string {
 	return filepath.Join(runBase, fmt.Sprintf("%x", h[:6]))
 }
 
-// EnsureProjectRunDir creates the per-project run dir and hardlinks centralSockPath
-// into it as roost.sock. Returns the run dir path.
-// Called once per EnsureInstance to refresh the roost.sock link after daemon restart.
-func EnsureProjectRunDir(runBase, projectPath, centralSockPath string) (string, error) {
+// EnsureProjectRunDir creates the per-project run directory.
+// Returns the run dir path.
+func EnsureProjectRunDir(runBase, projectPath string) (string, error) {
 	dir := ProjectRunDir(runBase, projectPath)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("rundir: mkdir %s: %w", dir, err)
 	}
-	dst := filepath.Join(dir, "roost.sock")
-	_ = os.Remove(dst)
-	if err := os.Link(centralSockPath, dst); err != nil {
-		return "", fmt.Errorf("rundir: link roost.sock: %w", err)
-	}
 	return dir, nil
+}
+
+// ContainerSockPath returns the Unix socket path for the container endpoint
+// inside the given run directory. This socket is bind-mounted into the
+// devcontainer at /opt/roost/run/roost.sock.
+func ContainerSockPath(runDir string) string {
+	return filepath.Join(runDir, "roost.sock")
 }

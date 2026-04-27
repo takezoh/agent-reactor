@@ -2,7 +2,14 @@
 
 ## Inter-Process Communication (IPC)
 
-JSON messaging over a Unix domain socket (`~/.roost/roost.sock`).
+JSON messaging over Unix domain sockets. Two physical endpoints serve different client classes:
+
+| Endpoint | Path | Auth | Clients |
+|---|---|---|---|
+| **Host** | `<dataDir>/roost.sock` | SO_PEERCRED UID check | TUI, CLI, palette popups |
+| **Container** | `<dataDir>/run/<project-hash>/roost.sock` | Bearer token (`ROOST_SOCKET_TOKEN`) | Sandboxed agent processes inside devcontainers |
+
+The host endpoint exposes the full command surface. The container endpoint implements only `hook-event`; all other commands are structurally absent (no handler registered, not a filter). See [Sandbox Backends](sandbox.md#container-ipc-endpoint) for security properties.
 
 ### Topology
 
@@ -27,7 +34,7 @@ flowchart TB
         Client["proto.Client<br/>Envelope send/receive / responses ch / events ch"]
     end
 
-    Client <-->|"Unix socket (SO_PEERCRED uid check)<br/>NDJSON (proto.Envelope)"| EL
+    Client <-->|"Host socket (SO_PEERCRED uid check)<br/>NDJSON (proto.Envelope)"| EL
 ```
 
 `runtime.Runtime` is the sole state owner. `state.State` is a pure value type that only round-trips as an argument and return value of `Reduce`. The effect interpreter performs tmux operations, IPC sends, persistence, and worker pool submits, feeding results back to the event loop as `Event`s.
@@ -74,7 +81,8 @@ Command / Response / ServerEvent are closed sum types. See [interfaces.md](inter
 |---------|------------|----------|
 | `subscribe` | filters (optional) | Start receiving broadcasts |
 | `unsubscribe` | - | Stop receiving broadcasts |
-| `event` | event, timestamp, sender_id, payload | Unified event envelope — domain operations and driver hooks (see below) |
+| `event` | event, timestamp, sender_id, payload | Unified event envelope — domain operations and driver hooks (see below). **Host endpoint only.** |
+| `hook-event` | token, hook, timestamp, payload | Driver hook notification from a sandboxed agent. **Container endpoint only.** Token resolves to the owning frame server-side. |
 | `surface.read_text` | session_id, lines | Read the trailing N lines of the active pane's VT snapshot |
 | `surface.send_text` | session_id, text | Send text followed by Enter to the session's active pane |
 | `surface.send_key` | session_id, key | Send a named key (e.g. `Escape`, `q`) without Enter |
@@ -227,14 +235,19 @@ sequenceDiagram
 
 #### Hook Event Routing
 
-Hook events are processed in a straight line: IPC reader → event loop → Reduce → Driver.Step. See [state-monitoring.md](state-monitoring.md#hook-event-routing-and-race-free-identification) for details.
+**Host frames**: `CmdEvent` (with `SenderID` set to the frame's env var) → IPC reader → event loop → `reduceDriverHook` → `Driver.Step(DEvHook)`.
+
+**Sandboxed frames**: `CmdHookEvent` (with bearer token) → container endpoint accept loop → token Lookup → `EvDriverEvent{SenderID: resolvedFrameID}` → event loop → `reduceDriverHook` → `Driver.Step(DEvHook)`. The client-supplied frame ID is not used; the token resolves it server-side.
+
+Both paths converge at `EvDriverEvent` entering the event loop. See [state-monitoring.md](state-monitoring.md#hook-event-routing-and-race-free-identification) for the host-frame path details.
 
 #### Resident Goroutines
 
 | Goroutine | Count | Role |
 |-----------|-------|------|
 | `Runtime.Run` (event loop) | 1 | State ownership + Reduce + Effect interpretation |
-| `acceptLoop` | 1 | Accepts new connections; performs SO_PEERCRED uid check before admitting |
+| `acceptLoop` (host) | 1 | Accepts new connections on `roost.sock`; performs SO_PEERCRED uid check before admitting |
+| container endpoint accept | 1 per active project | Accepts connections on per-project `<run-hash>/roost.sock`; bearer token is validated per-message |
 | `ipcConn.readLoop` | M (1 / client) | IPC reader. Converts Commands to Events and submits to eventCh |
 | `ipcConn.writeLoop` | M (1 / client) | IPC writer. Drains outbox and writes to socket |
 | `worker.Pool.run` | 4 (fixed) | Worker pool goroutines |

@@ -131,6 +131,11 @@ func runCoordinator() error { //nolint:funlen
 		if err := rt.LoadSessionPanes(); err != nil {
 			slog.Warn("window map load failed", "err", err)
 		}
+		// Cold start: wipe warm-only state (container tokens etc.) before
+		// loading the snapshot so there is no stale data from a prior warm run.
+		if err := os.RemoveAll(filepath.Join(dataDir, "warm")); err != nil {
+			slog.Warn("cold start: warm wipe failed", "err", err)
+		}
 		if err := rt.LoadSnapshot(true); err != nil {
 			slog.Error("snapshot load failed", "err", err)
 		}
@@ -219,7 +224,7 @@ func newAgentLauncher(ctx context.Context, sb config.SandboxConfig, resolver *co
 		})
 		d.Devcontainer = runtime.NewDevcontainerLauncher(mgr, func(project string) config.SandboxConfig {
 			return resolver.Resolve(project)
-		}, runner)
+		}, runner, dataDir)
 		slog.Info("sandbox: devcontainer backend enabled", "proxy", sb.Proxy.Enabled)
 	}
 	return d, nil

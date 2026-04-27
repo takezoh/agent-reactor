@@ -310,6 +310,7 @@ func (r *Runtime) shutdownIPC() {
 		cc.shut()
 		delete(r.conns, id)
 	}
+	r.shutdownContainerEndpoints()
 }
 
 // === Loop integration ===

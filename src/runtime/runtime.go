@@ -115,6 +115,16 @@ type Runtime struct {
 	// goroutines (spawnTmuxWindowAsync) while invoke/drain run in the event loop.
 	frameCleanupsMu sync.Mutex
 	frameCleanups   map[state.FrameID]func() error
+
+	// containerTokens holds per-frame bearer tokens for the container endpoint.
+	containerTokens tokenStore
+	// containerEndpoints holds one *containerEndpoint per project path.
+	// Access via sync.Map to allow concurrent startup from spawn goroutines.
+	containerEndpoints sync.Map // string (project path) → *containerEndpoint
+
+	// warmFrames persists warm-only per-frame state (container tokens) to
+	// <dataDir>/warm/ so they survive daemon warm restarts.
+	warmFrames *warmFrameStore
 }
 
 // New constructs a Runtime ready for Run. Backends must be set on the
@@ -170,6 +180,13 @@ func New(cfg Config) *Runtime {
 		r.workers = cfg.Pool
 	} else {
 		r.workers = worker.NewPool(context.Background(), cfg.Workers)
+	}
+	if cfg.DataDir != "" {
+		if wf, err := newWarmFrameStore(cfg.DataDir); err != nil {
+			slog.Warn("runtime: warm frame store init failed", "err", err)
+		} else {
+			r.warmFrames = wf
+		}
 	}
 	return r
 }

@@ -19,7 +19,7 @@ func init() {
 
 // RunEvent implements `roost event <eventType>`.
 // Reads stdin (if piped), captures ROOST_FRAME_ID and a timestamp,
-// then sends a CmdEvent to the daemon.
+// then sends a CmdEvent (host) or CmdHookEvent (container) to the daemon.
 func RunEvent(args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: roost event <event-type>")
@@ -45,8 +45,32 @@ func RunEvent(args []string) error {
 		"input_len", len(input),
 	)
 
-	if err := sendToDaemon(eventType, ts, senderID, json.RawMessage(input)); err != nil {
-		slog.Warn("event: send failed", "err", err)
+	token := os.Getenv("ROOST_SOCKET_TOKEN")
+	var sendErr error
+	if token != "" {
+		sendErr = sendHookEventToDaemon(token, eventType, ts, json.RawMessage(input))
+	} else {
+		sendErr = sendToDaemon(eventType, ts, senderID, json.RawMessage(input))
+	}
+	if sendErr != nil {
+		slog.Warn("event: send failed", "err", sendErr)
+	}
+	return nil
+}
+
+func sendHookEventToDaemon(token, hook string, ts time.Time, payload json.RawMessage) error {
+	sockPath, err := resolveSocketPath()
+	if err != nil {
+		return err
+	}
+	client, err := proto.Dial(sockPath)
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	defer client.Close()
+
+	if err := client.SendHookEvent(token, hook, ts, payload); err != nil {
+		return fmt.Errorf("send: %w", err)
 	}
 	return nil
 }

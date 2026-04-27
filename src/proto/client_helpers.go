@@ -214,6 +214,17 @@ func (c *Client) PeerDrainInbox(frameID string) ([]PeerMessage, error) {
 	return r.Messages, nil
 }
 
+// SendHookEvent sends a hook-event command to the container endpoint.
+// token is the ROOST_SOCKET_TOKEN injected at frame spawn.
+func (c *Client) SendHookEvent(token, hook string, timestamp time.Time, payload json.RawMessage) error {
+	return c.SendWithTimeout(CmdHookEvent{
+		Token:     token,
+		Hook:      hook,
+		Timestamp: timestamp,
+		Payload:   payload,
+	}, defaultRequestTimeout)
+}
+
 // SendEvent ships a generic event to the daemon.
 func (c *Client) SendEvent(eventName string, timestamp time.Time, senderID string, payload json.RawMessage) error {
 	return c.SendWithTimeout(CmdEvent{

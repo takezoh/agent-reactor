@@ -20,18 +20,22 @@ type DevcontainerLauncher struct {
 	mgr            sandbox.Manager[*sandboxdc.ContainerState]
 	resolveSandbox func(projectPath string) config.SandboxConfig
 	proxy          *CredProxyRunner // nil when proxy disabled
+	dataDir        string
 }
 
 // NewDevcontainerLauncher creates an AgentLauncher that runs agents inside devcontainers.
+// dataDir is the daemon's data directory (e.g. ~/.roost); it contains the run/ subtree.
 func NewDevcontainerLauncher(
 	mgr sandbox.Manager[*sandboxdc.ContainerState],
 	resolveSandbox func(string) config.SandboxConfig,
 	proxy *CredProxyRunner,
+	dataDir string,
 ) *DevcontainerLauncher {
 	return &DevcontainerLauncher{
 		mgr:            mgr,
 		resolveSandbox: resolveSandbox,
 		proxy:          proxy,
+		dataDir:        dataDir,
 	}
 }
 
@@ -56,14 +60,20 @@ func (l *DevcontainerLauncher) WrapLaunch(frameID state.FrameID, plan state.Laun
 		return WrappedLaunch{}, fmt.Errorf("devcontainer launcher: build command: %w", err)
 	}
 
+	runDir, err := EnsureProjectRunDir(filepath.Join(l.dataDir, "run"), plan.Project)
+	if err != nil {
+		return WrappedLaunch{}, fmt.Errorf("devcontainer launcher: ensure run dir: %w", err)
+	}
+
 	l.mgr.AcquireFrame(inst)
 	slog.Debug("devcontainer launcher: frame acquired", "frame", frameID, "project", plan.Project)
 
 	return WrappedLaunch{
-		Command:  cmd,
-		StartDir: plan.StartDir,
-		Env:      outEnv,
-		Cleanup:  l.makeCleanup(frameID, inst),
+		Command:          cmd,
+		StartDir:         plan.StartDir,
+		Env:              outEnv,
+		Cleanup:          l.makeCleanup(frameID, inst),
+		ContainerSockDir: runDir,
 	}, nil
 }
 
@@ -96,8 +106,7 @@ func (l *DevcontainerLauncher) makeCleanup(frameID state.FrameID, inst *sandbox.
 }
 
 // BuildOverlayFunc returns the OverlayFunc for the given sandbox resolver and proxy runner.
-// dataDir is the daemon's data directory (e.g. ~/.roost); it contains roost.sock
-// and the run/ directory tree.
+// dataDir is the daemon's data directory (e.g. ~/.roost); it contains the run/ directory tree.
 // The returned function is called per-EnsureInstance to compute the roost-specific
 // env/mounts overlay without triggering any image build.
 func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, proxy *CredProxyRunner, dataDir string) sandboxdc.OverlayFunc {
@@ -119,8 +128,7 @@ func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, proxy *C
 			}
 		}
 
-		centralSock := filepath.Join(dataDir, "roost.sock")
-		runDir, err := EnsureProjectRunDir(filepath.Join(dataDir, "run"), projectPath, centralSock)
+		runDir, err := EnsureProjectRunDir(filepath.Join(dataDir, "run"), projectPath)
 		if err != nil {
 			return sandboxdc.SpecOverlay{}, fmt.Errorf("devcontainer: ensure run dir: %w", err)
 		}

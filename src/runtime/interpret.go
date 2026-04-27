@@ -146,6 +146,12 @@ func (r *Runtime) executeTmuxEffect(eff state.Effect) { //nolint:funlen
 				slog.Error("runtime: kill window failed", "target", target, "err", err)
 			}
 		}
+		r.containerTokens.Revoke(e.FrameID)
+		if r.warmFrames != nil {
+			if err := r.warmFrames.Delete(e.FrameID); err != nil {
+				slog.Warn("runtime: warm frame delete failed", "frame", e.FrameID, "err", err)
+			}
+		}
 		r.invokeFrameCleanup(e.FrameID)
 
 	case state.EffActivateSession:
@@ -267,6 +273,20 @@ func (r *Runtime) enqueueSpawnFailed(e state.EffSpawnTmuxWindow, msg string) {
 }
 
 func (r *Runtime) spawnTmuxWindowAsync(e state.EffSpawnTmuxWindow) {
+	// Generate a bearer token for the container endpoint. For non-container
+	// launchers ContainerSockDir will be empty and the token is revoked below.
+	token, err := r.containerTokens.Generate(e.FrameID)
+	if err != nil {
+		slog.Error("runtime: token generate failed", "frame", e.FrameID, "err", err)
+		r.enqueueSpawnFailed(e, err.Error())
+		return
+	}
+	env := make(map[string]string, len(e.Env)+1)
+	for k, v := range e.Env {
+		env[k] = v
+	}
+	env["ROOST_SOCKET_TOKEN"] = token
+
 	plan := state.LaunchPlan{
 		Command:  e.Command,
 		StartDir: e.StartDir,
@@ -274,11 +294,27 @@ func (r *Runtime) spawnTmuxWindowAsync(e state.EffSpawnTmuxWindow) {
 		Options:  e.Options,
 		Stdin:    e.Stdin,
 	}
-	wrapped, err := launcher(r.cfg).WrapLaunch(e.FrameID, plan, e.Env)
+	wrapped, err := launcher(r.cfg).WrapLaunch(e.FrameID, plan, env)
 	if err != nil {
+		r.containerTokens.Revoke(e.FrameID)
 		slog.Error("runtime: launcher wrap failed", "frame", e.FrameID, "err", err)
 		r.enqueueSpawnFailed(e, err.Error())
 		return
+	}
+	if wrapped.ContainerSockDir != "" {
+		sockPath := ContainerSockPath(wrapped.ContainerSockDir)
+		r.startContainerEndpointIfNeeded(e.Project, sockPath)
+		if r.warmFrames != nil {
+			if err := r.warmFrames.Save(WarmFrameState{
+				FrameID:        string(e.FrameID),
+				ContainerToken: token,
+			}); err != nil {
+				slog.Warn("runtime: warm frame save failed", "frame", e.FrameID, "err", err)
+			}
+		}
+	} else {
+		// Not a container sandbox; revoke the unused token immediately.
+		r.containerTokens.Revoke(e.FrameID)
 	}
 	name := windowName(e.Project, string(e.FrameID))
 	spawnCmd := "exec " + wrapped.Command

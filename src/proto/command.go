@@ -36,6 +36,11 @@ const (
 	CmdNamePeerList       = state.EventPeerList
 	CmdNamePeerSetSummary = state.EventPeerSetSummary
 	CmdNamePeerDrainInbox = state.EventPeerDrainInbox
+
+	// hook-event — container endpoint only. Carries a driver hook notification
+	// with a bearer token that resolves to the spawning frame. Not accepted on
+	// the host endpoint.
+	CmdNameHookEvent = "hook-event"
 )
 
 type CmdSubscribe struct {
@@ -132,3 +137,16 @@ type CmdPeerDrainInbox struct {
 
 func (CmdPeerDrainInbox) isCommand()          {}
 func (CmdPeerDrainInbox) CommandName() string { return CmdNamePeerDrainInbox }
+
+// CmdHookEvent is the container-only command that delivers a driver hook
+// notification. Token authenticates the sender and resolves to the FrameID
+// of the spawning frame.
+type CmdHookEvent struct {
+	Token     string          `json:"token"`
+	Hook      string          `json:"hook"`
+	Timestamp time.Time       `json:"timestamp"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
+}
+
+func (CmdHookEvent) isCommand()          {}
+func (CmdHookEvent) CommandName() string { return CmdNameHookEvent }

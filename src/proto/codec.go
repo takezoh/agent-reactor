@@ -118,6 +118,9 @@ func DecodeCommand(env Envelope) (Command, error) {
 	case CmdNamePeerDrainInbox:
 		var c CmdPeerDrainInbox
 		return decodeInto(env.Data, &c)
+	case CmdNameHookEvent:
+		var c CmdHookEvent
+		return decodeInto(env.Data, &c)
 	}
 	return nil, fmt.Errorf("proto: unknown command: %q", env.Cmd)
 }

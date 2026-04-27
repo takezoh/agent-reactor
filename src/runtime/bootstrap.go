@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -407,6 +408,36 @@ func (r *Runtime) RecoverSandboxFrames() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	l := launcher(r.cfg)
+
+	// Build a set of live frame IDs for warm-token recovery below.
+	liveFrames := make(map[string]struct{})
+	for _, sess := range r.state.Sessions {
+		for _, frame := range sess.Frames {
+			if _, ok := r.sessionPanes[frame.ID]; ok {
+				liveFrames[string(frame.ID)] = struct{}{}
+			}
+		}
+	}
+
+	// Restore container tokens from warm/ so container agents can still send
+	// hook events after a daemon warm restart.
+	if r.warmFrames != nil {
+		states, err := r.warmFrames.LoadAll()
+		if err != nil {
+			slog.Warn("bootstrap: warm frame load failed", "err", err)
+		}
+		for _, st := range states {
+			if _, ok := liveFrames[st.FrameID]; !ok {
+				// orphan: no live frame — delete proactively so warm restarts don't accumulate stale files
+				_ = r.warmFrames.Delete(state.FrameID(st.FrameID))
+				continue
+			}
+			if st.ContainerToken != "" {
+				r.containerTokens.Register(state.FrameID(st.FrameID), st.ContainerToken)
+			}
+		}
+	}
+
 	for _, sess := range r.state.Sessions {
 		for _, frame := range sess.Frames {
 			if _, ok := r.sessionPanes[frame.ID]; !ok {
@@ -419,6 +450,12 @@ func (r *Runtime) RecoverSandboxFrames() {
 			}
 			if cleanup != nil {
 				r.storeFrameCleanup(frame.ID, cleanup)
+			}
+			// Start the container endpoint for sandboxed frames so hook events
+			// can be received immediately after daemon warm restart.
+			if r.state.SandboxedProject != nil && r.state.SandboxedProject(frame.Project) && r.cfg.DataDir != "" {
+				runDir := ProjectRunDir(filepath.Join(r.cfg.DataDir, "run"), frame.Project)
+				r.startContainerEndpointIfNeeded(frame.Project, ContainerSockPath(runDir))
 			}
 		}
 	}
