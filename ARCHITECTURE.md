@@ -20,7 +20,7 @@ roost is a session lifecycle manager — not an agent orchestrator. It does not 
 - [Inter-Process Communication and Tool System](docs/ipc.md) — IPC message format, command list, concurrency model (event loop + worker pool), Tool abstraction, proto type extension guidelines
 - [State Monitoring](docs/state-monitoring.md) — State detection via Driver plugins, Claude/Generic driver, persistence/restoration
 - [Interface and File Reference](docs/interfaces.md) — Go type definitions, data files, source tree
-- [Sandbox Backends](docs/sandbox.md) — per-project container isolation, generic Manager[I] abstraction, lifecycle and crash recovery
+- [Sandbox Backends](docs/sandbox.md) — per-project devcontainer isolation, image build/resolution, devcontainer.json support, credential proxy
 
 ## Terminology
 
@@ -52,7 +52,7 @@ tui/           Presentation layer — Bubbletea UI state management, rendering, 
 tmux/          Infrastructure layer — tmux command execution wrapper
 features/      Feature flags — Flag/Set types (runtime), build-tag const (compile-time). No external deps
 lib/           Utilities — external tool integration (lib/git/, lib/claude/, lib/github/)
-sandbox/       Project-level sandbox backends (generic Manager[I]) — see docs/sandbox.md
+sandbox/       Project-level sandbox backends (generic Manager[I]); devcontainer build via @devcontainers/cli, lifecycle via docker directly — see docs/sandbox.md
 config/        Configuration — TOML loading, DataDir injection
 logger/        Logging — slog initialization, log file management
 ```

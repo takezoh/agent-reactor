@@ -45,6 +45,30 @@ roost
 
 Creates a tmux session (or attaches to an existing one) and launches with a 3-pane layout.
 
+### Sandbox
+
+roost can run each agent inside a project-specific devcontainer instead of the host shell.
+
+**Requirements:** Place a `devcontainer.json` in `<project>/.devcontainer/` (project-scope) or `~/.devcontainer/` (user-scope, shared across projects without their own devcontainer).
+
+**Build images before first use:**
+
+```bash
+roost build <project-path>   # project-scope image (roost-proj-<hash>:latest)
+roost build --user           # user-scope image   (roost-user:latest)
+```
+
+At session start, roost resolves the image automatically: project-scope first, user-scope as fallback.
+
+Enable devcontainer mode in `~/.roost/settings.toml`:
+
+```toml
+[sandbox]
+mode = "devcontainer"
+```
+
+See [Sandbox Backends](docs/sandbox.md) for credential proxy, mounts, and advanced configuration.
+
 ### Hook Setup
 
 Register roost hooks so agent status (● ◆ ◇ ○ ■) updates in real time. Run once per agent type:
@@ -160,6 +184,18 @@ push_commands = [               # Commands available via push-driver palette
 [projects]
 project_roots = ["~/projects"]       # Subdirs of each root become projects
 project_paths = ["~/myproject"] # Explicit project paths
+
+[sandbox]
+mode = "devcontainer"               # "direct" (default) | "devcontainer"
+
+[sandbox.devcontainer]
+# cli_path = "devcontainer"         # devcontainer CLI binary (resolved via PATH)
+# extra_build_args = []             # appended to "devcontainer build"
+# extra_create_args = []            # appended to "docker create"
+# env_script = ""                   # script that prints KEY=VALUE lines for a project
+
+# [sandbox.proxy]                   # credential proxy — see docs/sandbox.md
+# enabled = true
 
 [driver]
 # summarize_command = "claude -p --model=haiku --no-session-persistence --setting-sources user"
