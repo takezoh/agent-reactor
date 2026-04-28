@@ -222,7 +222,7 @@ func (m *Manager) BuildLaunchCommand(inst *sandbox.Instance[*ContainerState], pl
 
 	command := plan.Command
 	if command == "shell" {
-		command = "/bin/bash"
+		command = "sh -c " + shellEscape(`exec "$(getent passwd "$(id -un)" | cut -d: -f7)" -l`)
 	}
 
 	var sb strings.Builder

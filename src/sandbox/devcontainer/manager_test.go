@@ -1,7 +1,11 @@
 package devcontainer
 
 import (
+	"strings"
 	"testing"
+
+	"github.com/takezoh/agent-roost/sandbox"
+	"github.com/takezoh/agent-roost/state"
 )
 
 func TestBuildLaunchCommand_subdir(t *testing.T) {
@@ -54,6 +58,36 @@ func TestDevcontainerSpec_buildCreateArgs_defaults(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("workspace mount not found in args: %v", args)
+	}
+}
+
+func TestBuildLaunchCommand_shellUsesLoginShell(t *testing.T) {
+	const project = "/workspace/myapp"
+	spec := &DevcontainerSpec{
+		ProjectPath:     project,
+		ContainerEnv:    map[string]string{},
+		WorkspaceFolder: "/workspaces/myapp",
+		RemoteUser:      "ubuntu",
+	}
+	inst := &sandbox.Instance[*ContainerState]{
+		ProjectPath: project,
+		Internal:    &ContainerState{containerID: "abc123", spec: spec},
+	}
+	m := &Manager{}
+	plan := state.LaunchPlan{Project: project, StartDir: project, Command: "shell"}
+
+	got, _, err := m.BuildLaunchCommand(inst, plan, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunchCommand error: %v", err)
+	}
+	if strings.Contains(got, "/bin/bash") {
+		t.Errorf("command must not hardcode /bin/bash: %s", got)
+	}
+	if !strings.Contains(got, "getent passwd") {
+		t.Errorf("command must look up login shell via getent passwd: %s", got)
+	}
+	if !strings.Contains(got, "sh -c ") {
+		t.Errorf("command must wrap snippet in sh -c: %s", got)
 	}
 }
 
