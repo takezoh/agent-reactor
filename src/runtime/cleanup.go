@@ -18,6 +18,7 @@ func (r *Runtime) storeFrameCleanup(frameID state.FrameID, fn func() error) {
 // invokeFrameCleanup retrieves the registered cleanup for the frame, removes
 // it from the map, and runs it in a goroutine so the event loop is not blocked.
 func (r *Runtime) invokeFrameCleanup(frameID state.FrameID) {
+	r.containerMounts.Delete(frameID)
 	r.frameCleanupsMu.Lock()
 	fn := r.frameCleanups[frameID]
 	delete(r.frameCleanups, frameID)

@@ -21,6 +21,9 @@ func (ClaudeDriver) Persist(s state.DriverState) map[string]string {
 	if cs.ClaudeSessionID != "" {
 		out[claudeKeyClaudeSessionID] = cs.ClaudeSessionID
 	}
+	if cs.ContainerStartDir != "" {
+		out[claudeKeyContainerStartDir] = cs.ContainerStartDir
+	}
 	return out
 }
 
@@ -38,5 +41,6 @@ func (d ClaudeDriver) Restore(bag map[string]string, now time.Time) state.Driver
 	}
 	cs.RestoreCommon(bag)
 	cs.ClaudeSessionID = bag[claudeKeyClaudeSessionID]
+	cs.ContainerStartDir = bag[claudeKeyContainerStartDir]
 	return cs
 }

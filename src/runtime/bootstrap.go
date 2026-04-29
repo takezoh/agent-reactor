@@ -446,13 +446,16 @@ func (r *Runtime) RecoverSandboxFrames() {
 			if _, ok := r.sessionPanes[frame.ID]; !ok {
 				continue
 			}
-			cleanup, err := l.AdoptFrame(ctx, frame.ID, frame.Project)
+			cleanup, mounts, err := l.AdoptFrame(ctx, frame.ID, frame.Project)
 			if err != nil {
 				slog.Warn("bootstrap: sandbox adopt failed", "frame", frame.ID, "err", err)
 				continue
 			}
 			if cleanup != nil {
 				r.storeFrameCleanup(frame.ID, cleanup)
+			}
+			if len(mounts) > 0 {
+				r.containerMounts.Store(frame.ID, mounts)
 			}
 			// Start the container endpoint for sandboxed frames so hook events
 			// can be received immediately after daemon warm restart.

@@ -23,6 +23,15 @@ type ContainerState struct {
 	refCount    int
 }
 
+// WorkspaceFolder returns the container-absolute workspace path from the spec,
+// or "" if the spec is not available. spec is immutable post-construction.
+func (cs *ContainerState) WorkspaceFolder() string {
+	if cs == nil || cs.spec == nil {
+		return ""
+	}
+	return cs.spec.WorkspaceFolder
+}
+
 // Config carries devcontainer-specific parameters.
 type Config struct {
 	ExtraCreateArgs []string // extra args for "docker create"

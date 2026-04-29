@@ -19,6 +19,7 @@ import (
 
 	"github.com/takezoh/agent-roost/config"
 	"github.com/takezoh/agent-roost/features"
+	"github.com/takezoh/agent-roost/lib/pathmap"
 	"github.com/takezoh/agent-roost/runtime/worker"
 	"github.com/takezoh/agent-roost/state"
 )
@@ -121,6 +122,10 @@ type Runtime struct {
 	// containerEndpoints holds one *containerEndpoint per project path.
 	// Access via sync.Map to allow concurrent startup from spawn goroutines.
 	containerEndpoints sync.Map // string (project path) → *containerEndpoint
+	// containerMounts holds the pathmap.Mounts for each frame that was launched
+	// inside a devcontainer. Used by the container endpoint to translate
+	// container-absolute paths to host-absolute paths in hook payloads.
+	containerMounts sync.Map // state.FrameID → pathmap.Mounts
 
 	// warmFrames persists warm-only per-frame state (container tokens) to
 	// <dataDir>/warm/ so they survive daemon warm restarts.
@@ -219,6 +224,18 @@ func (r *Runtime) Enqueue(ev state.Event) {
 	default:
 		slog.Warn("runtime: event channel full, dropping", "type", eventTypeName(ev))
 	}
+}
+
+// MountsForFrame returns the pathmap.Mounts registered for the given frame,
+// used by the container endpoint to translate container paths to host paths.
+// Returns (nil, false) for non-sandbox frames.
+func (r *Runtime) MountsForFrame(frameID state.FrameID) (pathmap.Mounts, bool) {
+	v, ok := r.containerMounts.Load(frameID)
+	if !ok {
+		return nil, false
+	}
+	ms, ok := v.(pathmap.Mounts)
+	return ms, ok
 }
 
 // SetRelay registers a FileRelay with the runtime via the event loop.

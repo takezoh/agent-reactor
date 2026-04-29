@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/takezoh/agent-roost/lib/pathmap"
 	"github.com/takezoh/agent-roost/proto"
 	"github.com/takezoh/agent-roost/state"
 )
@@ -28,7 +29,7 @@ func newTestContainerEndpoint(t *testing.T) (ep *containerEndpoint, sockPath str
 
 	ep, err = startContainerEndpoint(sockPath, &tokens, func(ev state.Event) {
 		events <- ev
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("startContainerEndpoint: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestContainerEndpointAcceptsHookEvent(t *testing.T) {
 	fid2 := state.FrameID("frame-hook")
 	tok2, _ := ts2.Generate(fid2)
 	evCh := make(chan state.Event, 4)
-	ep2, err := startContainerEndpoint(sp2, &ts2, func(ev state.Event) { evCh <- ev })
+	ep2, err := startContainerEndpoint(sp2, &ts2, func(ev state.Event) { evCh <- ev }, nil)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -138,7 +139,7 @@ func TestContainerEndpointRejectsUnknownCommands(t *testing.T) {
 	dir := t.TempDir()
 	sp := filepath.Join(dir, "roost.sock")
 	var ts tokenStore
-	ep, err := startContainerEndpoint(sp, &ts, func(state.Event) {})
+	ep, err := startContainerEndpoint(sp, &ts, func(state.Event) {}, nil)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -166,7 +167,7 @@ func TestContainerEndpointRejectsInvalidToken(t *testing.T) {
 	sp := filepath.Join(dir, "roost.sock")
 	var ts tokenStore
 	ts.Generate(state.FrameID("f1"))
-	ep, err := startContainerEndpoint(sp, &ts, func(state.Event) {})
+	ep, err := startContainerEndpoint(sp, &ts, func(state.Event) {}, nil)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -195,7 +196,7 @@ func TestContainerEndpointRejectsRevokedToken(t *testing.T) {
 	tok, _ := ts.Generate(fid)
 	ts.Revoke(fid)
 
-	ep, err := startContainerEndpoint(sp, &ts, func(state.Event) {})
+	ep, err := startContainerEndpoint(sp, &ts, func(state.Event) {}, nil)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -213,11 +214,166 @@ func TestContainerEndpointRejectsRevokedToken(t *testing.T) {
 	}
 }
 
+func TestTranslatePayloadPaths(t *testing.T) {
+	ms := pathmap.Mounts{
+		{Host: "/home/u/myapp", Container: "/workspaces/myapp"},
+	}
+	frameID := state.FrameID("f1")
+	getMounts := func(id state.FrameID) (pathmap.Mounts, bool) {
+		if id == frameID {
+			return ms, true
+		}
+		return nil, false
+	}
+	ep := &containerEndpoint{getMounts: getMounts}
+
+	t.Run("cwd translated to host and container_cwd preserved", func(t *testing.T) {
+		payload, _ := json.Marshal(map[string]string{
+			"cwd":             "/workspaces/myapp/backend",
+			"hook_event_name": "SessionStart",
+		})
+		out := ep.translatePayloadPaths(frameID, json.RawMessage(payload))
+		var fields map[string]string
+		if err := json.Unmarshal(out, &fields); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if fields["cwd"] != "/home/u/myapp/backend" {
+			t.Errorf("cwd = %q, want /home/u/myapp/backend", fields["cwd"])
+		}
+		if fields["container_cwd"] != "/workspaces/myapp/backend" {
+			t.Errorf("container_cwd = %q, want /workspaces/myapp/backend", fields["container_cwd"])
+		}
+	})
+
+	t.Run("transcript_path translated to host", func(t *testing.T) {
+		payload, _ := json.Marshal(map[string]string{
+			"transcript_path": "/workspaces/myapp/.claude/session.jsonl",
+		})
+		out := ep.translatePayloadPaths(frameID, json.RawMessage(payload))
+		var fields map[string]string
+		if err := json.Unmarshal(out, &fields); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if fields["transcript_path"] != "/home/u/myapp/.claude/session.jsonl" {
+			t.Errorf("transcript_path = %q, want /home/u/myapp/.claude/session.jsonl", fields["transcript_path"])
+		}
+	})
+
+	t.Run("transcript_path outside mount cleared", func(t *testing.T) {
+		payload, _ := json.Marshal(map[string]string{
+			"transcript_path": "/home/ubuntu/.claude/projects/foo/session.jsonl",
+		})
+		out := ep.translatePayloadPaths(frameID, json.RawMessage(payload))
+		var fields map[string]string
+		if err := json.Unmarshal(out, &fields); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if fields["transcript_path"] != "" {
+			t.Errorf("transcript_path = %q, want empty (not reachable from host)", fields["transcript_path"])
+		}
+	})
+
+	t.Run("cwd outside mount cleared", func(t *testing.T) {
+		payload, _ := json.Marshal(map[string]string{"cwd": "/var/log"})
+		out := ep.translatePayloadPaths(frameID, json.RawMessage(payload))
+		var fields map[string]string
+		if err := json.Unmarshal(out, &fields); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if fields["cwd"] != "" {
+			t.Errorf("cwd = %q, want empty", fields["cwd"])
+		}
+	})
+
+	t.Run("no mounts for frame: payload unchanged", func(t *testing.T) {
+		payload, _ := json.Marshal(map[string]string{"cwd": "/workspaces/myapp"})
+		unknownFrame := state.FrameID("unknown")
+		out := ep.translatePayloadPaths(unknownFrame, json.RawMessage(payload))
+		var fields map[string]string
+		if err := json.Unmarshal(out, &fields); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if fields["cwd"] != "/workspaces/myapp" {
+			t.Errorf("cwd = %q, want /workspaces/myapp (unchanged)", fields["cwd"])
+		}
+	})
+
+	t.Run("payload without cwd: untouched", func(t *testing.T) {
+		payload, _ := json.Marshal(map[string]string{"hook_event_name": "Stop"})
+		out := ep.translatePayloadPaths(frameID, json.RawMessage(payload))
+		if string(out) == string(payload) {
+			// unchanged is fine — but check it at least parses
+		}
+		var fields map[string]string
+		if err := json.Unmarshal(out, &fields); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if _, has := fields["cwd"]; has {
+			t.Error("cwd should not be present")
+		}
+	})
+}
+
+// TestContainerEndpointTranslatesCwd verifies that a hook event arriving
+// with a container-absolute cwd is enqueued with the host-absolute path.
+func TestContainerEndpointTranslatesCwd(t *testing.T) {
+	dir := t.TempDir()
+	sp := filepath.Join(dir, "roost.sock")
+
+	var ts tokenStore
+	frameID := state.FrameID("frame-translate")
+	tok, _ := ts.Generate(frameID)
+
+	ms := pathmap.Mounts{
+		{Host: "/home/u/proj", Container: "/workspaces/proj"},
+	}
+	getMounts := func(id state.FrameID) (pathmap.Mounts, bool) {
+		if id == frameID {
+			return ms, true
+		}
+		return nil, false
+	}
+
+	evCh := make(chan state.Event, 4)
+	ep, err := startContainerEndpoint(sp, &ts, func(ev state.Event) { evCh <- ev }, getMounts)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	t.Cleanup(ep.close)
+
+	payload, _ := json.Marshal(map[string]string{
+		"hook_event_name": "SessionStart",
+		"cwd":             "/workspaces/proj/src",
+	})
+	if _, err := sendRawCommand(t, sp, proto.CmdHookEvent{
+		Token:     tok,
+		Hook:      "SessionStart",
+		Timestamp: time.Now(),
+		Payload:   json.RawMessage(payload),
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	select {
+	case ev := <-evCh:
+		de := ev.(state.EvDriverEvent)
+		var fields map[string]string
+		if err := json.Unmarshal(de.Payload, &fields); err != nil {
+			t.Fatalf("unmarshal payload: %v", err)
+		}
+		if fields["cwd"] != "/home/u/proj/src" {
+			t.Errorf("translated cwd = %q, want /home/u/proj/src", fields["cwd"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout: no event received")
+	}
+}
+
 func TestContainerEndpointSocketPermissions(t *testing.T) {
 	dir := t.TempDir()
 	sp := filepath.Join(dir, "roost.sock")
 	var ts tokenStore
-	ep, err := startContainerEndpoint(sp, &ts, func(state.Event) {})
+	ep, err := startContainerEndpoint(sp, &ts, func(state.Event) {}, nil)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}

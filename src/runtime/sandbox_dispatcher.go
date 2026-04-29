@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/takezoh/agent-roost/config"
+	"github.com/takezoh/agent-roost/lib/pathmap"
 	"github.com/takezoh/agent-roost/state"
 )
 
@@ -37,17 +38,17 @@ func (d *SandboxDispatcher) WrapLaunch(frameID state.FrameID, plan state.LaunchP
 
 // AdoptFrame resolves the effective sandbox mode for projectPath and delegates
 // to the appropriate backend to reclaim the pre-running sandbox frame.
-func (d *SandboxDispatcher) AdoptFrame(ctx context.Context, frameID state.FrameID, projectPath string) (func() error, error) {
+func (d *SandboxDispatcher) AdoptFrame(ctx context.Context, frameID state.FrameID, projectPath string) (func() error, pathmap.Mounts, error) {
 	mode := d.Resolver.Resolve(projectPath).Mode
 	switch mode {
 	case "devcontainer":
 		if d.Devcontainer == nil {
-			return nil, nil
+			return nil, nil, nil
 		}
 		return d.Devcontainer.AdoptFrame(ctx, frameID, projectPath)
 	case "", "direct":
 		return d.Direct.AdoptFrame(ctx, frameID, projectPath)
 	default:
-		return nil, fmt.Errorf("sandbox dispatcher: unknown mode %q for project %q", mode, projectPath)
+		return nil, nil, fmt.Errorf("sandbox dispatcher: unknown mode %q for project %q", mode, projectPath)
 	}
 }

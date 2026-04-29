@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/takezoh/agent-roost/lib/pathmap"
 	"github.com/takezoh/agent-roost/state"
 )
 
@@ -21,6 +22,10 @@ type WrappedLaunch struct {
 	// run directory that is bind-mounted into the container as /opt/roost/run.
 	// When non-empty, the runtime starts the container endpoint for this project.
 	ContainerSockDir string
+	// Mounts is the set of bind mounts for the container instance.
+	// Used to translate container-absolute paths to host-absolute paths at
+	// the IPC boundary. Empty for non-sandbox (DirectLauncher) launches.
+	Mounts pathmap.Mounts
 }
 
 // AgentLauncher wraps a state.LaunchPlan before it reaches tmux, allowing
@@ -36,9 +41,9 @@ type AgentLauncher interface {
 
 	// AdoptFrame is called during warm start to re-register a pre-existing frame
 	// with the sandbox backend (the agent process is already running in tmux).
-	// Returns the Cleanup callback that should be stored for the frame, or nil
-	// if no cleanup is needed. Must not start or restart the sandbox.
-	AdoptFrame(ctx context.Context, frameID state.FrameID, projectPath string) (func() error, error)
+	// Returns the Cleanup callback and the bind-mount map for the frame (may be
+	// nil for non-sandbox backends). Must not start or restart the sandbox.
+	AdoptFrame(ctx context.Context, frameID state.FrameID, projectPath string) (func() error, pathmap.Mounts, error)
 }
 
 // DirectLauncher is the no-op implementation: it passes the plan through
@@ -53,8 +58,8 @@ func (DirectLauncher) WrapLaunch(_ state.FrameID, plan state.LaunchPlan, env map
 	}, nil
 }
 
-func (DirectLauncher) AdoptFrame(_ context.Context, _ state.FrameID, _ string) (func() error, error) {
-	return nil, nil
+func (DirectLauncher) AdoptFrame(_ context.Context, _ state.FrameID, _ string) (func() error, pathmap.Mounts, error) {
+	return nil, nil, nil
 }
 
 // launcher returns cfg.Launcher if set, otherwise a zero-cost DirectLauncher.
@@ -93,6 +98,9 @@ func (r *Runtime) wrapWithContainerToken(frameID state.FrameID, project string, 
 	}
 
 	r.startContainerEndpointIfNeeded(project, ContainerSockPath(wrapped.ContainerSockDir))
+	if len(wrapped.Mounts) > 0 {
+		r.containerMounts.Store(frameID, wrapped.Mounts)
+	}
 	if r.warmFrames != nil {
 		if err := r.warmFrames.Save(WarmFrameState{
 			FrameID:        string(frameID),

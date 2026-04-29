@@ -9,8 +9,15 @@ import (
 	"os"
 	"time"
 
+	"github.com/takezoh/agent-roost/lib/pathmap"
 	"github.com/takezoh/agent-roost/proto"
 	"github.com/takezoh/agent-roost/state"
+)
+
+const (
+	payloadFieldCwd            = "cwd"
+	payloadFieldTranscriptPath = "transcript_path"
+	payloadFieldContainerCwd   = "container_cwd"
 )
 
 // containerEndpoint listens on the per-project Unix socket that is
@@ -22,12 +29,13 @@ import (
 // in each CmdHookEvent. A valid token resolves to the FrameID of the
 // spawning frame, which becomes the event SenderID.
 type containerEndpoint struct {
-	listener net.Listener
-	tokens   *tokenStore
-	enqueue  func(state.Event)
+	listener  net.Listener
+	tokens    *tokenStore
+	enqueue   func(state.Event)
+	getMounts func(state.FrameID) (pathmap.Mounts, bool)
 }
 
-func startContainerEndpoint(sockPath string, tokens *tokenStore, enqueue func(state.Event)) (*containerEndpoint, error) {
+func startContainerEndpoint(sockPath string, tokens *tokenStore, enqueue func(state.Event), getMounts func(state.FrameID) (pathmap.Mounts, bool)) (*containerEndpoint, error) {
 	_ = os.Remove(sockPath)
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -39,7 +47,7 @@ func startContainerEndpoint(sockPath string, tokens *tokenStore, enqueue func(st
 		_ = ln.Close()
 		return nil, err
 	}
-	ep := &containerEndpoint{listener: ln, tokens: tokens, enqueue: enqueue}
+	ep := &containerEndpoint{listener: ln, tokens: tokens, enqueue: enqueue, getMounts: getMounts}
 	go ep.accept()
 	slog.Info("runtime: container endpoint listening", "sock", sockPath)
 	return ep, nil
@@ -96,6 +104,8 @@ func (ep *containerEndpoint) handle(w *bufio.Writer, env proto.Envelope) {
 		ts = time.Now()
 	}
 
+	payload := ep.translatePayloadPaths(frameID, cmd.Payload)
+
 	// ConnID=0: reduceDriverHook skips IPC response routing (responses only
 	// go to ConnID != 0). OK is sent here, before the event is processed —
 	// success means "enqueued", not "state updated".
@@ -105,9 +115,78 @@ func (ep *containerEndpoint) handle(w *bufio.Writer, env proto.Envelope) {
 		Event:     cmd.Hook,
 		Timestamp: ts,
 		SenderID:  frameID,
-		Payload:   cmd.Payload,
+		Payload:   payload,
 	})
 	containerWriteOK(w, env.ReqID)
+}
+
+// translatePayloadPaths rewrites known path fields in a hook payload from
+// container-absolute to host-absolute. Fields that cannot be mapped are set
+// to "" so the driver treats them as absent (graceful degrade).
+// For the "cwd" field the original container value is also preserved as
+// "container_cwd" so the driver can still use it for path-encoding that
+// depends on the container-side working directory (e.g. transcript project dir).
+// Fields without a registered mount (non-sandbox frames) are left unchanged.
+func (ep *containerEndpoint) translatePayloadPaths(frameID state.FrameID, payload json.RawMessage) json.RawMessage {
+	if ep.getMounts == nil || len(payload) == 0 {
+		return payload
+	}
+	ms, ok := ep.getMounts(frameID)
+	if !ok || len(ms) == 0 {
+		return payload
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return payload
+	}
+
+	changed := false
+
+	// cwd: translate to host path, preserve original as container_cwd.
+	if raw, exists := fields[payloadFieldCwd]; exists {
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil && s != "" {
+			fields[payloadFieldContainerCwd] = raw // preserve container path for projectDir encoding
+			if host, ok := ms.ToHost(s); ok {
+				if enc, err := json.Marshal(host); err == nil {
+					fields[payloadFieldCwd] = enc
+				}
+			} else {
+				fields[payloadFieldCwd] = json.RawMessage(`""`)
+				slog.Debug("ipc_container: cwd not covered by any mount; clearing",
+					"frame", frameID, "container_path", s)
+			}
+			changed = true
+		}
+	}
+
+	// transcript_path: translate to host path; set to "" when not reachable.
+	if raw, exists := fields[payloadFieldTranscriptPath]; exists {
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil && s != "" {
+			if host, ok := ms.ToHost(s); ok {
+				if enc, err := json.Marshal(host); err == nil {
+					fields[payloadFieldTranscriptPath] = enc
+					changed = true
+				}
+			} else {
+				fields[payloadFieldTranscriptPath] = json.RawMessage(`""`)
+				changed = true
+				slog.Debug("ipc_container: transcript_path not covered by any mount; clearing",
+					"frame", frameID, "container_path", s)
+			}
+		}
+	}
+
+	if !changed {
+		return payload
+	}
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return payload
+	}
+	return out
 }
 
 // startContainerEndpointIfNeeded starts the container endpoint for the
@@ -119,7 +198,7 @@ func (r *Runtime) startContainerEndpointIfNeeded(project, sockPath string) {
 	if _, loaded := r.containerEndpoints.LoadOrStore(project, sentinel); loaded {
 		return
 	}
-	ep, err := startContainerEndpoint(sockPath, &r.containerTokens, r.Enqueue)
+	ep, err := startContainerEndpoint(sockPath, &r.containerTokens, r.Enqueue, r.MountsForFrame)
 	if err != nil {
 		slog.Error("runtime: container endpoint start failed", "project", project, "sock", sockPath, "err", err)
 		r.containerEndpoints.Delete(project)

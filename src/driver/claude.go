@@ -24,7 +24,8 @@ const (
 	ClaudeDriverName = "claude"
 
 	// PersistedState bag keys for sessions.json round-trip.
-	claudeKeyClaudeSessionID = "claude_session_id"
+	claudeKeyClaudeSessionID    = "claude_session_id"
+	claudeKeyContainerStartDir  = "container_start_dir"
 )
 
 // pendingTool tracks an in-flight tool call from PreToolUse until
@@ -46,6 +47,11 @@ type ClaudeState struct {
 	CommonState
 
 	ManagedWorkingDir string // set when roost pre-created the git worktree
+	// ContainerStartDir is the container-absolute cwd received from the hook
+	// payload before host-path translation. Set only in sandboxed sessions.
+	// Used by resolveTranscriptPath to reproduce the project-dir encoding that
+	// Claude Code uses when writing ~/.claude/projects/<encoded>/session.jsonl.
+	ContainerStartDir string
 
 	// Identity (set via Restore or DEvHook session-start payload).
 	ClaudeSessionID string // distinct from roost session id; the *Claude* conversation id
@@ -312,7 +318,14 @@ func (d ClaudeDriver) resolveTranscriptPath(cs ClaudeState) string {
 	if d.home == "" || cs.ClaudeSessionID == "" || cs.StartDir == "" {
 		return ""
 	}
-	return filepath.Join(d.home, ".claude", "projects", projectDir(cs.StartDir), cs.ClaudeSessionID+".jsonl")
+	// Use container-side cwd for encoding when available: Claude Code encodes the
+	// project dir from its own (container-side) working directory, so the JSONL
+	// lives under ~/.claude/projects/<container-encoded>/, not the host-encoded name.
+	dir := cs.StartDir
+	if cs.ContainerStartDir != "" {
+		dir = cs.ContainerStartDir
+	}
+	return filepath.Join(d.home, ".claude", "projects", projectDir(dir), cs.ClaudeSessionID+".jsonl")
 }
 
 // projectDir mirrors Claude Code's encoding of working dir →

@@ -9,6 +9,7 @@ import (
 
 	"github.com/takezoh/agent-roost/auth/credproxy"
 	"github.com/takezoh/agent-roost/config"
+	"github.com/takezoh/agent-roost/lib/pathmap"
 	"github.com/takezoh/agent-roost/sandbox"
 	sandboxdc "github.com/takezoh/agent-roost/sandbox/devcontainer"
 	"github.com/takezoh/agent-roost/state"
@@ -68,27 +69,46 @@ func (l *DevcontainerLauncher) WrapLaunch(frameID state.FrameID, plan state.Laun
 	l.mgr.AcquireFrame(inst)
 	slog.Debug("devcontainer launcher: frame acquired", "frame", frameID, "project", plan.Project)
 
+	mounts := buildMounts(plan.Project, inst.Internal.WorkspaceFolder(), runDir)
+
 	return WrappedLaunch{
 		Command:          cmd,
 		StartDir:         plan.StartDir,
 		Env:              outEnv,
 		Cleanup:          l.makeCleanup(frameID, inst),
 		ContainerSockDir: runDir,
+		Mounts:           mounts,
 	}, nil
 }
 
+// buildMounts constructs the pathmap.Mounts for a devcontainer instance.
+// It registers the workspace mount and the roost run-dir mount.
+func buildMounts(hostProject, containerWS, hostRunDir string) pathmap.Mounts {
+	var ms pathmap.Mounts
+	if hostProject != "" && containerWS != "" {
+		ms = append(ms, pathmap.Mount{Host: hostProject, Container: containerWS})
+	}
+	if hostRunDir != "" {
+		ms = append(ms, pathmap.Mount{Host: hostRunDir, Container: ContainerRunDir})
+	}
+	return ms
+}
+
 // AdoptFrame reclaims an existing devcontainer for a pre-running frame.
-func (l *DevcontainerLauncher) AdoptFrame(ctx context.Context, frameID state.FrameID, projectPath string) (func() error, error) {
+func (l *DevcontainerLauncher) AdoptFrame(ctx context.Context, frameID state.FrameID, projectPath string) (func() error, pathmap.Mounts, error) {
 	if projectPath == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	inst, err := l.mgr.EnsureInstance(ctx, projectPath, "", sandbox.StartOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("devcontainer launcher: adopt frame %s: %w", frameID, err)
+		return nil, nil, fmt.Errorf("devcontainer launcher: adopt frame %s: %w", frameID, err)
 	}
 	l.mgr.AcquireFrame(inst)
 	slog.Debug("devcontainer launcher: frame adopted (warm start)", "frame", frameID, "project", projectPath)
-	return l.makeCleanup(frameID, inst), nil
+
+	runDir := ProjectRunDir(filepath.Join(l.dataDir, "run"), projectPath)
+	mounts := buildMounts(projectPath, inst.Internal.WorkspaceFolder(), runDir)
+	return l.makeCleanup(frameID, inst), mounts, nil
 }
 
 func (l *DevcontainerLauncher) makeCleanup(frameID state.FrameID, inst *sandbox.Instance[*sandboxdc.ContainerState]) func() error {

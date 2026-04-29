@@ -23,6 +23,7 @@ type hookPayload struct {
 	HookEventName  string `json:"hook_event_name"`
 	Prompt         string `json:"prompt"`
 	Cwd            string `json:"cwd"`
+	ContainerCwd   string `json:"container_cwd"` // set by IPC boundary when running sandboxed; container-side cwd before host translation
 	TranscriptPath string `json:"transcript_path"`
 
 	NotificationType string         `json:"notification_type"`
@@ -197,6 +198,9 @@ func (d ClaudeDriver) handleSessionStart(cs ClaudeState, ctx state.FrameContext,
 	cs = absorbIdentityFromHP(cs, hp)
 	if hp.Cwd != "" {
 		cs.StartDir = hp.Cwd
+	}
+	if hp.ContainerCwd != "" {
+		cs.ContainerStartDir = hp.ContainerCwd
 	}
 	if now.IsZero() {
 		now = cs.StatusChangedAt
