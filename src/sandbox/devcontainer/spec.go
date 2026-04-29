@@ -28,14 +28,16 @@ type DevcontainerSpec struct {
 	RemoteUser      string            // docker exec -u (fallback: RemoteUser → ContainerUser → "")
 	RunArgs         []string          // extra docker create args from runArgs field
 	PostCreate      []string          // nil = no postCreateCommand; else exec argv
+	ExtraPostCreate [][]string        // roost-injected extra postCreateCommands, run after PostCreate
 	PreExec         string            // roost extension: shell command run before each docker exec (preExecCommand)
 }
 
 // SpecOverlay carries roost-injected env/mounts merged on top of base devcontainer.json.
 type SpecOverlay struct {
-	Env     map[string]string
-	Mounts  []string // docker --mount format
-	PreExec string   // fallback preExecCommand if not set in devcontainer.json
+	Env        map[string]string
+	Mounts     []string // docker --mount format
+	PreExec    string   // fallback preExecCommand if not set in devcontainer.json
+	PostCreate []string // extra postCreateCommand argv; run after devcontainer.json's postCreateCommand
 }
 
 // ProjectScopeImage returns the project-scope image name for the given hash.
@@ -113,6 +115,9 @@ func (s *DevcontainerSpec) Apply(overlay SpecOverlay) {
 	s.Mounts = append(s.Mounts, overlay.Mounts...)
 	if s.PreExec == "" {
 		s.PreExec = overlay.PreExec
+	}
+	if len(overlay.PostCreate) > 0 {
+		s.ExtraPostCreate = append(s.ExtraPostCreate, overlay.PostCreate)
 	}
 }
 

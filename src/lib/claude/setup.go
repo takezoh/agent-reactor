@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // RegisterHooks registers roost hooks in Claude's settings.json.
@@ -38,6 +39,13 @@ func RegisterHooks(settingsPath, roostBinary string) ([]string, error) {
 	}
 	registered := []string{}
 	command := roostBinary + " event claude"
+	// When ROOST_SOCKET is set (e.g. inside a devcontainer where the socket is
+	// bind-mounted at a fixed path), bake it into the hook command via env(1)
+	// so the socket path is honored even when Claude Code execs the hook
+	// directly (without a shell, where inline VAR=val assignments are ignored).
+	if sock := os.Getenv("ROOST_SOCKET"); sock != "" {
+		command = "env ROOST_SOCKET=" + sock + " " + command
+	}
 
 	for _, event := range events {
 		if addHookEntry(hooks, event, command) {
@@ -53,23 +61,34 @@ func RegisterHooks(settingsPath, roostBinary string) ([]string, error) {
 	return registered, writeSettings(settingsPath, settings)
 }
 
+// addHookEntry upserts a roost hook entry for the given event.
+// If an existing entry already contains the exact command, it returns false (no-op).
+// If an existing entry contains a stale roost command (ends with " event claude"),
+// it is replaced in-place. Otherwise a new entry is appended.
 func addHookEntry(hooks map[string]any, event, command string) bool {
 	entries, _ := hooks[event].([]any)
-	for _, e := range entries {
+
+	for i, e := range entries {
 		if hasCommand(e, command) {
-			return false
+			return false // already up to date
+		}
+		if hasRoostEventCommand(e) {
+			// Replace stale roost hook entry with the current command.
+			entries[i] = map[string]any{
+				"hooks": []any{
+					map[string]any{"type": "command", "command": command},
+				},
+			}
+			hooks[event] = entries
+			return true
 		}
 	}
 
-	entry := map[string]any{
+	hooks[event] = append(entries, map[string]any{
 		"hooks": []any{
-			map[string]any{
-				"type":    "command",
-				"command": command,
-			},
+			map[string]any{"type": "command", "command": command},
 		},
-	}
-	hooks[event] = append(entries, entry)
+	})
 	return true
 }
 
@@ -85,6 +104,27 @@ func hasCommand(entry any, command string) bool {
 			continue
 		}
 		if hm["command"] == command {
+			return true
+		}
+	}
+	return false
+}
+
+// hasRoostEventCommand reports whether entry contains a hook command that ends
+// with " event claude", identifying it as a (possibly stale) roost hook.
+func hasRoostEventCommand(entry any) bool {
+	m, ok := entry.(map[string]any)
+	if !ok {
+		return false
+	}
+	hooksArr, _ := m["hooks"].([]any)
+	for _, h := range hooksArr {
+		hm, ok := h.(map[string]any)
+		if !ok {
+			continue
+		}
+		cmd, _ := hm["command"].(string)
+		if strings.HasSuffix(cmd, " event claude") {
 			return true
 		}
 	}

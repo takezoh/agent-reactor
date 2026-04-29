@@ -1019,6 +1019,23 @@ func TestClaudePrepareLaunchMissingTranscriptSkipsResume(t *testing.T) {
 	}
 }
 
+func TestClaudePrepareLaunchSandboxedMissingTranscriptStillResumes(t *testing.T) {
+	d := NewClaudeDriver(testHome, testEventLogDir, ClaudeOptions{}, "less")
+	cs := ClaudeState{
+		// transcript_path is a container-side path that doesn't exist on host
+		CommonState:     CommonState{StartDir: "/repo", TranscriptPath: "/home/ubuntu/.claude/projects/-repo/uuid-Z.jsonl"},
+		ClaudeSessionID: "uuid-Z",
+	}
+	plan, err := d.PrepareLaunch(cs, state.LaunchModeColdStart, "/repo", "claude", state.LaunchOptions{}, true)
+	if err != nil {
+		t.Fatalf("PrepareLaunch error: %v", err)
+	}
+	want := "claude --dangerously-skip-permissions --resume uuid-Z"
+	if got := plan.Command; got != want {
+		t.Errorf("PrepareLaunch.Command = %q, want %q", got, want)
+	}
+}
+
 func TestClaudePrepareLaunchAlreadyHasResume(t *testing.T) {
 	d := NewClaudeDriver(testHome, testEventLogDir, ClaudeOptions{}, "less")
 	cs := ClaudeState{ClaudeSessionID: "uuid-Y"}

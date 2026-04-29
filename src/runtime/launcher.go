@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 
 	"github.com/takezoh/agent-roost/state"
 )
@@ -61,4 +63,43 @@ func launcher(cfg Config) AgentLauncher {
 		return cfg.Launcher
 	}
 	return DirectLauncher{}
+}
+
+// wrapWithContainerToken generates a bearer token, calls WrapLaunch with
+// ROOST_SOCKET_TOKEN injected into env, and registers the per-project container
+// endpoint + warm-frame state on success. The token is revoked on any wrap
+// failure, and also when the resolved WrappedLaunch is not container-backed
+// (ContainerSockDir == "").
+func (r *Runtime) wrapWithContainerToken(frameID state.FrameID, project string, plan state.LaunchPlan, baseEnv map[string]string) (WrappedLaunch, error) {
+	token, err := r.containerTokens.Generate(frameID)
+	if err != nil {
+		return WrappedLaunch{}, fmt.Errorf("token generate: %w", err)
+	}
+	env := make(map[string]string, len(baseEnv)+1)
+	for k, v := range baseEnv {
+		env[k] = v
+	}
+	env["ROOST_SOCKET_TOKEN"] = token
+
+	wrapped, err := launcher(r.cfg).WrapLaunch(frameID, plan, env)
+	if err != nil {
+		r.containerTokens.Revoke(frameID)
+		return WrappedLaunch{}, fmt.Errorf("launcher wrap: %w", err)
+	}
+
+	if wrapped.ContainerSockDir == "" {
+		r.containerTokens.Revoke(frameID)
+		return wrapped, nil
+	}
+
+	r.startContainerEndpointIfNeeded(project, ContainerSockPath(wrapped.ContainerSockDir))
+	if r.warmFrames != nil {
+		if err := r.warmFrames.Save(WarmFrameState{
+			FrameID:        string(frameID),
+			ContainerToken: token,
+		}); err != nil {
+			slog.Warn("runtime: warm frame save failed", "frame", frameID, "err", err)
+		}
+	}
+	return wrapped, nil
 }

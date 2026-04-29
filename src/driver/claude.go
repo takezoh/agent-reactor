@@ -172,11 +172,16 @@ func (d ClaudeDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, 
 	if path == "" {
 		return state.LaunchPlan{Command: command, StartDir: startDir, Stdin: options.InitialInput}, nil
 	}
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return state.LaunchPlan{Command: command, StartDir: startDir, Stdin: options.InitialInput}, nil
+	// sandboxed: transcript_path is reported from inside the container and is not
+	// visible on the host, so skip the existence check and let claude --resume
+	// handle a missing transcript gracefully.
+	if !sandboxed {
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				return state.LaunchPlan{Command: command, StartDir: startDir, Stdin: options.InitialInput}, nil
+			}
+			return state.LaunchPlan{}, err
 		}
-		return state.LaunchPlan{}, err
 	}
 	return state.LaunchPlan{
 		Command:  command + " --resume " + cs.ClaudeSessionID,

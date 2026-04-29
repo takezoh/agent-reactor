@@ -355,10 +355,13 @@ func (r *Runtime) spawnFrameWindow(id state.SessionID, frame state.SessionFrame,
 	}
 	launch.Project = frame.Project
 
-	baseEnv := map[string]string{"ROOST_SESSION_ID": string(id), "ROOST_FRAME_ID": string(frame.ID)}
-	wrapped, err := launcher(r.cfg).WrapLaunch(frame.ID, launch, baseEnv)
+	baseEnv := map[string]string{
+		"ROOST_SESSION_ID": string(id),
+		"ROOST_FRAME_ID":   string(frame.ID),
+	}
+	wrapped, err := r.wrapWithContainerToken(frame.ID, frame.Project, launch, baseEnv)
 	if err != nil {
-		slog.Error("bootstrap: launcher wrap failed", "id", id, "frame", frame.ID, "err", err)
+		slog.Error("bootstrap: wrap launch failed", "id", id, "frame", frame.ID, "err", err)
 		return err
 	}
 

@@ -8,6 +8,7 @@ import (
 )
 
 func TestRegisterHooks_NewFile(t *testing.T) {
+	t.Setenv("ROOST_SOCKET", "") // ensure no socket path leaks from test environment
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 
@@ -37,6 +38,68 @@ func TestRegisterHooks_NewFile(t *testing.T) {
 	hook := hookArr[0].(map[string]any)
 	if hook["command"] != "/usr/local/bin/roost event claude" {
 		t.Errorf("command = %v", hook["command"])
+	}
+}
+
+func TestRegisterHooks_WithRoostSocket(t *testing.T) {
+	t.Setenv("ROOST_SOCKET", "/opt/roost/run/roost.sock")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	_, err := RegisterHooks(path, "/opt/roost/run/roost")
+	if err != nil {
+		t.Fatalf("RegisterHooks: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+
+	hooks := settings["hooks"].(map[string]any)
+	entries := hooks["SessionStart"].([]any)
+	entry := entries[0].(map[string]any)
+	hookArr := entry["hooks"].([]any)
+	hook := hookArr[0].(map[string]any)
+	want := "env ROOST_SOCKET=/opt/roost/run/roost.sock /opt/roost/run/roost event claude"
+	if hook["command"] != want {
+		t.Errorf("command = %v, want %v", hook["command"], want)
+	}
+}
+
+func TestRegisterHooks_ReplacesStaleRoostEntry(t *testing.T) {
+	t.Setenv("ROOST_SOCKET", "/opt/roost/run/roost.sock")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	// First setup without ROOST_SOCKET (simulates old host-side setup).
+	t.Setenv("ROOST_SOCKET", "")
+	_, err := RegisterHooks(path, "/usr/local/bin/roost")
+	if err != nil {
+		t.Fatalf("first RegisterHooks: %v", err)
+	}
+
+	// Second setup with ROOST_SOCKET set (simulates container-side setup).
+	t.Setenv("ROOST_SOCKET", "/opt/roost/run/roost.sock")
+	_, err = RegisterHooks(path, "/opt/roost/run/roost")
+	if err != nil {
+		t.Fatalf("second RegisterHooks: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+
+	hooks := settings["hooks"].(map[string]any)
+	entries := hooks["SessionStart"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry after replace, got %d", len(entries))
+	}
+	entry := entries[0].(map[string]any)
+	hookArr := entry["hooks"].([]any)
+	hook := hookArr[0].(map[string]any)
+	want := "env ROOST_SOCKET=/opt/roost/run/roost.sock /opt/roost/run/roost event claude"
+	if hook["command"] != want {
+		t.Errorf("command = %v, want %v", hook["command"], want)
 	}
 }
 

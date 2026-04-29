@@ -133,6 +133,11 @@ func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, proxy *C
 			return sandboxdc.SpecOverlay{}, fmt.Errorf("devcontainer: ensure run dir: %w", err)
 		}
 
+		binPath, err := InstallBinaryInRunDir(runDir)
+		if err != nil {
+			return sandboxdc.SpecOverlay{}, fmt.Errorf("devcontainer: install binary: %w", err)
+		}
+
 		env := make(map[string]string)
 		for k, v := range scriptEnv {
 			env[k] = v
@@ -140,14 +145,19 @@ func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, proxy *C
 		for k, v := range proxySpec.Env {
 			env[k] = v
 		}
-		env["ROOST_SOCKET"] = "/opt/roost/run/roost.sock"
+		env["ROOST_SOCKET"] = ContainerSockFilePath
 
 		mounts := []string{
-			fmt.Sprintf("type=bind,source=%s,target=/opt/roost/run", runDir),
+			fmt.Sprintf("type=bind,source=%s,target=%s", runDir, ContainerRunDir),
 		}
 		mounts = append(mounts, proxySpec.Mounts...)
 
-		return sandboxdc.SpecOverlay{Env: env, Mounts: mounts, PreExec: "mise trust 2>/dev/null || true"}, nil
+		return sandboxdc.SpecOverlay{
+			Env:        env,
+			Mounts:     mounts,
+			PreExec:    "mise trust 2>/dev/null || true",
+			PostCreate: []string{"sh", "-c", binPath + " claude setup >/dev/null 2>&1 || true"},
+		}, nil
 	}
 }
 

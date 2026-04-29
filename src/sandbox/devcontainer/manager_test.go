@@ -324,6 +324,38 @@ func TestApplyOverlayEnvAppearsInBuildLaunchCommand(t *testing.T) {
 	}
 }
 
+func TestApplyOverlayPostCreateAppendsToExtraPostCreate(t *testing.T) {
+	t.Run("overlay PostCreate stored in ExtraPostCreate", func(t *testing.T) {
+		s := &DevcontainerSpec{}
+		s.Apply(SpecOverlay{PostCreate: []string{"sh", "-c", "echo hello"}})
+		if len(s.ExtraPostCreate) != 1 {
+			t.Fatalf("ExtraPostCreate len = %d, want 1", len(s.ExtraPostCreate))
+		}
+		if got := s.ExtraPostCreate[0]; len(got) != 3 || got[2] != "echo hello" {
+			t.Errorf("ExtraPostCreate[0] = %v, want [sh -c echo hello]", got)
+		}
+	})
+
+	t.Run("base PostCreate is not modified", func(t *testing.T) {
+		s := &DevcontainerSpec{PostCreate: []string{"bash", "-lc", "npm install"}}
+		s.Apply(SpecOverlay{PostCreate: []string{"sh", "-c", "roost setup"}})
+		if len(s.PostCreate) != 3 {
+			t.Errorf("PostCreate modified, got len %d", len(s.PostCreate))
+		}
+		if len(s.ExtraPostCreate) != 1 {
+			t.Errorf("ExtraPostCreate len = %d, want 1", len(s.ExtraPostCreate))
+		}
+	})
+
+	t.Run("empty overlay PostCreate skipped", func(t *testing.T) {
+		s := &DevcontainerSpec{}
+		s.Apply(SpecOverlay{PostCreate: nil})
+		if len(s.ExtraPostCreate) != 0 {
+			t.Errorf("ExtraPostCreate should be empty, got %v", s.ExtraPostCreate)
+		}
+	})
+}
+
 func TestDevcontainerSpec_effectiveUser(t *testing.T) {
 	cases := []struct {
 		name      string

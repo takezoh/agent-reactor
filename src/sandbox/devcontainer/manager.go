@@ -198,7 +198,7 @@ func (m *Manager) createAndStart(ctx context.Context, projectPath, image string,
 }
 
 func (m *Manager) runPostCreate(containerID string, spec *DevcontainerSpec) {
-	if len(spec.PostCreate) == 0 {
+	if len(spec.PostCreate) == 0 && len(spec.ExtraPostCreate) == 0 {
 		return
 	}
 	readyCtx, readyCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -210,6 +210,9 @@ func (m *Manager) runPostCreate(containerID string, spec *DevcontainerSpec) {
 	pcCtx, pcCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer pcCancel()
 	RunPostCreate(pcCtx, containerID, spec.PostCreate)
+	for _, argv := range spec.ExtraPostCreate {
+		RunPostCreate(pcCtx, containerID, argv)
+	}
 }
 
 // BuildLaunchCommand generates a "docker exec" command to run plan inside inst.
