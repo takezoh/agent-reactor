@@ -244,3 +244,11 @@ keys = ["~/.ssh/id_ed25519"]
 ```
 
 The container receives `SSH_AUTH_SOCK` pointing to the ephemeral agent socket. No key material is written inside the container.
+
+`SSH_AUTH_SOCK` is injected at both container-creation time (`docker create -e`) and at each frame launch (`docker exec -e`). The per-exec injection means that updating `keys` in the config takes effect on the next launch without recreating the container.
+
+**Passphrase-protected keys** are not supported — `ssh-add` runs non-interactively, so passphrase prompts are skipped and a warning is logged.
+
+**`known_hosts`**: roost does not mount `~/.ssh` into the container. If `ssh -T git@github.com` fails with a host-key verification error, add the host key inside the container image (e.g. via `postCreateCommand: "ssh-keyscan github.com >> ~/.ssh/known_hosts"`).
+
+**Container reuse**: the `/opt/roost/run` directory is bind-mounted at container-creation time. If an existing container lacks this mount (created with an older roost version), remove it with `docker rm -f roost-$(echo -n <project-path> | sha256sum | head -c 12)` and relaunch.

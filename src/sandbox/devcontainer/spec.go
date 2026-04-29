@@ -95,12 +95,20 @@ func LoadSpec(projectPath, dcDir string) (*DevcontainerSpec, error) {
 }
 
 // Apply merges roost overlay env and mounts on top of the base spec.
+// Overlay env is written to both ContainerEnv (docker create -e, visible from PID 1) and
+// RemoteEnv (docker exec -e, re-injected on every frame launch). The RemoteEnv path ensures
+// that overlay env reaches exec'd processes even when an existing container is reused,
+// since Config.Env is frozen at container creation time.
 func (s *DevcontainerSpec) Apply(overlay SpecOverlay) {
 	if s.ContainerEnv == nil {
 		s.ContainerEnv = make(map[string]string)
 	}
+	if s.RemoteEnv == nil {
+		s.RemoteEnv = make(map[string]string)
+	}
 	for k, v := range overlay.Env {
 		s.ContainerEnv[k] = v
+		s.RemoteEnv[k] = v
 	}
 	s.Mounts = append(s.Mounts, overlay.Mounts...)
 	if s.PreExec == "" {

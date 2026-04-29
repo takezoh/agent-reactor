@@ -270,6 +270,60 @@ func TestSpecOverlay_PreExecFallback(t *testing.T) {
 	})
 }
 
+func TestApplyMergesOverlayEnvIntoBothContainerAndRemoteEnv(t *testing.T) {
+	s := &DevcontainerSpec{
+		ContainerEnv: map[string]string{"EXISTING": "yes"},
+		RemoteEnv:    map[string]string{"USER_VAR": "from-dc-json"},
+	}
+	s.Apply(SpecOverlay{Env: map[string]string{"SSH_AUTH_SOCK": "/opt/roost/run/agent.sock", "FOO": "bar"}})
+
+	if got := s.ContainerEnv["SSH_AUTH_SOCK"]; got != "/opt/roost/run/agent.sock" {
+		t.Errorf("ContainerEnv[SSH_AUTH_SOCK] = %q, want /opt/roost/run/agent.sock", got)
+	}
+	if got := s.ContainerEnv["FOO"]; got != "bar" {
+		t.Errorf("ContainerEnv[FOO] = %q, want bar", got)
+	}
+	if got := s.RemoteEnv["SSH_AUTH_SOCK"]; got != "/opt/roost/run/agent.sock" {
+		t.Errorf("RemoteEnv[SSH_AUTH_SOCK] = %q, want /opt/roost/run/agent.sock", got)
+	}
+	if got := s.RemoteEnv["FOO"]; got != "bar" {
+		t.Errorf("RemoteEnv[FOO] = %q, want bar", got)
+	}
+	// pre-existing keys are preserved
+	if got := s.ContainerEnv["EXISTING"]; got != "yes" {
+		t.Errorf("ContainerEnv[EXISTING] = %q, want yes", got)
+	}
+	if got := s.RemoteEnv["USER_VAR"]; got != "from-dc-json" {
+		t.Errorf("RemoteEnv[USER_VAR] = %q, want from-dc-json", got)
+	}
+}
+
+func TestApplyOverlayEnvAppearsInBuildLaunchCommand(t *testing.T) {
+	const project = "/workspace/myapp"
+	spec := &DevcontainerSpec{
+		ProjectPath:     project,
+		ContainerEnv:    map[string]string{},
+		RemoteEnv:       map[string]string{},
+		WorkspaceFolder: "/workspaces/myapp",
+	}
+	spec.Apply(SpecOverlay{Env: map[string]string{"SSH_AUTH_SOCK": "/opt/roost/run/agent.sock"}})
+
+	inst := &sandbox.Instance[*ContainerState]{
+		ProjectPath: project,
+		Internal:    &ContainerState{containerID: "ctr999", spec: spec},
+	}
+	m := &Manager{}
+	plan := state.LaunchPlan{Project: project, StartDir: project, Command: "claude"}
+
+	got, _, err := m.BuildLaunchCommand(inst, plan, nil)
+	if err != nil {
+		t.Fatalf("BuildLaunchCommand error: %v", err)
+	}
+	if !strings.Contains(got, "SSH_AUTH_SOCK=/opt/roost/run/agent.sock") {
+		t.Errorf("docker exec command missing SSH_AUTH_SOCK: %s", got)
+	}
+}
+
 func TestDevcontainerSpec_effectiveUser(t *testing.T) {
 	cases := []struct {
 		name      string
