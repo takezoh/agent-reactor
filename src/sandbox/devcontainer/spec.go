@@ -3,6 +3,7 @@ package devcontainer
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,9 @@ import (
 	"github.com/tailscale/hujson"
 )
 
+// ErrMissingImage is returned when devcontainer.json has neither image nor build.name.
+var ErrMissingImage = errors.New("devcontainer.json: image or build.name is required (roost does not build images)")
+
 var localEnvRe = regexp.MustCompile(`\$\{localEnv:([A-Za-z_][A-Za-z0-9_]*)\}`)
 var containerEnvRe = regexp.MustCompile(`\$\{containerEnv:([A-Za-z_][A-Za-z0-9_]*)\}`)
 
@@ -19,6 +23,7 @@ var containerEnvRe = regexp.MustCompile(`\$\{containerEnv:([A-Za-z_][A-Za-z0-9_]
 // derived from devcontainer.json with roost overlay applied.
 type DevcontainerSpec struct {
 	ProjectPath     string
+	Image           string            // resolved from devcontainer.json image: or build.name
 	ContainerEnv    map[string]string
 	RemoteEnv       map[string]string // applied via docker exec -e (like VS Code remote processes)
 	Mounts          []string          // docker --mount or -v format
@@ -40,21 +45,6 @@ type SpecOverlay struct {
 	PostCreate []string // extra postCreateCommand argv; run after devcontainer.json's postCreateCommand
 }
 
-// ProjectScopeImage returns the project-scope image name for the given hash.
-func ProjectScopeImage(hash string) string {
-	return fmt.Sprintf("roost-proj-%s:latest", hash)
-}
-
-// ProjectScopeImageForPath returns the project-scope image name for projectPath.
-func ProjectScopeImageForPath(projectPath string) string {
-	return ProjectScopeImage(projectHash(projectPath))
-}
-
-// UserScopeImage returns the shared user-scope image name.
-func UserScopeImage() string {
-	return "roost-user:latest"
-}
-
 func projectHash(projectPath string) string {
 	h := sha256.Sum256([]byte(projectPath))
 	return fmt.Sprintf("%x", h[:6])
@@ -70,8 +60,14 @@ func LoadSpec(projectPath, dcDir string) (*DevcontainerSpec, error) {
 		return nil, fmt.Errorf("devcontainer spec: %w", err)
 	}
 
+	image, err := resolveImage(doc)
+	if err != nil {
+		return nil, fmt.Errorf("devcontainer spec: %w", err)
+	}
+
 	spec := &DevcontainerSpec{
 		ProjectPath:     projectPath,
+		Image:           image,
 		ContainerEnv:    cloneEnv(doc.ContainerEnv),
 		RemoteEnv:       cloneEnv(doc.RemoteEnv),
 		ContainerUser:   extractString(doc.Extra, "containerUser"),
@@ -236,9 +232,17 @@ func substituteVarsInStr(s, projectPath, containerWS string) string {
 	return s
 }
 
+// buildDoc holds the build object in devcontainer.json.
+// Name is a roost extension: the image tag the user assigns when building externally.
+type buildDoc struct {
+	Name string `json:"name"`
+}
+
 // devcontainerDoc is the subset of devcontainer.json that roost parses.
 // All other keys are captured in Extra and round-tripped verbatim.
 type devcontainerDoc struct {
+	Image        string                     `json:"image,omitempty"`
+	Build        *buildDoc                  `json:"build,omitempty"`
 	Mounts       []json.RawMessage          `json:"mounts,omitempty"`
 	ContainerEnv map[string]string          `json:"containerEnv,omitempty"`
 	RemoteEnv    map[string]string          `json:"remoteEnv,omitempty"`
@@ -246,31 +250,38 @@ type devcontainerDoc struct {
 }
 
 func (d *devcontainerDoc) UnmarshalJSON(data []byte) error {
-	type plain struct {
-		Mounts       []json.RawMessage `json:"mounts"`
-		ContainerEnv map[string]string `json:"containerEnv"`
-		RemoteEnv    map[string]string `json:"remoteEnv"`
-	}
+	type plain devcontainerDoc
 	var p plain
 	if err := json.Unmarshal(data, &p); err != nil {
 		return err
 	}
-	d.Mounts = p.Mounts
-	d.ContainerEnv = p.ContainerEnv
-	d.RemoteEnv = p.RemoteEnv
+	*d = devcontainerDoc(p)
 
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 	d.Extra = make(map[string]json.RawMessage)
-	skip := map[string]bool{"mounts": true, "containerEnv": true, "remoteEnv": true}
+	skip := map[string]bool{"image": true, "build": true, "mounts": true, "containerEnv": true, "remoteEnv": true}
 	for k, v := range raw {
 		if !skip[k] {
 			d.Extra[k] = v
 		}
 	}
 	return nil
+}
+
+// resolveImage derives the image name from devcontainer.json.
+// Priority: top-level image: → build.name.
+// Returns ErrMissingImage when neither is set.
+func resolveImage(doc *devcontainerDoc) (string, error) {
+	if doc.Image != "" {
+		return doc.Image, nil
+	}
+	if doc.Build != nil && doc.Build.Name != "" {
+		return doc.Build.Name, nil
+	}
+	return "", ErrMissingImage
 }
 
 func readDC(path string) (*devcontainerDoc, error) {

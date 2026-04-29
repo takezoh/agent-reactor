@@ -203,10 +203,7 @@ func newAgentLauncher(ctx context.Context, sb config.SandboxConfig, resolver *co
 		Direct:   runtime.DirectLauncher{},
 	}
 	if sb.Mode == "devcontainer" {
-		cli, err := sandboxdc.NewCLI(sb.Devcontainer.CLIPath)
-		if err != nil {
-			return nil, fmt.Errorf("sandbox: devcontainer CLI unavailable: %w", err)
-		}
+		var err error
 		var runner *runtime.CredProxyRunner
 		if sb.Proxy.Enabled {
 			runner, err = runtime.StartCredProxy(ctx, dataDir)
@@ -217,9 +214,7 @@ func newAgentLauncher(ctx context.Context, sb config.SandboxConfig, resolver *co
 		overlayFn := runtime.BuildOverlayFunc(func(project string) config.SandboxConfig {
 			return resolver.Resolve(project)
 		}, runner, dataDir)
-		mgr := sandboxdc.New(cli, overlayFn, sandboxdc.Config{
-			CLIPath:         sb.Devcontainer.CLIPath,
-			ExtraBuildArgs:  sb.Devcontainer.ExtraBuildArgs,
+		mgr := sandboxdc.New(overlayFn, sandboxdc.Config{
 			ExtraCreateArgs: sb.Devcontainer.ExtraCreateArgs,
 		})
 		d.Devcontainer = runtime.NewDevcontainerLauncher(mgr, func(project string) config.SandboxConfig {

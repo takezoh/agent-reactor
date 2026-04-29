@@ -5,13 +5,13 @@ import (
 )
 
 func TestMergeSandbox_NilProject(t *testing.T) {
-	user := SandboxConfig{Mode: "devcontainer", Devcontainer: DevcontainerConfig{CLIPath: "devcontainer"}}
+	user := SandboxConfig{Mode: "devcontainer", Devcontainer: DevcontainerConfig{EnvScript: "~/bin/env.sh"}}
 	got := MergeSandbox(user, nil)
 	if got.Mode != "devcontainer" {
 		t.Errorf("Mode = %q, want devcontainer", got.Mode)
 	}
-	if got.Devcontainer.CLIPath != "devcontainer" {
-		t.Errorf("CLIPath = %q, want devcontainer", got.Devcontainer.CLIPath)
+	if got.Devcontainer.EnvScript != "~/bin/env.sh" {
+		t.Errorf("EnvScript = %q, want ~/bin/env.sh", got.Devcontainer.EnvScript)
 	}
 }
 
@@ -33,39 +33,21 @@ func TestMergeSandbox_ModeEmpty_UserWins(t *testing.T) {
 	}
 }
 
-func TestMergeSandbox_CLIPathOverride(t *testing.T) {
-	user := SandboxConfig{Devcontainer: DevcontainerConfig{CLIPath: "devcontainer"}}
-	project := &SandboxConfig{Devcontainer: DevcontainerConfig{CLIPath: "/usr/local/bin/devcontainer"}}
+func TestMergeSandbox_ExtraCreateArgsConcat(t *testing.T) {
+	user := SandboxConfig{Devcontainer: DevcontainerConfig{ExtraCreateArgs: []string{"--shm-size=2g"}}}
+	project := &SandboxConfig{Devcontainer: DevcontainerConfig{ExtraCreateArgs: []string{"--ulimit=nofile=1024"}}}
 	got := MergeSandbox(user, project)
-	if got.Devcontainer.CLIPath != "/usr/local/bin/devcontainer" {
-		t.Errorf("CLIPath = %q, want /usr/local/bin/devcontainer (project wins)", got.Devcontainer.CLIPath)
+	if len(got.Devcontainer.ExtraCreateArgs) != 2 {
+		t.Errorf("ExtraCreateArgs = %v, want 2 items (user+project concat)", got.Devcontainer.ExtraCreateArgs)
 	}
 }
 
-func TestMergeSandbox_CLIPathEmpty_UserWins(t *testing.T) {
-	user := SandboxConfig{Devcontainer: DevcontainerConfig{CLIPath: "devcontainer"}}
+func TestMergeSandbox_ExtraCreateArgs_ProjectEmpty(t *testing.T) {
+	user := SandboxConfig{Devcontainer: DevcontainerConfig{ExtraCreateArgs: []string{"--shm-size=2g"}}}
 	project := &SandboxConfig{}
 	got := MergeSandbox(user, project)
-	if got.Devcontainer.CLIPath != "devcontainer" {
-		t.Errorf("CLIPath = %q, want devcontainer (project empty, user wins)", got.Devcontainer.CLIPath)
-	}
-}
-
-func TestMergeSandbox_ExtraBuildArgsConcat(t *testing.T) {
-	user := SandboxConfig{Devcontainer: DevcontainerConfig{ExtraBuildArgs: []string{"--remove-existing-container"}}}
-	project := &SandboxConfig{Devcontainer: DevcontainerConfig{ExtraBuildArgs: []string{"--skip-non-blocking-commands"}}}
-	got := MergeSandbox(user, project)
-	if len(got.Devcontainer.ExtraBuildArgs) != 2 {
-		t.Errorf("ExtraBuildArgs = %v, want 2 items (user+project concat)", got.Devcontainer.ExtraBuildArgs)
-	}
-}
-
-func TestMergeSandbox_ExtraBuildArgs_ProjectEmpty(t *testing.T) {
-	user := SandboxConfig{Devcontainer: DevcontainerConfig{ExtraBuildArgs: []string{"--remove-existing-container"}}}
-	project := &SandboxConfig{}
-	got := MergeSandbox(user, project)
-	if len(got.Devcontainer.ExtraBuildArgs) != 1 {
-		t.Errorf("ExtraBuildArgs = %v, want 1 item (user only)", got.Devcontainer.ExtraBuildArgs)
+	if len(got.Devcontainer.ExtraCreateArgs) != 1 {
+		t.Errorf("ExtraCreateArgs = %v, want 1 item (user only)", got.Devcontainer.ExtraCreateArgs)
 	}
 }
 
@@ -87,14 +69,14 @@ func TestMergeSandbox_ProxyNilProject(t *testing.T) {
 }
 
 func TestMergeSandbox_DoesNotMutateInput(t *testing.T) {
-	user := SandboxConfig{Devcontainer: DevcontainerConfig{ExtraBuildArgs: []string{"--a"}}}
-	project := &SandboxConfig{Devcontainer: DevcontainerConfig{ExtraBuildArgs: []string{"--b"}}}
+	user := SandboxConfig{Devcontainer: DevcontainerConfig{ExtraCreateArgs: []string{"--a"}}}
+	project := &SandboxConfig{Devcontainer: DevcontainerConfig{ExtraCreateArgs: []string{"--b"}}}
 	got := MergeSandbox(user, project)
-	got.Devcontainer.ExtraBuildArgs = append(got.Devcontainer.ExtraBuildArgs, "--c")
-	if len(user.Devcontainer.ExtraBuildArgs) != 1 {
-		t.Errorf("user ExtraBuildArgs mutated: %v", user.Devcontainer.ExtraBuildArgs)
+	got.Devcontainer.ExtraCreateArgs = append(got.Devcontainer.ExtraCreateArgs, "--c")
+	if len(user.Devcontainer.ExtraCreateArgs) != 1 {
+		t.Errorf("user ExtraCreateArgs mutated: %v", user.Devcontainer.ExtraCreateArgs)
 	}
-	if len(project.Devcontainer.ExtraBuildArgs) != 1 {
-		t.Errorf("project ExtraBuildArgs mutated: %v", project.Devcontainer.ExtraBuildArgs)
+	if len(project.Devcontainer.ExtraCreateArgs) != 1 {
+		t.Errorf("project ExtraCreateArgs mutated: %v", project.Devcontainer.ExtraCreateArgs)
 	}
 }

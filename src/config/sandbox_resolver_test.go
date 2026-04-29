@@ -108,21 +108,3 @@ keys = ["~/.ssh/id_ed25519_project"]
 	}
 }
 
-func TestSandboxResolver_DevcontainerCLIPathOverride(t *testing.T) {
-	user := SandboxConfig{Mode: "devcontainer", Devcontainer: DevcontainerConfig{CLIPath: "devcontainer"}}
-	dir := t.TempDir()
-	roostDir := filepath.Join(dir, ".roost")
-	os.MkdirAll(roostDir, 0o755)
-	os.WriteFile(filepath.Join(roostDir, "settings.toml"), []byte(`[sandbox.devcontainer]
-cli_path = "/usr/local/bin/devcontainer"
-`), 0o644)
-
-	r := NewSandboxResolver(user)
-	got := r.Resolve(dir)
-	if got.Devcontainer.CLIPath != "/usr/local/bin/devcontainer" {
-		t.Errorf("CLIPath = %q, want /usr/local/bin/devcontainer (project overrides)", got.Devcontainer.CLIPath)
-	}
-	if got.Mode != "devcontainer" {
-		t.Errorf("Mode = %q, want devcontainer (not overridden)", got.Mode)
-	}
-}

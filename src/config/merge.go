@@ -4,8 +4,8 @@ package config
 // user-scope and project-scope settings. Merge rules:
 //   - project == nil: return user unchanged
 //   - Mode (scalar): project wins when non-empty
-//   - Devcontainer.CLIPath, EnvScript (scalars): project wins when non-empty
-//   - Devcontainer.ExtraUpArgs (list): user + project concat
+//   - Devcontainer.EnvScript (scalar): project wins when non-empty
+//   - Devcontainer.ExtraCreateArgs (list): user + project concat
 //   - Proxy.Enabled: user wins (proxy is process-wide)
 //   - Proxy.SSHAgent.Keys: project replaces when non-empty
 func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
@@ -15,8 +15,6 @@ func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 	out := SandboxConfig{
 		Mode: user.Mode,
 		Devcontainer: DevcontainerConfig{
-			CLIPath:               user.Devcontainer.CLIPath,
-			ExtraBuildArgs:        appendSlice(user.Devcontainer.ExtraBuildArgs, project.Devcontainer.ExtraBuildArgs),
 			ExtraCreateArgs:       appendSlice(user.Devcontainer.ExtraCreateArgs, project.Devcontainer.ExtraCreateArgs),
 			EnvScript:             user.Devcontainer.EnvScript,
 			AllowProjectEnvScript: user.Devcontainer.AllowProjectEnvScript,
@@ -30,9 +28,6 @@ func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 	}
 	if project.Mode != "" {
 		out.Mode = project.Mode
-	}
-	if project.Devcontainer.CLIPath != "" {
-		out.Devcontainer.CLIPath = project.Devcontainer.CLIPath
 	}
 	if project.Devcontainer.EnvScript != "" {
 		out.Devcontainer.EnvScript = project.Devcontainer.EnvScript

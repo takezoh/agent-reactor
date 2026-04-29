@@ -3,7 +3,8 @@
   "name": "test-build",
   "build": {
     "dockerfile": "Dockerfile", // relative path
-    "context": "."
+    "context": ".",
+    "name": "test-build:latest" // roost extension: image name to use after building
   },
   "remoteUser": "vscode",
   "containerEnv": {

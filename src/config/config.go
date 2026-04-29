@@ -51,13 +51,6 @@ func (s SandboxConfig) Validate() error {
 
 // DevcontainerConfig holds settings for the devcontainer sandbox mode.
 type DevcontainerConfig struct {
-	// CLIPath is the devcontainer CLI binary name or absolute path.
-	// Default: "devcontainer" (resolved via PATH).
-	CLIPath string `toml:"cli_path"`
-
-	// ExtraBuildArgs are appended verbatim to "devcontainer build" (roost build).
-	ExtraBuildArgs []string `toml:"extra_build_args"`
-
 	// ExtraCreateArgs are appended verbatim to "docker create".
 	ExtraCreateArgs []string `toml:"extra_create_args"`
 

@@ -6,7 +6,7 @@ Sandbox backends isolate agent processes per project — each project directory 
 
 The state layer knows only `LaunchPlan.Project` (the project path); it has no awareness of which backend is active. Backend selection and command wrapping live in the runtime layer; container lifecycle lives in the `sandbox/` package.
 
-Image build uses `@devcontainers/cli` (`devcontainer build`); container lifecycle (create / start / exec / remove) uses docker directly.
+Roost does not build images. The image name is declared by the user in `devcontainer.json` (`image:` or `build.name`). Container lifecycle (create / start / exec / remove) uses docker directly.
 
 ## Layer Responsibilities
 
@@ -27,7 +27,7 @@ Image build uses `@devcontainers/cli` (`devcontainer build`); container lifecycl
 | Config resolution | User scope + project scope merged by `config.SandboxResolver` with mtime-based caching | Default direct mode; individual repos opt into devcontainer without daemon restart |
 | Lifecycle and effect | detach → `EffDetachClient` only (container survives); shutdown → `EffReleaseFrameSandboxes` then `EffKillSession` (container destroyed); SIGINT (ctx cancel) → same as detach | Container lifetime decisions are expressed as state-layer effects, ordered in the event loop rather than a defer stack |
 | Crash recovery | `PruneOrphans` at daemon startup enumerates containers labelled `roost-managed=1` and kills any whose project is not in sessions.json | Covers SIGKILL / panic paths where defer and effects never run. sessions.json is the ground truth |
-| Image resolution | `ResolveImage` checks `roost-proj-<hash>` then `roost-user` via `docker image inspect` at session start | No fallback to arbitrary images; explicit `roost build` is required. Build-time and run-time scope selection are cleanly separated |
+| Image resolution | `LoadSpec` reads `image:` (top-level) then `build.name` from devcontainer.json | Roost does not build images. The user builds externally and declares the image name in devcontainer.json |
 
 ## Frame Lifecycle Interaction
 
@@ -45,26 +45,40 @@ Image build uses `@devcontainers/cli` (`devcontainer build`); container lifecycl
 
 ## Devcontainer Backend
 
-### Image Build
+### Image Preparation
 
-Images are built explicitly with `roost build`, not on-demand at session start:
+Roost does not build images. Build them outside roost by any means (e.g. `devcontainer build`, `docker build`) and declare the resulting tag in the project's `.devcontainer/devcontainer.json`:
 
-```sh
-roost build <project-path>   # builds roost-proj-<hash>:latest for a specific project
-roost build --user           # builds roost-user:latest from ~/.devcontainer/
+```jsonc
+// Option A — use a pre-existing image directly
+{ "image": "myproject:dev" }
+
+// Option B — Dockerfile-based project: set build.name (roost extension) as the tag
+{
+  "build": {
+    "dockerfile": "Dockerfile",
+    "name": "myproject:dev"  // roost reads this as the image to use
+  }
+}
 ```
 
-`roost build` calls `devcontainer build --config <materializeDir>/devcontainer.json --image-name <image>`.
+Then build and tag the image yourself before starting a session:
 
-A project that has no `.devcontainer/devcontainer.json` uses the user-scope image instead.
+```sh
+devcontainer build --workspace-folder . --image-name myproject:dev
+# or
+docker build -t myproject:dev .
+```
 
 ### Image Resolution
 
-At session start, `ResolveImage` selects the image for a project:
+At session start, `LoadSpec` reads the image name from `.devcontainer/devcontainer.json`:
 
-1. Check `roost-proj-<hash>:latest` via `docker image inspect`. If it exists, use it with the project's own materialize dir.
-2. Check `roost-user:latest`. If it exists, use it with `~/.roost/user/devcontainer/`.
-3. Neither found → return an error directing the user to run `roost build`.
+1. If `image:` is set → use it.
+2. Else if `build.name` is set → use it.
+3. Neither found → error: `devcontainer.json: image or build.name is required`.
+
+The image must already exist locally (or be pullable by docker on first `docker create`).
 
 ### Container Identity
 
@@ -73,7 +87,7 @@ One long-lived container per project idles between frame activations. Frames joi
 - Container name: `roost-<sha256[:6] of project path>`
 - Labels: `roost-managed=1`, `roost-project=<abs-path>`
 
-Multiple projects sharing `roost-user:latest` each get their own container; image sharing happens at build time only.
+Multiple projects can share the same image name (declare the same `image:` or `build.name`). Each project still gets its own container.
 
 ### Workspace Mount
 
@@ -91,6 +105,8 @@ Keys parsed from devcontainer.json:
 
 | Key | Effect |
 |---|---|
+| `image` | Image name to use (standard devcontainer.json field) |
+| `build.name` | Image name to use when `build:` is present (roost extension; `--image-name` equivalent) |
 | `mounts` | Extra bind-mounts passed as `--mount` / `-v` to `docker create` |
 | `containerEnv` | Environment variables injected via `-e` |
 | `containerUser` | User for `docker create -u` |

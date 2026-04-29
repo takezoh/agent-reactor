@@ -2,10 +2,8 @@ package devcontainer
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -27,15 +25,12 @@ type ContainerState struct {
 
 // Config carries devcontainer-specific parameters.
 type Config struct {
-	CLIPath         string   // resolved path to devcontainer binary
-	ExtraBuildArgs  []string // extra args for "devcontainer build"
 	ExtraCreateArgs []string // extra args for "docker create"
 }
 
 // Manager implements sandbox.Manager[*ContainerState] using direct docker commands.
-// Image builds are never triggered here; call CLI.Build (via "roost build") separately.
+// Roost does not build images; the image name is read from devcontainer.json (image: or build.name).
 type Manager struct {
-	cli        *CLI
 	overlayFn  OverlayFunc
 	cfg        Config
 	mu         sync.Mutex
@@ -43,10 +38,9 @@ type Manager struct {
 	containers map[string]*ContainerState // key = projectPath
 }
 
-// New returns a Manager. cli must be non-nil. overlayFn may be nil.
-func New(cli *CLI, overlayFn OverlayFunc, cfg Config) *Manager {
+// New returns a Manager. overlayFn may be nil.
+func New(overlayFn OverlayFunc, cfg Config) *Manager {
 	return &Manager{
-		cli:        cli,
 		overlayFn:  overlayFn,
 		cfg:        cfg,
 		containers: make(map[string]*ContainerState),
@@ -54,7 +48,7 @@ func New(cli *CLI, overlayFn OverlayFunc, cfg Config) *Manager {
 }
 
 // EnsureInstance ensures the devcontainer for projectPath is running.
-// Returns an error if the roost-managed image does not exist (run "roost build" first).
+// Returns an error if the image declared in devcontainer.json does not exist locally.
 func (m *Manager) EnsureInstance(ctx context.Context, projectPath, _ string, _ sandbox.StartOptions) (*sandbox.Instance[*ContainerState], error) {
 	_, err, _ := m.inflight.Do(projectPath, func() (any, error) {
 		return nil, m.ensureContainer(ctx, projectPath)
@@ -91,22 +85,19 @@ func (m *Manager) ensureContainer(ctx context.Context, projectPath string) error
 		return fmt.Errorf("devcontainer: find container: %w", err)
 	}
 
-	t = time.Now()
-	resolveCtx, resolveCancel := context.WithTimeout(ctx, 10*time.Second)
-	image, dcDir, err := ResolveImage(resolveCtx, projectPath)
-	resolveCancel()
-	slog.Info("devcontainer: stage", "name", "resolve_image", "elapsed", time.Since(t), "project", projectPath)
+	dcPath, err := FindDevcontainerPath(projectPath)
 	if err != nil {
 		return fmt.Errorf("devcontainer: %w", err)
 	}
 
 	t = time.Now()
-	spec, err := m.loadSpec(projectPath, dcDir)
-	slog.Info("devcontainer: stage", "name", "load_spec", "elapsed", time.Since(t), "project", projectPath)
+	spec, err := m.loadSpec(projectPath, filepath.Dir(dcPath))
 	if err != nil {
 		return err
 	}
+	slog.Info("devcontainer: stage", "name", "load_spec", "image", spec.Image, "elapsed", time.Since(t), "project", projectPath)
 
+	image := spec.Image
 	if imgEnv, err := ImageEnv(ctx, image); err != nil {
 		slog.Warn("devcontainer: image env probe failed; ${containerEnv:*} not resolved",
 			"image", image, "err", err)
@@ -322,6 +313,3 @@ func shortID(id string) string {
 	return id
 }
 
-// Compile-time check: errors and exec are used.
-var _ = errors.New
-var _ = exec.Command

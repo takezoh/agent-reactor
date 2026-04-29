@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -20,23 +19,6 @@ func setupProjectDC(t *testing.T, content string) string {
 		t.Fatal(err)
 	}
 	return dir
-}
-
-// setupUserDC creates a fake home with ~/.devcontainer/devcontainer.json.
-func setupUserDC(t *testing.T, content string, extraFiles map[string]string) string {
-	t.Helper()
-	fakeHome := t.TempDir()
-	dcDir := filepath.Join(fakeHome, ".devcontainer")
-	os.MkdirAll(dcDir, 0o755)
-	if err := os.WriteFile(filepath.Join(dcDir, "devcontainer.json"), []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for name, body := range extraFiles {
-		if err := os.WriteFile(filepath.Join(dcDir, name), []byte(body), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return fakeHome
 }
 
 // ── ProjectBaseDC ─────────────────────────────────────────────────────────────
@@ -58,31 +40,6 @@ func TestProjectBaseDC_notFound(t *testing.T) {
 	_, err := ProjectBaseDC(project)
 	if !errors.Is(err, ErrNoProjectDevcontainer) {
 		t.Errorf("expected ErrNoProjectDevcontainer, got %v", err)
-	}
-}
-
-// ── UserBaseDC ────────────────────────────────────────────────────────────────
-
-func TestUserBaseDC_found(t *testing.T) {
-	fakeHome := setupUserDC(t, `{"image":"default"}`, nil)
-	t.Setenv("HOME", fakeHome)
-
-	got, err := UserBaseDC()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(got, fakeHome) {
-		t.Errorf("expected path under %s, got %q", fakeHome, got)
-	}
-}
-
-func TestUserBaseDC_notFound(t *testing.T) {
-	fakeHome := t.TempDir()
-	t.Setenv("HOME", fakeHome)
-
-	_, err := UserBaseDC()
-	if !errors.Is(err, ErrNoUserDevcontainer) {
-		t.Errorf("expected ErrNoUserDevcontainer, got %v", err)
 	}
 }
 
