@@ -206,9 +206,9 @@ func stripWorktreeFlag(command string) string {
 	return stripped
 }
 
-const claudeSandboxSkipFlag = "--dangerously-skip-permissions"
+const claudeSandboxSkipFlag = "--allow-dangerously-skip-permissions"
 
-// ensureClaudeSandboxFlag appends --dangerously-skip-permissions unless already
+// ensureClaudeSandboxFlag appends --allow-dangerously-skip-permissions unless already
 // present. Required because devcontainer sandboxes block the permission prompt
 // that normally gates tool use, making the flag mandatory for any activity.
 func ensureClaudeSandboxFlag(command string, sandboxed bool) string {

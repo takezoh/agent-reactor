@@ -75,7 +75,7 @@ func handlePendingCreate(s State, pending PendingCreate, e EvJobResult) (State, 
 	}
 
 	initialInput := frame.LaunchOptions.InitialInput
-	nextDS, launch, err := planner.CompleteCreate(
+	nextDS, createLaunch, err := planner.CompleteCreate(
 		frame.Driver,
 		frame.Command,
 		frame.LaunchOptions,
@@ -85,9 +85,14 @@ func handlePendingCreate(s State, pending PendingCreate, e EvJobResult) (State, 
 	if err != nil {
 		return s, []Effect{errResp(pending.ReplyConn, pending.ReplyReqID, ErrCodeInvalidArgument, err.Error())}
 	}
+	sandboxed := s.SandboxedProject != nil && s.SandboxedProject(frame.Project)
+	plan, err := drv.PrepareLaunch(nextDS, LaunchModeCreate, frame.Project, createLaunch.Command, createLaunch.Options, sandboxed)
+	if err != nil {
+		return s, []Effect{errResp(pending.ReplyConn, pending.ReplyReqID, ErrCodeInvalidArgument, err.Error())}
+	}
 	pending.Session.Frames = append([]SessionFrame(nil), pending.Session.Frames...)
 	pending.Session.Frames[frameIdx].Driver = nextDS
-	pending.Session.Frames[frameIdx].LaunchOptions = launch.Options
+	pending.Session.Frames[frameIdx].LaunchOptions = plan.Options
 	s.Sessions = cloneSessions(s.Sessions)
 	s.Sessions[pending.Session.ID] = pending.Session
 	return s, []Effect{
@@ -96,9 +101,9 @@ func handlePendingCreate(s State, pending PendingCreate, e EvJobResult) (State, 
 			FrameID:   pending.FrameID,
 			Mode:      LaunchModeCreate,
 			Project:   frame.Project,
-			Command:   launch.Command,
-			StartDir:  launch.StartDir,
-			Options:   launch.Options,
+			Command:   plan.Command,
+			StartDir:  plan.StartDir,
+			Options:   plan.Options,
 			Stdin:     initialInput,
 			Env: map[string]string{
 				"ROOST_SESSION_ID": string(pending.Session.ID),

@@ -1030,7 +1030,7 @@ func TestClaudePrepareLaunchSandboxedMissingTranscriptStillResumes(t *testing.T)
 	if err != nil {
 		t.Fatalf("PrepareLaunch error: %v", err)
 	}
-	want := "claude --dangerously-skip-permissions --resume uuid-Z"
+	want := "claude --allow-dangerously-skip-permissions --resume uuid-Z"
 	if got := plan.Command; got != want {
 		t.Errorf("PrepareLaunch.Command = %q, want %q", got, want)
 	}
@@ -1137,6 +1137,23 @@ func TestClaudePrepareLaunchManagedWorktreeSkipsFlag(t *testing.T) {
 	}
 }
 
+func TestClaudeWorktreeLaunchAddsSandboxFlag(t *testing.T) {
+	d, cs, _ := newClaude(t)
+	cs.StartDir = "/repo/.roost/worktrees/feature"
+	cs.ManagedWorkingDir = "/repo/.roost/worktrees/feature"
+	plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", "claude", state.LaunchOptions{}, true)
+	if err != nil {
+		t.Fatalf("PrepareLaunch error: %v", err)
+	}
+	want := "claude --allow-dangerously-skip-permissions"
+	if plan.Command != want {
+		t.Errorf("PrepareLaunch.Command = %q, want %q", plan.Command, want)
+	}
+	if plan.StartDir != "/repo/.roost/worktrees/feature" {
+		t.Errorf("StartDir = %q, want worktree dir", plan.StartDir)
+	}
+}
+
 func TestClaudePrepareLaunchWorktreeFromCommand(t *testing.T) {
 	d, cs, _ := newClaude(t)
 	plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", "claude --worktree", state.LaunchOptions{}, false)
@@ -1154,18 +1171,18 @@ func TestClaudePrepareLaunchAddsSandboxFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareLaunch error: %v", err)
 	}
-	if plan.Command != "claude --dangerously-skip-permissions" {
+	if plan.Command != "claude --allow-dangerously-skip-permissions" {
 		t.Errorf("PrepareLaunch.Command = %q, want sandbox flag appended", plan.Command)
 	}
 }
 
 func TestClaudePrepareLaunchSkipsDuplicateSandboxFlag(t *testing.T) {
 	d, cs, _ := newClaude(t)
-	plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", "claude --dangerously-skip-permissions", state.LaunchOptions{}, true)
+	plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", "claude --allow-dangerously-skip-permissions", state.LaunchOptions{}, true)
 	if err != nil {
 		t.Fatalf("PrepareLaunch error: %v", err)
 	}
-	if plan.Command != "claude --dangerously-skip-permissions" {
+	if plan.Command != "claude --allow-dangerously-skip-permissions" {
 		t.Errorf("PrepareLaunch.Command = %q, want no duplicate flag", plan.Command)
 	}
 }
@@ -1193,7 +1210,7 @@ func TestClaudePrepareLaunchSandboxFlagWithResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareLaunch error: %v", err)
 	}
-	want := "claude --dangerously-skip-permissions --resume uuid-Z"
+	want := "claude --allow-dangerously-skip-permissions --resume uuid-Z"
 	if plan.Command != want {
 		t.Errorf("PrepareLaunch.Command = %q, want %q", plan.Command, want)
 	}
@@ -1214,7 +1231,7 @@ func TestClaudePrepareLaunchSandboxedResumeWithContainerTranscriptPath(t *testin
 	if err != nil {
 		t.Fatalf("PrepareLaunch error: %v", err)
 	}
-	want := "claude --dangerously-skip-permissions --resume uuid-C"
+	want := "claude --allow-dangerously-skip-permissions --resume uuid-C"
 	if plan.Command != want {
 		t.Errorf("PrepareLaunch.Command = %q, want %q", plan.Command, want)
 	}
