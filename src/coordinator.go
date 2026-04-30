@@ -134,7 +134,7 @@ func runCoordinator() error { //nolint:funlen
 		}
 		// Cold start: wipe warm-only state (container tokens etc.) before
 		// loading the snapshot so there is no stale data from a prior warm run.
-		if err := os.RemoveAll(filepath.Join(dataDir, "warm")); err != nil {
+		if err := rt.ResetWarmState(); err != nil {
 			slog.Warn("cold start: warm wipe failed", "err", err)
 		}
 		if err := rt.LoadSnapshot(true); err != nil {

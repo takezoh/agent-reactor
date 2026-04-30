@@ -204,6 +204,13 @@ func New(cfg Config) *Runtime {
 // Done signals when Run has fully exited.
 func (r *Runtime) Done() <-chan struct{} { return r.done }
 
+func (r *Runtime) ResetWarmState() error {
+	if r.warmFrames == nil {
+		return nil
+	}
+	return r.warmFrames.Reset()
+}
+
 // KnownProjects returns the canonical project paths for all sessions currently
 // loaded in state. Must be called before Run starts (or from the event loop).
 func (r *Runtime) KnownProjects() []string {

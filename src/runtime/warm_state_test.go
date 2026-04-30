@@ -95,6 +95,39 @@ func TestWarmFrameStoreLoadAllSkipsTmpAndBadJSON(t *testing.T) {
 	}
 }
 
+func TestWarmFrameStoreReset(t *testing.T) {
+	dir := t.TempDir()
+	s, err := newWarmFrameStore(dir)
+	if err != nil {
+		t.Fatalf("newWarmFrameStore: %v", err)
+	}
+
+	_ = s.Save(WarmFrameState{FrameID: "pre-reset", ContainerToken: "tok"})
+
+	if err := s.Reset(); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	// Directory must still exist after reset.
+	if _, err := os.Stat(s.dir); err != nil {
+		t.Fatalf("warm dir missing after Reset: %v", err)
+	}
+
+	// All files must be gone.
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		t.Fatalf("ReadDir after Reset: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected empty dir after Reset, got %d entries", len(entries))
+	}
+
+	// Save must succeed immediately after Reset.
+	if err := s.Save(WarmFrameState{FrameID: "post-reset", ContainerToken: "tok2"}); err != nil {
+		t.Fatalf("Save after Reset: %v", err)
+	}
+}
+
 func TestWarmFrameStoreLoadAllMissingDir(t *testing.T) {
 	dir := t.TempDir()
 	s := &warmFrameStore{dir: filepath.Join(dir, "nonexistent")}

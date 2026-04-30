@@ -51,6 +51,16 @@ func (s *warmFrameStore) Save(st WarmFrameState) error {
 	return nil
 }
 
+func (s *warmFrameStore) Reset() error {
+	if err := os.RemoveAll(s.dir); err != nil {
+		return fmt.Errorf("warm: reset remove: %w", err)
+	}
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		return fmt.Errorf("warm: reset mkdir: %w", err)
+	}
+	return nil
+}
+
 // Delete removes the warm state file for a frame. No-op if absent.
 func (s *warmFrameStore) Delete(frameID state.FrameID) error {
 	err := os.Remove(filepath.Join(s.dir, filepath.Base(string(frameID))+".json"))
