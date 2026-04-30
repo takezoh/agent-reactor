@@ -97,7 +97,7 @@ iptables operates on IPs, not hostnames; CDN-fronted services require maintainin
 }
 ```
 
-**Workspace file ownership:** set `containerUser` and `remoteUser` to a non-root user whose UID matches the host user. Files written to the workspace bind-mount will then be owned by the host user rather than root.
+**Workspace file ownership:** set `containerUser` and `remoteUser` to a non-root user to avoid root-owned files in the workspace. roost passes `containerUser` to `docker create -u` and `remoteUser` to `docker exec -u`.
 
 ```jsonc
 {
