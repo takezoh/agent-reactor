@@ -129,6 +129,7 @@ func TestListProjects_RootsAndPaths(t *testing.T) {
 }
 
 func TestResolveDataDir_Explicit(t *testing.T) {
+	t.Setenv("ROOST_DATA_DIR", "")
 	cfg := &Config{DataDir: "/tmp/data"}
 	if got := cfg.ResolveDataDir(); got != "/tmp/data" {
 		t.Errorf("ResolveDataDir() = %q, want /tmp/data", got)
@@ -136,8 +137,30 @@ func TestResolveDataDir_Explicit(t *testing.T) {
 }
 
 func TestResolveDataDir_Fallback(t *testing.T) {
+	t.Setenv("ROOST_DATA_DIR", "")
 	cfg := &Config{}
 	want := ConfigDirPath()
+	if got := cfg.ResolveDataDir(); got != want {
+		t.Errorf("ResolveDataDir() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveDataDir_EnvOverride(t *testing.T) {
+	t.Setenv("ROOST_DATA_DIR", "/foo")
+	cfg := &Config{DataDir: "/bar"}
+	if got := cfg.ResolveDataDir(); got != "/foo" {
+		t.Errorf("ResolveDataDir() = %q, want /foo", got)
+	}
+}
+
+func TestResolveDataDir_EnvExpand(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ROOST_DATA_DIR", "~/x")
+	cfg := &Config{}
+	want := home + "/x"
 	if got := cfg.ResolveDataDir(); got != want {
 		t.Errorf("ResolveDataDir() = %q, want %q", got, want)
 	}

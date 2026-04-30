@@ -3,6 +3,8 @@ package runtime
 import (
 	"testing"
 
+	"github.com/takezoh/agent-roost/auth/credproxy"
+	"github.com/takezoh/agent-roost/config"
 	sandboxdc "github.com/takezoh/agent-roost/sandbox/devcontainer"
 )
 
@@ -100,6 +102,16 @@ func TestBuildMounts_OmitsRunDirWhenEmpty(t *testing.T) {
 		if m.Container == ContainerRunDir {
 			t.Errorf("run dir mount must be omitted when hostRunDir is empty: %+v", ms)
 		}
+	}
+}
+
+func TestBuildOverlayEnv_ContainerPaths(t *testing.T) {
+	env := buildOverlayEnv(nil, credproxy.Spec{}, config.SandboxConfig{})
+	if got := env["ROOST_SOCKET"]; got != ContainerSockFilePath {
+		t.Errorf("ROOST_SOCKET = %q, want %q", got, ContainerSockFilePath)
+	}
+	if got := env["ROOST_DATA_DIR"]; got != ContainerRunDir {
+		t.Errorf("ROOST_DATA_DIR = %q, want %q", got, ContainerRunDir)
 	}
 }
 

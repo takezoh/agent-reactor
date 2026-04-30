@@ -192,7 +192,7 @@ func resolvePager(configured string) string {
 }
 
 func Load() (*Config, error) {
-	return LoadFrom(filepath.Join(EnsureConfigDir(), "settings.toml"))
+	return LoadFrom(filepath.Join(ConfigDirPath(), "settings.toml"))
 }
 
 func DefaultConfig() *Config {
@@ -257,6 +257,9 @@ func (c *Config) ListProjects() []string {
 }
 
 func (c *Config) ResolveDataDir() string {
+	if v := os.Getenv("ROOST_DATA_DIR"); v != "" {
+		return ExpandPath(v)
+	}
 	if c.DataDir != "" {
 		return ExpandPath(c.DataDir)
 	}
