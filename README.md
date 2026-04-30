@@ -97,6 +97,15 @@ iptables operates on IPs, not hostnames; CDN-fronted services require maintainin
 }
 ```
 
+**Workspace file ownership:** set `containerUser` and `remoteUser` to a non-root user whose UID matches the host user. Files written to the workspace bind-mount will then be owned by the host user rather than root.
+
+```jsonc
+{
+  "containerUser": "ubuntu",
+  "remoteUser": "ubuntu"
+}
+```
+
 See [Sandbox Backends](docs/sandbox.md) for credential proxy, mounts, and advanced configuration.
 
 ### Hook Setup
