@@ -53,6 +53,9 @@ func (r *CredProxyRunner) ProjectToken(projectPath string) (string, error) {
 // lazily inside each provider's ContainerSpec.
 func StartCredProxy(ctx context.Context, dataDir string, resolveSandbox func(string) config.SandboxConfig) (*CredProxyRunner, error) {
 	runBase := dataDir + "/run"
+	if err := os.MkdirAll(runBase, 0o700); err != nil {
+		return nil, fmt.Errorf("credproxy: create run dir: %w", err)
+	}
 	sockPath := filepath.Join(runBase, "credproxy.sock")
 
 	runner := &CredProxyRunner{tokens: make(map[string]string)}
