@@ -18,7 +18,7 @@ Roost does not build images. The image name is declared by the user in `devconta
 | `runtime/` | `AgentLauncher` wraps `LaunchPlan` into `WrappedLaunch{Command, Env, Mounts, ContainerSockDir, Cleanup}`. `SandboxDispatcher` resolves which launcher (direct / devcontainer) to use per project via `config.SandboxResolver` |
 | `sandbox/` | `Manager[I any]` interface + backend implementations. Owns container lifecycle only; does not import driver / lib / runtime / tui |
 | `credproxy` library (`providers/<name>/`) | AWS SSO / gcloud / ssh-agent providers. Tool-specific env var names (`AWS_*`, `GOOGLE_*`, `SSH_AUTH_SOCK`) live exclusively here |
-| `winexec/` | WSL2 Windows-exe broker — routes `code.exe`, `clip.exe`, etc. from container back to host |
+| `hostexec/` | Host-exec broker — runs allowlisted host binaries on behalf of container processes via SCM_RIGHTS stdio forwarding |
 
 `sandbox/` is tool-agnostic. It does not contain knowledge of any specific tool (e.g. Claude). Tool-specific host paths are declared by the user in `devcontainer.json` or `~/.roost/settings.toml`; they are never hardcoded in Go source.
 
@@ -120,7 +120,7 @@ Bind-mounts are declared in devcontainer.json `mounts`. `sandbox/` does not have
 
 In devcontainer mode roost always runs an in-process HTTP server backed by the `credproxy` library. The server listens on `<dataDir>/run/credproxy.sock` on the host and is bind-mounted per project into each container at `/opt/roost/run/credproxy.sock`. Its lifetime is tied to the roost process — no external daemon is needed. Each provider self-gates on its own configuration and contributes nothing to the container when its settings are empty.
 
-Providers come from two sources: the external `credproxy` library's `providers/<name>/` packages (AWS SSO, gcloud, ssh-agent) and the local `winexec/` package (WSL2 Windows-exe broker — not a credential, but uses the same `container.Provider` interface). Each provider contributes to the runtime by:
+Providers come from two sources: the external `credproxy` library's `providers/<name>/` packages (AWS SSO, gcloud, ssh-agent) and the local `hostexec/` package (host-exec broker — not a credential, but uses the same `container.Provider` interface). Each provider contributes to the runtime by:
 
 1. Building a `container.Spec` (env vars to inject, files to materialize under the per-project run dir, optional bind-mounts).
 2. Optionally registering an HTTP route on the proxy server (AWS SSO uses this; others rely on bind-mounts only).
@@ -160,15 +160,32 @@ Roost spawns an ephemeral `ssh-agent`, loads only the listed key files, and expo
 
 Passphrase-protected keys are skipped because `ssh-add` runs non-interactively.
 
-### WSL2 Windows exe broker
+### Host-exec broker
 
-On WSL2 hosts, containerized agents cannot reach Windows-side executables because WSL2's `/init` interop is unavailable inside a container. The `winexec` broker bridges this gap:
+The `hostexec` provider lets container processes invoke host binaries (e.g. `gh`, `aws`, `kubectl`) without receiving any credentials or tokens. The host executes the binary; the container only sees stdio.
 
-1. The host runs a per-project Unix socket (`<dataDir>/run/<project-hash>/winexec.sock`) bind-mounted into the container.
-2. The container has shim binaries on `PATH` (one per allowed exe basename); each shim sends a request over the socket carrying argv, env, cwd, and stdio fds.
-3. The host broker validates the basename against the allowlist, resolves the absolute Windows path (explicit map first, else Windows `PATH`), invokes the binary via `/init`, and forwards stdio. Exit codes are propagated.
+**Mechanism:**
 
-Only basenames listed in the allowlist are executable; the broker rejects everything else. Ignored on non-WSL2 hosts.
+1. The host starts a per-project Unix socket broker (`<dataDir>/run/<project-hash>/hostexec.sock`) bind-mounted at `/opt/roost/run/hostexec.sock` inside the container.
+2. Shell shim scripts are written to `/opt/roost/run/hostexec-shims/<name>` and prepended to `PATH`. Each shim calls `roost host-exec <name> "$@"`.
+3. The shim sends the request (binary name, args, cwd) plus the three stdio fds via SCM_RIGHTS over the socket.
+4. The broker policy-checks the command, then exec's the host binary with the transferred fds as its stdin/stdout/stderr. The exit code is returned to the shim.
+
+**Policy (deny-first, default-deny):**
+
+Allow and deny patterns follow Claude Code's Bash permission semantics: argv is reconstructed into a shell string with single-quoting, and patterns use `*` as a wildcard matching any substring including spaces.
+
+```
+deny?  → reject
+allow? → permit
+else   → reject
+```
+
+Leading `KEY=VALUE` env assignments in patterns are stripped before matching, so `"GH_TOKEN=x gh pr *"` is equivalent to `"gh pr *"` for both matching and binary name extraction.
+
+Binary names must match `[a-zA-Z0-9][a-zA-Z0-9._-]*`; patterns whose first non-env token fails this check are rejected at config load time.
+
+User-scope and project-scope `allow`/`deny` lists are concatenated; project patterns cannot remove user-level deny rules.
 
 ### Subscription credentials (interactive auth)
 

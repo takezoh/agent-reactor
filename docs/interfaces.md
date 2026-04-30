@@ -292,7 +292,7 @@ src/
 │   ├── launcher.go      AgentLauncher interface + DirectLauncher + WrappedLaunch + container-token wrap
 │   ├── sandbox_dispatcher.go SandboxDispatcher: per-project mode resolution (direct / devcontainer)
 │   ├── devcontainer_launcher.go DevcontainerLauncher: adapts sandbox/devcontainer.Manager to AgentLauncher
-│   ├── credproxy_runner.go Lifecycle for the in-process credproxy server (Unix socket on `<dataDir>/run/credproxy.sock`; awssso registers an HTTP route, gcloud/sshagent/winexec contribute env+mounts only)
+│   ├── credproxy_runner.go Lifecycle for the in-process credproxy server (Unix socket on `<dataDir>/run/credproxy.sock`; awssso registers an HTTP route, gcloud/sshagent/hostexec contribute env+mounts only)
 │   ├── docker_env.go    Auto-detection of rootless docker socket → `DOCKER_HOST`
 │   ├── backends.go      TmuxBackend, PersistBackend, EventLogBackend, FSWatcher interface
 │   ├── panetap.go       PaneTap interface — raw byte stream abstraction over tmux pipe-pane
@@ -324,7 +324,7 @@ src/
 │       ├── spec.go      LoadSpec — parses devcontainer.json (image / build.name / mounts / runArgs / containerEnv / containerUser / remoteUser / workspaceFolder / workspaceMount / postCreateCommand / preExecCommand)
 │       ├── merge.go     Merges user-scope SandboxConfig with the per-project devcontainer spec
 │       └── envscript.go Resolves `${localEnv:VAR}` / `${localWorkspaceFolder*}` / `${containerWorkspaceFolder}` placeholders
-├── winexec/             WSL2 broker that lets containerized agents invoke Windows-side `*.exe` (`container.Provider` impl). Tool-specific env var names live here, not in runtime/sandbox/state
+├── hostexec/            Host-exec broker (`container.Provider` impl): per-project Unix socket server that runs allowlisted host binaries on behalf of container processes via SCM_RIGHTS stdio forwarding; deny/allow glob policy with env-assignment prefix stripping
 │                        Credential providers (awssso / gcloudcli / sshagent) live in the external `credproxy` library under `providers/<name>/`
 ├── proto/               Typed IPC — Command / Response / ServerEvent sum types
 │   ├── envelope.go      Envelope wire format ({type, req_id, cmd|name, data})

@@ -176,14 +176,23 @@ keys = ["~/.ssh/id_ed25519"]
 
 Passphrase-protected keys are skipped (a warning is logged). roost does not mount `~/.ssh` — add `known_hosts` entries via `postCreateCommand` (e.g. `ssh-keyscan github.com >> ~/.ssh/known_hosts`).
 
-**WSL2 Windows exe broker (WSL2 only).** Lets containerized agents invoke Windows-side executables (`*.exe`, `*.ps1`) through a host-side broker. A non-empty `allowed_exes` activates the broker; empty / absent disables it. Ignored on non-WSL2 hosts.
+**Host-exec broker.** Lets containerized agents invoke host binaries (e.g. `gh`, `aws`, `kubectl`) without receiving credentials or tokens. Commands are filtered by deny/allow glob patterns with `*` as a wildcard. A non-empty `allow` list activates the broker.
 
 ```toml
-[sandbox.proxy.win_exec]
-allowed_exes  = ["powershell.exe", "code.exe"]   # basenames the container may invoke
-[sandbox.proxy.win_exec.resolve]
-"notify.ps1"  = "C:\\Tools\\notify.ps1"          # optional; unlisted names use Windows PATH
+[sandbox.proxy.host_exec]
+allow = [
+  "gh pr *",
+  "gh issue *",
+  "gh api GET /repos/*",
+]
+deny = [
+  "gh * delete*",
+  "gh auth *",
+  "gh secret *",
+]
 ```
+
+Leading `KEY=VALUE` env assignments in patterns are stripped before matching (`"GH_TOKEN=x gh pr *"` ≡ `"gh pr *"`). Deny rules are checked first; unmatched commands are rejected by default.
 
 See [Sandbox Backends](docs/sandbox.md) for the architecture, security model, and lifecycle internals.
 

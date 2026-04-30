@@ -11,12 +11,11 @@ import (
 // Container-side paths for files bind-mounted from the per-project run dir.
 // These are the canonical sources; callers must not hard-code these literals.
 const (
-	ContainerRunDir          = "/opt/roost/run"
-	ContainerBinaryPath      = ContainerRunDir + "/roost"
-	ContainerSockFileName    = "roost.sock"
-	ContainerSockFilePath    = ContainerRunDir + "/" + ContainerSockFileName
-	ContainerWinExecSockPath = ContainerRunDir + "/winexec.sock"
-	ContainerWinExecShimsDir = ContainerRunDir + "/winexec-shims"
+	ContainerRunDir           = "/opt/roost/run"
+	ContainerBinaryPath       = ContainerRunDir + "/roost"
+	ContainerSockFileName     = "roost.sock"
+	ContainerSockFilePath     = ContainerRunDir + "/" + ContainerSockFileName
+	ContainerHostExecSockPath = ContainerRunDir + "/hostexec.sock"
 )
 
 // ProjectRunDir returns the per-project ephemeral run directory path.

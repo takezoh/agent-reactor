@@ -8,8 +8,7 @@ package config
 //   - Devcontainer.HostPathMountPrefix (scalar): project wins when non-empty
 //   - Devcontainer.ExtraCreateArgs (list): user + project concat
 //   - Proxy.SSHAgent.Keys: project replaces when non-empty
-//   - Proxy.WinExec.AllowedExes: project replaces when non-empty
-//   - Proxy.WinExec.Resolve: merged; project keys win on collision
+//   - Proxy.HostExec.Allow/Deny: user + project concat
 func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 	if project == nil {
 		return user
@@ -26,7 +25,10 @@ func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 			AWSProfiles: user.Proxy.AWSProfiles,
 			GCP:         user.Proxy.GCP,
 			SSHAgent:    user.Proxy.SSHAgent,
-			WinExec:     mergeWinExec(user.Proxy.WinExec, project.Proxy.WinExec),
+			HostExec: HostExecConfig{
+				Allow: appendSlice(user.Proxy.HostExec.Allow, project.Proxy.HostExec.Allow),
+				Deny:  appendSlice(user.Proxy.HostExec.Deny, project.Proxy.HostExec.Deny),
+			},
 		},
 	}
 	if project.Mode != "" {
@@ -46,37 +48,6 @@ func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 	}
 	if len(project.Proxy.SSHAgent.Keys) > 0 {
 		out.Proxy.SSHAgent.Keys = project.Proxy.SSHAgent.Keys
-	}
-	return out
-}
-
-// mergeWinExec merges user and project WinExecConfig.
-// AllowedExes: project replaces when non-empty.
-// Resolve: merged map; project keys overwrite user keys.
-func mergeWinExec(user, project WinExecConfig) WinExecConfig {
-	out := WinExecConfig{
-		AllowedExes: append([]string(nil), user.AllowedExes...),
-		Resolve:     cloneStringMap(user.Resolve),
-	}
-	if len(project.AllowedExes) > 0 {
-		out.AllowedExes = append([]string(nil), project.AllowedExes...)
-	}
-	for k, v := range project.Resolve {
-		if out.Resolve == nil {
-			out.Resolve = map[string]string{}
-		}
-		out.Resolve[k] = v
-	}
-	return out
-}
-
-func cloneStringMap(m map[string]string) map[string]string {
-	if m == nil {
-		return nil
-	}
-	out := make(map[string]string, len(m))
-	for k, v := range m {
-		out[k] = v
 	}
 	return out
 }

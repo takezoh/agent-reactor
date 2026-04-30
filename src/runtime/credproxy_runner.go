@@ -11,7 +11,7 @@ import (
 	"sync"
 
 	"github.com/takezoh/agent-roost/config"
-	"github.com/takezoh/agent-roost/winexec"
+	"github.com/takezoh/agent-roost/hostexec"
 	"github.com/takezoh/credproxy/container"
 	credproxylib "github.com/takezoh/credproxy/credproxy"
 	"github.com/takezoh/credproxy/providers/awssso"
@@ -117,16 +117,16 @@ func buildProviders(
 		sshagent.Config{RunBase: runBase, ContainerRunDir: ContainerRunDir},
 		func(p string) []string { return resolveSandbox(p).Proxy.SSHAgent.Keys },
 	)
-	winExecSpec := winexec.NewSpecBuilder(
+	hostExecSpec := hostexec.NewSpecBuilder(
 		ctx,
-		winexec.Config{
+		hostexec.Config{
 			RunBase:          runBase,
 			ContainerRunDir:  ContainerRunDir,
 			ContainerBinPath: ContainerBinaryPath,
 		},
-		func(p string) config.WinExecConfig { return resolveSandbox(p).Proxy.WinExec },
+		func(p string) config.HostExecConfig { return resolveSandbox(p).Proxy.HostExec },
 	)
-	return []container.Provider{awsSpec, gcpSpec, sshSpec, winExecSpec}
+	return []container.Provider{awsSpec, gcpSpec, sshSpec, hostExecSpec}
 }
 
 // ContainerSpec fans out to all providers and merges their Env and Mounts.

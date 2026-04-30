@@ -78,17 +78,19 @@ type ProxyConfig struct {
 	AWSProfiles []string       `toml:"aws_profiles"` // AWS profile names to expose in the container via credential_process
 	GCP         GCPConfig      `toml:"gcp"`
 	SSHAgent    SSHAgentConfig `toml:"ssh_agent"`
-	WinExec     WinExecConfig  `toml:"win_exec"`
+	HostExec    HostExecConfig `toml:"host_exec"`
 }
 
-// WinExecConfig controls the WSL2 Windows exe broker.
-// A non-empty AllowedExes activates the host-side broker, which listens on a
-// per-project Unix socket and forwards exec requests from the container to
-// allowlisted Windows binaries via the WSL2 /init interop layer. Ignored on
-// non-WSL2 hosts.
-type WinExecConfig struct {
-	AllowedExes []string          `toml:"allowed_exes"` // exe basenames that may be executed (e.g. "code.exe"); empty = disabled
-	Resolve     map[string]string `toml:"resolve"`      // exe name → absolute Windows path; unlisted names use Windows PATH
+// HostExecConfig configures host binaries exposed to containers via the host-exec broker.
+// The broker executes host binaries on behalf of container processes; the container never
+// receives credentials or tokens. Commands are filtered by deny/allow glob patterns matching
+// the full shell command string (e.g. "gh pr *").
+// Leading KEY=VALUE env assignments in patterns are stripped before matching and binary name
+// extraction, so "GH_TOKEN=x gh pr *" is equivalent to "gh pr *".
+// The binary name is derived from the first non-env-assignment token of the allow patterns.
+type HostExecConfig struct {
+	Allow []string `toml:"allow"` // glob patterns that permit a command; first non-env-assignment token is the binary name
+	Deny  []string `toml:"deny"`  // glob patterns that deny a command; checked before allow
 }
 
 // SSHAgentConfig controls SSH agent injection into containers.
