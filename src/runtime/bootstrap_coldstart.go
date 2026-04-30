@@ -92,6 +92,7 @@ func (r *Runtime) spawnWrapped(frameID state.FrameID, project string, wrapped Wr
 	if isShellCommand(wrapped.Command) {
 		tmuxCmd = ""
 	}
+	slog.Info("runtime: spawning window", "frame", frameID, "cmd", tmuxCmd, "mode", "coldstart")
 	target, paneID, err := r.cfg.Tmux.SpawnWindow(name, tmuxCmd, wrapped.StartDir, wrapped.Env)
 	if err != nil {
 		return "", err
