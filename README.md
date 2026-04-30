@@ -12,19 +12,6 @@ Agent Roost is a tmux-based control surface for running Claude, Codex, Gemini, a
 - **Keep agents running after you disconnect.** Built on tmux, so closing the UI or dropping the connection doesn't stop the work.
 - **Run each agent in its own sandbox.** Optional per-project devcontainer with brokered AWS / gcloud / SSH credentials and a policy-gated host-exec channel. Long-lived secrets stay on the host; the container only sees short-lived tokens or stdio.
 
-## Layout
-
-```text
-┌───────────────────┬────────┐
-│                   │SESSIONS│
-│  Pane 0: MAIN     │ ▼ projA│
-│  (always focused) │  #1 ● │
-│                   │  #2 ◆ │
-├───────────────────┤ ▼ projB│
-│  Pane 1: LOG      │  #1 ○ │
-└───────────────────┴────────┘
-```
-
 ## Requirements
 
 - Go 1.26+
@@ -45,13 +32,6 @@ roost
 ```
 
 Creates a tmux session (or attaches to an existing one) and launches with a 3-pane layout.
-
-### Sandbox
-
-Run each agent inside a project-scoped devcontainer, isolating filesystem, network, and credentials per project.
-
-- Setup and config: [docs/sandbox-setup.md](docs/sandbox-setup.md)
-- Architecture and security model: [docs/sandbox.md](docs/sandbox.md)
 
 ### Hook Setup
 
@@ -224,3 +204,14 @@ name = "work"    # Group this project under a named workspace
 The workspace switcher chip bar appears in the SESSIONS pane automatically when
 two or more distinct workspaces exist, and is hidden for single-workspace setups.
 Projects without a settings file fall back to the `default` workspace.
+
+## Sandbox
+
+Run each agent inside a project-scoped devcontainer, isolating filesystem, network, and credentials per project.
+
+- Setup and config: [docs/sandbox-setup.md](docs/sandbox-setup.md)
+- Architecture and security model: [docs/sandbox.md](docs/sandbox.md)
+
+## Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md).
