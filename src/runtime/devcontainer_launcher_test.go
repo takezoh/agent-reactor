@@ -6,6 +6,26 @@ import (
 	sandboxdc "github.com/takezoh/agent-roost/sandbox/devcontainer"
 )
 
+func TestResolveWorkspaceFallback(t *testing.T) {
+	cases := []struct {
+		projectPath string
+		prefix      string
+		want        string
+	}{
+		{"/home/u/proj", "", "/home/u/proj"},
+		{"/home/u/proj", "/mnt", "/mnt/home/u/proj"},
+		{"/home/u/proj", "/mnt/", "/mnt/home/u/proj"}, // trailing slash normalised
+		{"", "", ""},
+		{"", "/mnt", "/mnt"},
+	}
+	for _, tc := range cases {
+		got := resolveWorkspaceFallback(tc.projectPath, tc.prefix)
+		if got != tc.want {
+			t.Errorf("resolveWorkspaceFallback(%q, %q) = %q, want %q", tc.projectPath, tc.prefix, got, tc.want)
+		}
+	}
+}
+
 func TestBuildMounts_RegistersWorkspaceAndRunDir(t *testing.T) {
 	ms := buildMounts("/host/myapp", "/workspaces/myapp", "/host/run", nil)
 	if len(ms) != 2 {

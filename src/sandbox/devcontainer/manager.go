@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -322,7 +323,7 @@ func translateWorkDir(hostStartDir, projectPath, remoteWorkspace string) string 
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return remoteWorkspace
 	}
-	return filepath.Join(remoteWorkspace, rel)
+	return path.Join(remoteWorkspace, rel)
 }
 
 func shellEscape(s string) string {

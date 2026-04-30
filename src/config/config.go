@@ -61,6 +61,12 @@ type DevcontainerConfig struct {
 	// AllowProjectEnvScript lists project paths whose project-scope env_script
 	// is permitted to run.
 	AllowProjectEnvScript []string `toml:"allow_project_env_script"`
+
+	// HostPathMountPrefix, when non-empty, makes the auto-mounted project workspace
+	// appear at "<prefix><host-path>" inside the container instead of the default
+	// "<host-path>" (host-mirroring). Has no effect if devcontainer.json explicitly
+	// sets workspaceFolder or workspaceMount. Must be an absolute path or empty.
+	HostPathMountPrefix string `toml:"host_path_mount_prefix"`
 }
 
 // ProxyConfig enables roost's in-process credential injection proxy.

@@ -29,8 +29,8 @@ func TestBuildLaunchCommand_subdir(t *testing.T) {
 func TestContainerState_WorkspaceTarget(t *testing.T) {
 	t.Run("fallback when WorkspaceFolder empty", func(t *testing.T) {
 		cs := &ContainerState{spec: &DevcontainerSpec{ProjectPath: "/workspace/myapp"}}
-		if got := cs.WorkspaceTarget(); got != "/workspaces/myapp" {
-			t.Errorf("WorkspaceTarget = %q, want /workspaces/myapp", got)
+		if got := cs.WorkspaceTarget(); got != "/workspace/myapp" {
+			t.Errorf("WorkspaceTarget = %q, want /workspace/myapp", got)
 		}
 	})
 	t.Run("uses WorkspaceFolder when set", func(t *testing.T) {
@@ -73,11 +73,11 @@ func TestDevcontainerSpec_buildCreateArgs_defaults(t *testing.T) {
 	mustContain("FOO=bar")
 	// -w should set the workspace target as default cwd (replaces Dockerfile WORKDIR).
 	mustContain("-w")
-	mustContain("/workspaces/myapp")
-	// workspace mount should be present as --mount arg value
+	mustContain("/workspace/myapp")
+	// workspace mount should be present as --mount arg value (host-mirrored default)
 	found := false
 	for _, a := range args {
-		if a == "type=bind,source=/workspace/myapp,target=/workspaces/myapp,consistency=cached" {
+		if a == "type=bind,source=/workspace/myapp,target=/workspace/myapp,consistency=cached" {
 			found = true
 		}
 	}

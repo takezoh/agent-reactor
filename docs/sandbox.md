@@ -149,7 +149,21 @@ Bind-mounts into containers are declared in devcontainer.json `mounts`:
 }
 ```
 
-`sandbox/` does not have a global host-mounts config. Tool-specific paths belong in project or user devcontainer.json, keeping the sandbox layer tool-agnostic.
+`sandbox/` does not have a global host-mounts config for arbitrary paths. Tool-specific paths belong in project or user devcontainer.json, keeping the sandbox layer tool-agnostic.
+
+### Workspace mount target
+
+roost automatically bind-mounts the project directory into the container. By default the container-side path mirrors the host path exactly (e.g. host `/home/u/proj` → container `/home/u/proj`), so editor path resolution and CLI commands work without translation.
+
+If you need the workspace under a different prefix inside the container, set `host_path_mount_prefix` in `~/.roost/settings.toml`:
+
+```toml
+[sandbox.devcontainer]
+host_path_mount_prefix = "/mnt"
+# host /home/u/proj → container /mnt/home/u/proj
+```
+
+This setting is ignored when devcontainer.json explicitly specifies `workspaceFolder` or `workspaceMount`, which always take priority.
 
 ## Credential Proxy
 

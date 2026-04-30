@@ -5,6 +5,7 @@ package config
 //   - project == nil: return user unchanged
 //   - Mode (scalar): project wins when non-empty
 //   - Devcontainer.EnvScript (scalar): project wins when non-empty
+//   - Devcontainer.HostPathMountPrefix (scalar): project wins when non-empty
 //   - Devcontainer.ExtraCreateArgs (list): user + project concat
 //   - Proxy.Enabled: user wins (proxy is process-wide)
 //   - Proxy.SSHAgent.Keys: project replaces when non-empty
@@ -21,6 +22,7 @@ func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 			ExtraCreateArgs:       appendSlice(user.Devcontainer.ExtraCreateArgs, project.Devcontainer.ExtraCreateArgs),
 			EnvScript:             user.Devcontainer.EnvScript,
 			AllowProjectEnvScript: user.Devcontainer.AllowProjectEnvScript,
+			HostPathMountPrefix:   user.Devcontainer.HostPathMountPrefix,
 		},
 		Proxy: ProxyConfig{
 			Enabled:     user.Proxy.Enabled,
@@ -35,6 +37,9 @@ func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 	}
 	if project.Devcontainer.EnvScript != "" {
 		out.Devcontainer.EnvScript = project.Devcontainer.EnvScript
+	}
+	if project.Devcontainer.HostPathMountPrefix != "" {
+		out.Devcontainer.HostPathMountPrefix = project.Devcontainer.HostPathMountPrefix
 	}
 	if len(project.Proxy.AWSProfiles) > 0 {
 		out.Proxy.AWSProfiles = project.Proxy.AWSProfiles

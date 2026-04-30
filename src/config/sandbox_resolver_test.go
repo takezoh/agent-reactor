@@ -107,3 +107,19 @@ keys = ["~/.ssh/id_ed25519_project"]
 		t.Errorf("SSHAgent.Keys = %v, want [~/.ssh/id_ed25519_project] (project replaces)", got.Proxy.SSHAgent.Keys)
 	}
 }
+
+func TestSandboxResolver_HostPathMountPrefixFromTOML(t *testing.T) {
+	user := SandboxConfig{Mode: "devcontainer"}
+	dir := t.TempDir()
+	roostDir := filepath.Join(dir, ".roost")
+	os.MkdirAll(roostDir, 0o755)
+	os.WriteFile(filepath.Join(roostDir, "settings.toml"), []byte(`[sandbox.devcontainer]
+host_path_mount_prefix = "/mnt"
+`), 0o644)
+
+	r := NewSandboxResolver(user)
+	got := r.Resolve(dir)
+	if got.Devcontainer.HostPathMountPrefix != "/mnt" {
+		t.Errorf("HostPathMountPrefix = %q, want /mnt (project TOML)", got.Devcontainer.HostPathMountPrefix)
+	}
+}

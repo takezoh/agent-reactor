@@ -99,8 +99,26 @@ func TestLoadSpec_BuildWithoutName_Error(t *testing.T) {
 
 func TestWorkspaceTarget_FallbackWhenWorkspaceFolderUnset(t *testing.T) {
 	s := &DevcontainerSpec{ProjectPath: "/host/myapp"}
-	if got, want := s.WorkspaceTarget(), "/workspaces/myapp"; got != want {
+	if got, want := s.WorkspaceTarget(), "/host/myapp"; got != want {
 		t.Errorf("WorkspaceTarget() = %q, want %q", got, want)
+	}
+}
+
+func TestWorkspaceTarget_UsesOverlayFallback(t *testing.T) {
+	s := &DevcontainerSpec{ProjectPath: "/host/myapp", WorkspaceFolderFallback: "/mnt/host/myapp"}
+	if got, want := s.WorkspaceTarget(), "/mnt/host/myapp"; got != want {
+		t.Errorf("WorkspaceTarget() = %q, want %q", got, want)
+	}
+}
+
+func TestWorkspaceTarget_WorkspaceFolderWinsOverFallback(t *testing.T) {
+	s := &DevcontainerSpec{
+		ProjectPath:             "/host/myapp",
+		WorkspaceFolder:         "/custom/ws",
+		WorkspaceFolderFallback: "/mnt/host/myapp",
+	}
+	if got, want := s.WorkspaceTarget(), "/custom/ws"; got != want {
+		t.Errorf("WorkspaceTarget() = %q, want %q (workspaceFolder must win)", got, want)
 	}
 }
 
@@ -151,7 +169,7 @@ func TestBindMounts_IncludesWorkspaceAndExtraCreateArgs(t *testing.T) {
 	got := s.BindMounts()
 
 	wantPairs := map[string]string{
-		"/host/myapp":                 "/workspaces/myapp", // workspace mount fallback
+		"/host/myapp":                 "/host/myapp", // workspace mount fallback: host-mirrored
 		"/home/take/.claude/projects": "/home/ubuntu/.claude/projects",
 		"/home/take/.claude/sessions": "/home/ubuntu/.claude/sessions",
 	}

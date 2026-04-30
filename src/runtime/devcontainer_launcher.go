@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path"
 	"path/filepath"
 	"time"
 
@@ -177,12 +178,23 @@ func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, proxy *C
 		}
 
 		return sandboxdc.SpecOverlay{
-			Env:             env,
-			Mounts:          mounts,
-			ExtraCreateArgs: dc.ExtraCreateArgs,
-			PostCreate:      postCreate,
+			Env:                     env,
+			Mounts:                  mounts,
+			ExtraCreateArgs:         dc.ExtraCreateArgs,
+			PostCreate:              postCreate,
+			WorkspaceFolderFallback: resolveWorkspaceFallback(projectPath, dc.HostPathMountPrefix),
 		}, nil
 	}
+}
+
+// resolveWorkspaceFallback returns the container-side path to use when
+// devcontainer.json doesn't specify workspaceFolder or workspaceMount.
+// Empty prefix mirrors the host path as-is; non-empty prefix prepends it.
+func resolveWorkspaceFallback(projectPath, prefix string) string {
+	if prefix == "" {
+		return projectPath
+	}
+	return path.Join(prefix, projectPath)
 }
 
 func resolveOverlaySpecs(proxy *CredProxyRunner, projectPath string, dc config.DevcontainerConfig, sb config.SandboxConfig) (credproxy.Spec, map[string]string, error) {

@@ -25,29 +25,31 @@ var envVarRe = regexp.MustCompile(`\$(?:\{containerEnv:([A-Za-z_][A-Za-z0-9_]*)\
 // DevcontainerSpec holds the resolved container configuration for a project,
 // derived from devcontainer.json with roost overlay applied.
 type DevcontainerSpec struct {
-	ProjectPath     string
-	Image           string // resolved from devcontainer.json image: or build.name
-	ContainerEnv    map[string]string
-	RemoteEnv       map[string]string // applied via docker exec -e (like VS Code remote processes)
-	Mounts          []string          // docker --mount or -v format
-	WorkspaceMount  string            // custom workspace mount (empty = default)
-	WorkspaceFolder string            // container-side workspace path
-	ContainerUser   string            // docker create -u
-	RemoteUser      string            // docker exec -u (fallback: RemoteUser → ContainerUser → "")
-	RunArgs         []string          // extra docker create args from runArgs field
-	ExtraCreateArgs []string          // extra docker create args from settings (injected before image)
-	PostCreate      []string          // nil = no postCreateCommand; else exec argv
-	ExtraPostCreate [][]string        // roost-injected extra postCreateCommands, run after PostCreate
-	PreExec         string            // roost extension: shell command run before each docker exec (preExecCommand)
+	ProjectPath             string
+	Image                   string // resolved from devcontainer.json image: or build.name
+	ContainerEnv            map[string]string
+	RemoteEnv               map[string]string // applied via docker exec -e (like VS Code remote processes)
+	Mounts                  []string          // docker --mount or -v format
+	WorkspaceMount          string            // custom workspace mount (empty = default)
+	WorkspaceFolder         string            // container-side workspace path
+	WorkspaceFolderFallback string            // overlay-supplied fallback when WorkspaceFolder is unset
+	ContainerUser           string            // docker create -u
+	RemoteUser              string            // docker exec -u (fallback: RemoteUser → ContainerUser → "")
+	RunArgs                 []string          // extra docker create args from runArgs field
+	ExtraCreateArgs         []string          // extra docker create args from settings (injected before image)
+	PostCreate              []string          // nil = no postCreateCommand; else exec argv
+	ExtraPostCreate         [][]string        // roost-injected extra postCreateCommands, run after PostCreate
+	PreExec                 string            // roost extension: shell command run before each docker exec (preExecCommand)
 }
 
 // SpecOverlay carries roost-injected env/mounts merged on top of base devcontainer.json.
 type SpecOverlay struct {
-	Env             map[string]string
-	Mounts          []string
-	ExtraCreateArgs []string // docker create options; injected before image name
-	PreExec         string   // fallback preExecCommand if not set in devcontainer.json
-	PostCreate      []string // extra postCreateCommand argv; run after devcontainer.json's postCreateCommand
+	Env                     map[string]string
+	Mounts                  []string
+	ExtraCreateArgs         []string // docker create options; injected before image name
+	PreExec                 string   // fallback preExecCommand if not set in devcontainer.json
+	PostCreate              []string // extra postCreateCommand argv; run after devcontainer.json's postCreateCommand
+	WorkspaceFolderFallback string   // fallback container workspace path when devcontainer.json omits workspaceFolder/workspaceMount
 }
 
 func projectHash(projectPath string) string {
@@ -121,16 +123,22 @@ func (s *DevcontainerSpec) Apply(overlay SpecOverlay) {
 	if len(overlay.PostCreate) > 0 {
 		s.ExtraPostCreate = append(s.ExtraPostCreate, overlay.PostCreate)
 	}
+	if overlay.WorkspaceFolderFallback != "" {
+		s.WorkspaceFolderFallback = overlay.WorkspaceFolderFallback
+	}
 }
 
 // WorkspaceTarget returns the container-side workspace path used for -w and the
-// default workspace mount. Falls back to /workspaces/<basename> when workspaceFolder
-// is not set in devcontainer.json, matching BuildCreateArgs behaviour.
+// default workspace mount.
+// Priority: devcontainer.json workspaceFolder > overlay WorkspaceFolderFallback > ProjectPath (host-mirrored).
 func (s *DevcontainerSpec) WorkspaceTarget() string {
 	if s.WorkspaceFolder != "" {
 		return s.WorkspaceFolder
 	}
-	return "/workspaces/" + filepath.Base(s.ProjectPath)
+	if s.WorkspaceFolderFallback != "" {
+		return s.WorkspaceFolderFallback
+	}
+	return s.ProjectPath
 }
 
 // BindMount is a parsed (source, target) pair for a docker bind mount.
@@ -254,11 +262,9 @@ func (s *DevcontainerSpec) BuildCreateArgs(image string) []string {
 	for k, v := range s.ContainerEnv {
 		args = append(args, "-e", k+"="+v)
 	}
-	// workspace mount (default: bind project → /workspaces/<basename>)
 	wsMount := s.WorkspaceMount
 	if wsMount == "" {
-		base := filepath.Base(s.ProjectPath)
-		wsMount = fmt.Sprintf("type=bind,source=%s,target=/workspaces/%s,consistency=cached", s.ProjectPath, base)
+		wsMount = fmt.Sprintf("type=bind,source=%s,target=%s,consistency=cached", s.ProjectPath, s.WorkspaceTarget())
 	}
 	args = append(args, "--mount", wsMount)
 	for _, m := range s.Mounts {

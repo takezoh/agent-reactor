@@ -60,6 +60,41 @@ func TestMergeSandbox_EnvScriptOverride(t *testing.T) {
 	}
 }
 
+func TestMergeSandbox_HostPathMountPrefix_ProjectOverrides(t *testing.T) {
+	user := SandboxConfig{Devcontainer: DevcontainerConfig{HostPathMountPrefix: "/mnt"}}
+	project := &SandboxConfig{Devcontainer: DevcontainerConfig{HostPathMountPrefix: "/data"}}
+	got := MergeSandbox(user, project)
+	if got.Devcontainer.HostPathMountPrefix != "/data" {
+		t.Errorf("HostPathMountPrefix = %q, want /data (project wins)", got.Devcontainer.HostPathMountPrefix)
+	}
+}
+
+func TestMergeSandbox_HostPathMountPrefix_ProjectEmptyUserWins(t *testing.T) {
+	user := SandboxConfig{Devcontainer: DevcontainerConfig{HostPathMountPrefix: "/mnt"}}
+	project := &SandboxConfig{}
+	got := MergeSandbox(user, project)
+	if got.Devcontainer.HostPathMountPrefix != "/mnt" {
+		t.Errorf("HostPathMountPrefix = %q, want /mnt (project empty, user wins)", got.Devcontainer.HostPathMountPrefix)
+	}
+}
+
+func TestMergeSandbox_HostPathMountPrefix_UserOnly(t *testing.T) {
+	user := SandboxConfig{Devcontainer: DevcontainerConfig{HostPathMountPrefix: "/mnt"}}
+	got := MergeSandbox(user, nil)
+	if got.Devcontainer.HostPathMountPrefix != "/mnt" {
+		t.Errorf("HostPathMountPrefix = %q, want /mnt (nil project)", got.Devcontainer.HostPathMountPrefix)
+	}
+}
+
+func TestMergeSandbox_HostPathMountPrefix_BothEmpty(t *testing.T) {
+	user := SandboxConfig{}
+	project := &SandboxConfig{}
+	got := MergeSandbox(user, project)
+	if got.Devcontainer.HostPathMountPrefix != "" {
+		t.Errorf("HostPathMountPrefix = %q, want empty", got.Devcontainer.HostPathMountPrefix)
+	}
+}
+
 func TestMergeSandbox_ProxyNilProject(t *testing.T) {
 	user := SandboxConfig{Proxy: ProxyConfig{Enabled: true}}
 	got := MergeSandbox(user, nil)

@@ -194,6 +194,10 @@ mode = "devcontainer"               # "direct" (default) | "devcontainer"
 [sandbox.devcontainer]
 # extra_create_args = []            # appended to "docker create"
 # env_script = ""                   # script that prints KEY=VALUE lines for a project
+# host_path_mount_prefix = ""       # prefix for the auto-mounted workspace inside the container
+                                    # empty (default): mirror host path as-is (e.g. /home/u/proj → /home/u/proj)
+                                    # "/mnt": prepend prefix (e.g. /home/u/proj → /mnt/home/u/proj)
+                                    # ignored when devcontainer.json sets workspaceFolder or workspaceMount
 
 # [sandbox.proxy]                   # credential proxy — see docs/sandbox.md
 # enabled = true
