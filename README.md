@@ -184,11 +184,10 @@ Passphrase-protected keys are skipped (a warning is logged). roost does not moun
 
 **GitHub — `GH_TOKEN`.** When the proxy is enabled, the host's `gh auth token` value is injected into the container as `GH_TOKEN` so the `gh` CLI works without bind-mounting `~/.config/gh`.
 
-**WSL2 Windows exe broker (WSL2 only).** Lets containerized agents invoke Windows-side executables (`*.exe`, `*.ps1`) through a host-side broker. Ignored on non-WSL2 hosts.
+**WSL2 Windows exe broker (WSL2 only).** Lets containerized agents invoke Windows-side executables (`*.exe`, `*.ps1`) through a host-side broker. A non-empty `allowed_exes` activates the broker; empty / absent disables it. Ignored on non-WSL2 hosts.
 
 ```toml
 [sandbox.proxy.win_exec]
-enabled       = true
 allowed_exes  = ["powershell.exe", "code.exe"]   # basenames the container may invoke
 [sandbox.proxy.win_exec.resolve]
 "notify.ps1"  = "C:\\Tools\\notify.ps1"          # optional; unlisted names use Windows PATH

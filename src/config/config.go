@@ -81,12 +81,12 @@ type ProxyConfig struct {
 }
 
 // WinExecConfig controls the WSL2 Windows exe broker.
-// When Enabled, the host-side broker listens on a per-project Unix socket and
-// forwards exec requests from the container to allowlisted Windows binaries via
-// the WSL2 /init interop layer. Ignored on non-WSL2 hosts.
+// A non-empty AllowedExes activates the host-side broker, which listens on a
+// per-project Unix socket and forwards exec requests from the container to
+// allowlisted Windows binaries via the WSL2 /init interop layer. Ignored on
+// non-WSL2 hosts.
 type WinExecConfig struct {
-	Enabled     bool              `toml:"enabled"`
-	AllowedExes []string          `toml:"allowed_exes"` // exe basenames that may be executed (e.g. "code.exe")
+	AllowedExes []string          `toml:"allowed_exes"` // exe basenames that may be executed (e.g. "code.exe"); empty = disabled
 	Resolve     map[string]string `toml:"resolve"`      // exe name → absolute Windows path; unlisted names use Windows PATH
 }
 

@@ -14,7 +14,6 @@ func TestLoadFrom_WinExec(t *testing.T) {
 enabled = true
 
 [sandbox.proxy.win_exec]
-enabled = true
 allowed_exes = ["code.exe", "explorer.exe"]
 
 [sandbox.proxy.win_exec.resolve]
@@ -26,9 +25,6 @@ allowed_exes = ["code.exe", "explorer.exe"]
 		t.Fatal(err)
 	}
 	wx := cfg.Sandbox.Proxy.WinExec
-	if !wx.Enabled {
-		t.Error("WinExec.Enabled = false, want true")
-	}
 	if len(wx.AllowedExes) != 2 {
 		t.Errorf("AllowedExes = %v, want 2 entries", wx.AllowedExes)
 	}
@@ -41,7 +37,6 @@ func TestMergeWinExec_AllowedExesProjectReplaces(t *testing.T) {
 	user := SandboxConfig{
 		Proxy: ProxyConfig{
 			WinExec: WinExecConfig{
-				Enabled:     true,
 				AllowedExes: []string{"code.exe", "explorer.exe"},
 			},
 		},
@@ -63,7 +58,6 @@ func TestMergeWinExec_AllowedExesUserWinsWhenProjectEmpty(t *testing.T) {
 	user := SandboxConfig{
 		Proxy: ProxyConfig{
 			WinExec: WinExecConfig{
-				Enabled:     true,
 				AllowedExes: []string{"code.exe"},
 			},
 		},
@@ -106,19 +100,6 @@ func TestMergeWinExec_ResolveMapMerged(t *testing.T) {
 	}
 	if res["op.exe"] != "/project/path/op" {
 		t.Errorf("Resolve[op.exe] = %q, want /project/path/op (project added)", res["op.exe"])
-	}
-}
-
-func TestMergeWinExec_EnabledUserWins(t *testing.T) {
-	user := SandboxConfig{
-		Proxy: ProxyConfig{Enabled: true, WinExec: WinExecConfig{Enabled: true}},
-	}
-	project := &SandboxConfig{
-		Proxy: ProxyConfig{WinExec: WinExecConfig{Enabled: false}},
-	}
-	got := MergeSandbox(user, project)
-	if !got.Proxy.WinExec.Enabled {
-		t.Error("WinExec.Enabled = false, want true (user wins)")
 	}
 }
 

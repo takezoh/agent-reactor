@@ -9,7 +9,6 @@ package config
 //   - Devcontainer.ExtraCreateArgs (list): user + project concat
 //   - Proxy.Enabled: user wins (proxy is process-wide)
 //   - Proxy.SSHAgent.Keys: project replaces when non-empty
-//   - Proxy.WinExec.Enabled: user wins
 //   - Proxy.WinExec.AllowedExes: project replaces when non-empty
 //   - Proxy.WinExec.Resolve: merged; project keys win on collision
 func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
@@ -54,11 +53,10 @@ func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 }
 
 // mergeWinExec merges user and project WinExecConfig.
-// Enabled: user wins. AllowedExes: project replaces when non-empty.
+// AllowedExes: project replaces when non-empty.
 // Resolve: merged map; project keys overwrite user keys.
 func mergeWinExec(user, project WinExecConfig) WinExecConfig {
 	out := WinExecConfig{
-		Enabled:     user.Enabled,
 		AllowedExes: append([]string(nil), user.AllowedExes...),
 		Resolve:     cloneStringMap(user.Resolve),
 	}

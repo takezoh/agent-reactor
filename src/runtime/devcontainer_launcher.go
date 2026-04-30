@@ -224,7 +224,7 @@ func buildOverlayEnv(scriptEnv map[string]string, proxySpec credproxy.Spec, sb c
 	}
 	env["ROOST_SOCKET"] = ContainerSockFilePath
 	env["ROOST_DATA_DIR"] = ContainerRunDir
-	if wsl.IsWSL() && sb.Proxy.WinExec.Enabled && len(sb.Proxy.WinExec.AllowedExes) > 0 {
+	if wsl.IsWSL() && len(sb.Proxy.WinExec.AllowedExes) > 0 {
 		// $PATH is expanded by ResolveContainerEnvPlaceholders against image baseline (L1).
 		env["PATH"] = ContainerWinExecShimsDir + ":$PATH"
 	}

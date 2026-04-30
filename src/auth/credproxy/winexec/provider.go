@@ -54,7 +54,7 @@ func (b *SpecBuilder) ContainerSpec(_ context.Context, projectPath string, sb co
 		return credproxy.Spec{}, nil
 	}
 	cfg := sb.Proxy.WinExec
-	if !cfg.Enabled || len(cfg.AllowedExes) == 0 {
+	if len(cfg.AllowedExes) == 0 {
 		return credproxy.Spec{}, nil
 	}
 

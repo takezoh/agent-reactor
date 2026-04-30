@@ -35,7 +35,7 @@ func TestBroker_RejectsDisallowedExe(t *testing.T) {
 		project: "/proj",
 		onStop:  func() {},
 	}
-	cfg := config.WinExecConfig{Enabled: true, AllowedExes: []string{"code.exe"}}
+	cfg := config.WinExecConfig{AllowedExes: []string{"code.exe"}}
 	br.cfg.Store(&cfg)
 
 	served := make(chan struct{})
