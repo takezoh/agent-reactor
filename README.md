@@ -89,6 +89,14 @@ sudo iptables -I DOCKER-USER -i roost-egress -p udp --dport 53 -j ACCEPT
 
 iptables operates on IPs, not hostnames; CDN-fronted services require maintaining IP ranges out-of-band. `--network=none` is not recommended — it blocks the model API the agent needs.
 
+**Resource limits (optional):** use `runArgs` in `.devcontainer/devcontainer.json` to cap resource usage per project:
+
+```jsonc
+{
+  "runArgs": ["--pids-limit", "512", "--memory", "4g", "--cpus", "2.0"]
+}
+```
+
 See [Sandbox Backends](docs/sandbox.md) for credential proxy, mounts, and advanced configuration.
 
 ### Hook Setup
