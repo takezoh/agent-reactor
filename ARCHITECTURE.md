@@ -52,8 +52,9 @@ tui/           Presentation layer — Bubbletea UI state management, rendering, 
 tmux/          Infrastructure layer — tmux command execution wrapper
 features/      Feature flags — Flag/Set types (runtime), build-tag const (compile-time). No external deps
 lib/           Utilities — external tool integration (lib/git/, lib/claude/, lib/github/)
-sandbox/       Project-level sandbox backends (generic Manager[I]); image name read from devcontainer.json, lifecycle via docker directly — see docs/sandbox.md
-config/        Configuration — TOML loading, DataDir injection
+sandbox/       Project-level sandbox backends (generic Manager[I]). devcontainer/ implements per-project container lifecycle via docker — see docs/sandbox.md
+auth/credproxy/ Credential providers for sandboxed agents (AWS SSO, gcloud SA impersonation, ssh-agent, GitHub token, WSL exe broker). Tool-specific env var names (`AWS_*`, `GOOGLE_*`, ...) live exclusively here
+config/        Configuration — TOML loading, DataDir injection, SandboxResolver (user + per-project mode resolution)
 logger/        Logging — slog initialization, log file management
 ```
 
@@ -75,6 +76,8 @@ Code dependency direction:
 - `event/send.go` (event subcommand) → `proto` (sends CmdEvent), `cli` (registers "event" subcommand)
 - `state.Session` owns a stack of `SessionFrame` values, each carrying its own DriverState. Reduce routes session-level events by sessionID and frame-level events (driver hooks, frame lifecycle) by frameID, and passes them to the owning frame's `Driver.Step`
 - `state.State.Connectors` holds per-daemon ConnectorState. Reduce routes by connector name and passes to Connector.Step
+- `runtime.AgentLauncher` wraps every `LaunchPlan` before tmux spawn. `SandboxDispatcher` selects `DirectLauncher` or `DevcontainerLauncher` per project via `config.SandboxResolver`; the devcontainer launcher adapts `sandbox/devcontainer.Manager` and returns a `WrappedLaunch{Command, Env, Mounts, ContainerSockDir, Cleanup}`
+- `lib/pathmap` translates container↔host paths at the IPC boundary using the bind-mount table captured in `WrappedLaunch.Mounts`, so hook events from sandboxed agents land at the same paths as host frames. `state/`, `tui/`, and `proto/` see only host paths
 
 ## Design Decisions
 
@@ -95,6 +98,8 @@ Code dependency direction:
 | Agent event integration (sandboxed frame) | `roost event <hookName>` → `proto.CmdHookEvent` → container endpoint → token Lookup → `EvDriverEvent` → `reduceDriverHook` → `Driver.Step(DEvHook)` | `roost event` detects `ROOST_SOCKET_TOKEN` in env and sends `CmdHookEvent` to the per-project container endpoint instead of the host endpoint. The bearer token resolves to the owning frame ID server-side; no client-supplied frame ID is trusted. Both paths converge at `EvDriverEvent`. Details in [IPC](docs/ipc.md) and [Sandbox Backends](docs/sandbox.md) |
 | Connector scope | Per-daemon (one instance each), no state persistence (TTL-based), initialization on first EvTick | External service information is tied to the entire user account. Embedding in Driver would cause duplicate fetching. Initializing within the reducer enables pure function test coverage |
 | Container egress restriction | Delegate to host (`docker network` + iptables) and pass through via `extra_create_args` | Hostname allowlists cannot be expressed by `docker create` flags alone; a typed network config in `config/` would duplicate the existing passthrough with no expressive gain. iptables rule lifecycle belongs to host operations, not the daemon |
+| Sandbox launcher abstraction | `runtime.AgentLauncher` wraps each `LaunchPlan` before tmux spawn; `SandboxDispatcher` resolves `direct` vs `devcontainer` per project | Sandbox-specific command rewriting, bind-mount setup, and bearer-token generation stay out of the reducer and out of `tmux_real.go`. Per-project mode resolution lets one daemon mix sandboxed and direct projects without restart |
+| Container↔host path translation | `lib/pathmap` rewrites paths in IPC payloads using `WrappedLaunch.Mounts` | A sandboxed agent's hook events report container-absolute paths; daemon and TUI operate on host-absolute paths. Translating at the IPC boundary keeps `state/`, `runtime/` (above the launcher), and `tui/` unaware of container filesystem layout |
 
 ## Feature Flags
 

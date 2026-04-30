@@ -106,7 +106,9 @@ iptables operates on IPs, not hostnames; CDN-fronted services require maintainin
 }
 ```
 
-See [Sandbox Backends](docs/sandbox.md) for credential proxy, mounts, and advanced configuration.
+**Credential proxy (optional):** when `[sandbox.proxy] enabled = true`, roost exposes a per-project Unix socket inside the container that brokers short-lived credentials without bind-mounting host credential files. Supported providers: AWS SSO (multi-profile via `credential_process`), gcloud (service-account impersonation), ssh-agent (ephemeral agent with explicit key list), GitHub (`GH_TOKEN`).
+
+See [Sandbox Backends](docs/sandbox.md) for credential proxy details, mounts, and advanced configuration.
 
 ### Hook Setup
 
