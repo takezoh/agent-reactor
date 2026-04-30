@@ -7,7 +7,6 @@ package config
 //   - Devcontainer.EnvScript (scalar): project wins when non-empty
 //   - Devcontainer.HostPathMountPrefix (scalar): project wins when non-empty
 //   - Devcontainer.ExtraCreateArgs (list): user + project concat
-//   - Proxy.Enabled: user wins (proxy is process-wide)
 //   - Proxy.SSHAgent.Keys: project replaces when non-empty
 //   - Proxy.WinExec.AllowedExes: project replaces when non-empty
 //   - Proxy.WinExec.Resolve: merged; project keys win on collision
@@ -24,7 +23,6 @@ func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 			HostPathMountPrefix:   user.Devcontainer.HostPathMountPrefix,
 		},
 		Proxy: ProxyConfig{
-			Enabled:     user.Proxy.Enabled,
 			AWSProfiles: user.Proxy.AWSProfiles,
 			GCP:         user.Proxy.GCP,
 			SSHAgent:    user.Proxy.SSHAgent,

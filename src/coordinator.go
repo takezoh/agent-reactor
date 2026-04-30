@@ -217,13 +217,9 @@ func newAgentLauncher(ctx context.Context, sb config.SandboxConfig, resolver *co
 		} else if currentHost == "" {
 			slog.Info("sandbox: using default docker socket (rootless not detected)")
 		}
-		var err error
-		var runner *runtime.CredProxyRunner
-		if sb.Proxy.Enabled {
-			runner, err = runtime.StartCredProxy(ctx, dataDir)
-			if err != nil {
-				return nil, fmt.Errorf("sandbox: start in-process credproxy: %w", err)
-			}
+		runner, err := runtime.StartCredProxy(ctx, dataDir)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox: start in-process credproxy: %w", err)
 		}
 		overlayFn := runtime.BuildOverlayFunc(func(project string) config.SandboxConfig {
 			return resolver.Resolve(project)
@@ -232,7 +228,7 @@ func newAgentLauncher(ctx context.Context, sb config.SandboxConfig, resolver *co
 		d.Devcontainer = runtime.NewDevcontainerLauncher(mgr, func(project string) config.SandboxConfig {
 			return resolver.Resolve(project)
 		}, runner, dataDir)
-		slog.Info("sandbox: devcontainer backend enabled", "proxy", sb.Proxy.Enabled)
+		slog.Info("sandbox: devcontainer backend enabled")
 	}
 	return d, nil
 }

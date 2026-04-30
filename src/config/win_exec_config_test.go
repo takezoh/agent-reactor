@@ -10,9 +10,6 @@ func TestLoadFrom_WinExec(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.toml")
 	os.WriteFile(path, []byte(`
-[sandbox.proxy]
-enabled = true
-
 [sandbox.proxy.win_exec]
 allowed_exes = ["code.exe", "explorer.exe"]
 

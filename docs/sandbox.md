@@ -117,7 +117,7 @@ Bind-mounts are declared in devcontainer.json `mounts`. `sandbox/` does not have
 
 ## Credential Proxy
 
-When the proxy is enabled, roost runs an in-process HTTP server backed by the `credproxy` library. The server listens on `<dataDir>/run/credproxy.sock` on the host and is bind-mounted per project into each container at `/opt/roost/run/credproxy.sock`. Its lifetime is tied to the roost process — no external daemon is needed.
+In devcontainer mode roost always runs an in-process HTTP server backed by the `credproxy` library. The server listens on `<dataDir>/run/credproxy.sock` on the host and is bind-mounted per project into each container at `/opt/roost/run/credproxy.sock`. Its lifetime is tied to the roost process — no external daemon is needed. Each provider self-gates on its own configuration and contributes nothing to the container when its settings are empty.
 
 Each provider lives under `auth/credproxy/<name>/` and contributes to the runtime by:
 

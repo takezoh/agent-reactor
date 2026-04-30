@@ -11,7 +11,6 @@ func TestLoadFrom_SSHAgentKeys(t *testing.T) {
 	path := filepath.Join(dir, "settings.toml")
 	os.WriteFile(path, []byte(`
 [sandbox.proxy]
-enabled = true
 ssh_agent.keys = ["~/.ssh/id_ed25519", "~/.ssh/id_rsa"]
 `), 0o644)
 

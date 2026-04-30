@@ -69,11 +69,12 @@ type DevcontainerConfig struct {
 	HostPathMountPrefix string `toml:"host_path_mount_prefix"`
 }
 
-// ProxyConfig enables roost's in-process credential injection proxy.
-// When Enabled, credential env vars are injected into each container.
-// The proxy runs in-process; no external daemon is required.
+// ProxyConfig holds the in-process credential proxy provider settings.
+// Each provider self-gates on its own sub-fields — the proxy server itself
+// runs whenever sandbox.mode = "devcontainer", and providers with empty
+// configuration are no-ops. The proxy runs in-process; no external daemon
+// is required.
 type ProxyConfig struct {
-	Enabled     bool           `toml:"enabled"`
 	AWSProfiles []string       `toml:"aws_profiles"` // AWS profile names to expose in the container via credential_process
 	GCP         GCPConfig      `toml:"gcp"`
 	SSHAgent    SSHAgentConfig `toml:"ssh_agent"`

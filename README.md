@@ -130,13 +130,7 @@ Ignored when devcontainer.json sets `workspaceFolder` or `workspaceMount`.
 
 #### Credential proxy (optional)
 
-Enable to broker short-lived credentials over a per-project Unix socket inside the container, instead of bind-mounting host credential files:
-
-```toml
-# ~/.roost/settings.toml
-[sandbox.proxy]
-enabled = true
-```
+The credential proxy brokers short-lived credentials over a per-project Unix socket inside the container, instead of bind-mounting host credential files. Each provider activates only when its own settings are populated — listing nothing means nothing is exposed.
 
 The container needs `curl` available (present in standard base images).
 
@@ -323,7 +317,7 @@ mode = "devcontainer"               # "direct" (default) | "devcontainer"
                                     # ignored when devcontainer.json sets workspaceFolder or workspaceMount
 
 # [sandbox.proxy]                   # credential proxy — see "Sandbox > Credential proxy" above
-# enabled = true
+# aws_profiles = ["default"]        # populate per-provider keys to activate
 
 [driver]
 # summarize_command = "claude -p --model=haiku --no-session-persistence --setting-sources user"

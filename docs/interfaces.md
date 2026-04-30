@@ -224,7 +224,7 @@ On cold start, the bootstrap walks each session's frames in root-to-tail order a
 | `~/.roost/roost.log` | slog | Application log | Created/appended at daemon startup |
 | `~/.roost/roost.sock` | Unix socket | Host IPC endpoint (SO_PEERCRED auth) — TUI / CLI / palette clients | Created at daemon startup. Deleted on exit |
 | `~/.roost/run/<project-hash>/roost.sock` | Unix socket | Container IPC endpoint (bearer-token auth) — sandboxed agents only; implements `hook-event` only | Started on first container spawn for a project. Bind-mounted into the container as `/opt/roost/run/roost.sock` |
-| `~/.roost/run/credproxy.sock` | Unix socket | Credential proxy endpoint (single instance per daemon; bearer token per project) | Listens while `[sandbox.proxy] enabled = true`. Bind-mounted per project into the container as `/opt/roost/run/credproxy.sock` |
+| `~/.roost/run/credproxy.sock` | Unix socket | Credential proxy endpoint (single instance per daemon; bearer token per project) | Listens whenever sandbox mode is `devcontainer`. Bind-mounted per project into the container as `/opt/roost/run/credproxy.sock` |
 | `~/.roost/warm/<frameID>.json` | JSON | Per-frame container bearer token (atomic, `0o600`) | Written when a sandboxed frame is launched; replayed by `RecoverSandboxFrames` on warm restart. Wiped at cold start |
 
 Base path can be changed via `Config.DataDir` (set to TempDir during tests).

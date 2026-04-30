@@ -96,9 +96,9 @@ func TestMergeSandbox_HostPathMountPrefix_BothEmpty(t *testing.T) {
 }
 
 func TestMergeSandbox_ProxyNilProject(t *testing.T) {
-	user := SandboxConfig{Proxy: ProxyConfig{Enabled: true}}
+	user := SandboxConfig{Proxy: ProxyConfig{AWSProfiles: []string{"prod"}}}
 	got := MergeSandbox(user, nil)
-	if !got.Proxy.Enabled {
+	if len(got.Proxy.AWSProfiles) != 1 || got.Proxy.AWSProfiles[0] != "prod" {
 		t.Errorf("proxy config lost on nil project: %+v", got.Proxy)
 	}
 }
