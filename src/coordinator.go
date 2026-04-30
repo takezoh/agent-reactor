@@ -82,9 +82,10 @@ func runCoordinator() error { //nolint:funlen
 	if err != nil {
 		return err
 	}
+	exePath := resolveExe()
 	rt := runtime.New(runtime.Config{
 		SessionName:       sessionName,
-		RoostExe:          resolveExe(),
+		RoostExe:          exePath,
 		DataDir:           dataDir,
 		TickInterval:      pollInterval,
 		FastTickInterval:  fastPollInterval,
@@ -110,7 +111,7 @@ func runCoordinator() error { //nolint:funlen
 	warmRestart := client.SessionExists()
 	if warmRestart {
 		slog.Info("session exists, restoring")
-		ensureHiddenWindow(client, sessionName)
+		ensureHiddenWindow(client, sessionName, exePath)
 		state.Register(statedriver.NewShellDriver("shell", resolveShellDisplay(client), idleThreshold))
 		if err := rt.LoadSnapshot(false); err != nil {
 			slog.Error("snapshot load failed", "err", err)
@@ -119,13 +120,13 @@ func runCoordinator() error { //nolint:funlen
 			slog.Warn("window map load failed", "err", err)
 		}
 		rt.RecoverActivePaneAtMain()
-		restoreSession(client, cfg, sessionName)
+		restoreSession(client, cfg, sessionName, exePath)
 		rt.ReconcileOrphans()
 		rt.RecoverSandboxFrames()
 		rt.RecoverWarmStartSessions()
 	} else {
 		slog.Info("creating new session")
-		if err := setupNewSession(client, cfg, sessionName); err != nil {
+		if err := setupNewSession(client, cfg, sessionName, exePath); err != nil {
 			return err
 		}
 		state.Register(statedriver.NewShellDriver("shell", resolveShellDisplay(client), idleThreshold))
@@ -169,9 +170,9 @@ func runCoordinator() error { //nolint:funlen
 
 	// Spawn all TUI panes after StartIPC so proto.Dial succeeds on first attempt.
 	rt.RespawnMainPane()
-	respawnHeaderPane(client, sessionName)
-	respawnSessionsPane(client, sessionName)
-	respawnHiddenPane(client, sessionName)
+	respawnHeaderPane(client, sessionName, exePath)
+	respawnSessionsPane(client, sessionName, exePath)
+	respawnHiddenPane(client, sessionName, exePath)
 
 	slog.Info("attaching to tmux session")
 	if err := client.Attach(); err != nil {
