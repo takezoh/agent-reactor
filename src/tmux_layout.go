@@ -49,9 +49,7 @@ func setupNewSession(client *tmux.Client, cfg *config.Config, sn string) error {
 	paneMain, _ := client.DisplayMessage(sn+":0.1", "#{pane_id}")
 	_ = client.SetEnv("ROOST_FRAME__main", paneMain)
 
-	// Create the __hidden__ window without launching the log TUI yet; the IPC
-	// socket does not exist at this point. respawnHiddenPane starts the TUI
-	// after StartIPC completes.
+	// IPC socket does not exist yet; the TUI is spawned after StartIPC.
 	hiddenPaneID, err := client.Run(
 		"new-window", "-d", "-n", "__hidden__", "-t", sn+":",
 		"-P", "-F", "#{pane_id}",

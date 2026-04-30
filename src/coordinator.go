@@ -167,9 +167,7 @@ func runCoordinator() error { //nolint:funlen
 		rt.SetRelay(relay)
 	}
 
-	// All TUI panes are spawned here, after StartIPC, so proto.Dial succeeds
-	// on the first attempt. setupNewSession creates the pane structure with
-	// bare shells; these respawn calls install the actual roost processes.
+	// Spawn all TUI panes after StartIPC so proto.Dial succeeds on first attempt.
 	rt.RespawnMainPane()
 	respawnHeaderPane(client, sessionName)
 	respawnSessionsPane(client, sessionName)
