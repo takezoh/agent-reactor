@@ -266,5 +266,3 @@ require (
 )
 
 tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint
-
-replace github.com/takezoh/credproxy => /workspace/credproxy

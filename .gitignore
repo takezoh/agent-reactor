@@ -3,3 +3,5 @@ roost.log
 .codex
 .claude/worktrees/
 .roost/worktrees/
+go.work
+go.work.sum
