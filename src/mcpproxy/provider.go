@@ -74,7 +74,7 @@ func (b *SpecBuilder) ContainerSpec(_ context.Context, projectPath string) (cont
 	}
 
 	mcpJSONHostPath := filepath.Join(projRunDir, "mcp.json")
-	if err := writeMCPJSON(mcpJSONHostPath, cfg.Servers, b.cfg.ContainerBinPath); err != nil {
+	if err := writeMCPJSON(mcpJSONHostPath, projectPath+"/.mcp.json", cfg.Servers, b.cfg.ContainerBinPath); err != nil {
 		return container.Spec{}, fmt.Errorf("mcpproxy: write mcp.json: %w", err)
 	}
 
@@ -94,24 +94,40 @@ func (b *SpecBuilder) ContainerSpec(_ context.Context, projectPath string) (cont
 	}, nil
 }
 
-// writeMCPJSON writes a Claude Code .mcp.json that routes each alias through
-// the roost mcp-exec shim, overriding any project-local .mcp.json entry.
+// writeMCPJSON writes a merged .mcp.json to path.
+// It reads projectMCPJSON (the project's .mcp.json) as a base, then overlays
+// shim entries for each alias so the broker aliases shadow any direct entries.
+// Entries not in servers pass through unchanged.
 // Skips the write when the file already contains identical content.
-func writeMCPJSON(path string, servers map[string]config.MCPProxyServer, containerBin string) error {
+func writeMCPJSON(path, projectMCPJSON string, servers map[string]config.MCPProxyServer, containerBin string) error {
+	// Start with the project's existing mcpServers entries (arbitrary JSON preserved).
+	merged := make(map[string]json.RawMessage)
+	if raw, err := os.ReadFile(projectMCPJSON); err == nil {
+		var doc struct {
+			MCPServers map[string]json.RawMessage `json:"mcpServers"`
+		}
+		if json.Unmarshal(raw, &doc) == nil {
+			for k, v := range doc.MCPServers {
+				merged[k] = v
+			}
+		}
+	}
+
+	// Override broker-managed aliases with shim entries.
 	type mcpEntry struct {
 		Type    string   `json:"type"`
 		Command string   `json:"command"`
 		Args    []string `json:"args"`
 	}
-	entries := make(map[string]mcpEntry, len(servers))
 	for alias := range servers {
-		entries[alias] = mcpEntry{
-			Type:    "stdio",
-			Command: containerBin,
-			Args:    []string{"mcp-exec", alias},
+		shim, err := json.Marshal(mcpEntry{Type: "stdio", Command: containerBin, Args: []string{"mcp-exec", alias}})
+		if err != nil {
+			return err
 		}
+		merged[alias] = shim
 	}
-	data, err := json.MarshalIndent(map[string]any{"mcpServers": entries}, "", "  ")
+
+	data, err := json.MarshalIndent(map[string]any{"mcpServers": merged}, "", "  ")
 	if err != nil {
 		return err
 	}
