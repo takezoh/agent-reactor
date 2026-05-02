@@ -8,7 +8,6 @@ import (
 	"net"
 	"testing"
 	"time"
-
 )
 
 // fakeServer pairs a net.Pipe end with a goroutine that reads

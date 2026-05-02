@@ -14,9 +14,9 @@ func newTestSpecBuilder(t *testing.T, wsDir string) (*SpecBuilder, string) {
 	t.Helper()
 	runBase := t.TempDir()
 	b := NewSpecBuilder(context.Background(), Config{
-		RunBase:          runBase,
-		ContainerRunDir:  "/opt/roost/run",
-		ContainerBinPath: "/opt/roost/bin/roost",
+		RunBase:            runBase,
+		ContainerRunDir:    "/opt/roost/run",
+		ContainerBinPath:   "/opt/roost/bin/roost",
 		WorkspaceFolderFor: func(string) string { return wsDir },
 	}, func(string) config.HostExecConfig { return config.HostExecConfig{} })
 	return b, runBase
@@ -234,4 +234,3 @@ func TestSpecBuilderRefreshesEntries(t *testing.T) {
 		t.Error("cm.exe should be in entries after second ContainerSpec")
 	}
 }
-

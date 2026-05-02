@@ -57,17 +57,17 @@ func (RespActiveSession) isResponse() {}
 // convenience (the TUI renders status colors and elapsed time
 // without unwrapping the View).
 type SessionInfo struct {
-	ID             string       `json:"id"`
-	Project        string       `json:"project"`
-	Workspace      string       `json:"workspace,omitempty"`
-	Command        string       `json:"command"`
-	CreatedAt      string       `json:"created_at"`
+	ID             string           `json:"id"`
+	Project        string           `json:"project"`
+	Workspace      string           `json:"workspace,omitempty"`
+	Command        string           `json:"command"`
+	CreatedAt      string           `json:"created_at"`
 	State          stateview.Status `json:"state,omitempty"`
 	StateChangedAt string           `json:"state_changed_at,omitempty"`
 	View           stateview.View   `json:"view"`
-	Frames         []FrameInfo  `json:"frames,omitempty"`
-	ActiveFrameID  string       `json:"active_frame_id,omitempty"`
-	IsActive       bool         `json:"is_active,omitempty"` // true when displayed in main pane
+	Frames         []FrameInfo      `json:"frames,omitempty"`
+	ActiveFrameID  string           `json:"active_frame_id,omitempty"`
+	IsActive       bool             `json:"is_active,omitempty"` // true when displayed in main pane
 }
 
 // FrameInfo is the per-frame wire payload for header tab rendering.
@@ -108,10 +108,10 @@ func (si SessionInfo) StateChangedAtTime() time.Time {
 // ConnectorInfo is the per-connector wire payload carried inside
 // EvtSessionsChanged. Mirrors state.ConnectorView for IPC transport.
 type ConnectorInfo struct {
-	Name      string                   `json:"name"`
-	Label     string                   `json:"label"`
-	Summary   string                   `json:"summary"`
-	Available bool                     `json:"available"`
+	Name      string                       `json:"name"`
+	Label     string                       `json:"label"`
+	Summary   string                       `json:"summary"`
+	Available bool                         `json:"available"`
 	Sections  []stateview.ConnectorSection `json:"sections,omitempty"`
 }
 

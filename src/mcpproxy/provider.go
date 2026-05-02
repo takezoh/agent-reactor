@@ -29,9 +29,9 @@ type SpecBuilder struct {
 
 // Config holds path configuration for the SpecBuilder.
 type Config struct {
-	RunBase            string             // parent of per-project run directories on the host
-	ContainerSockPath  string             // mcp.sock path inside the container
-	ContainerBinPath   string             // roost binary path inside the container
+	RunBase            string              // parent of per-project run directories on the host
+	ContainerSockPath  string              // mcp.sock path inside the container
+	ContainerBinPath   string              // roost binary path inside the container
 	WorkspaceFolderFor func(string) string // returns container-side workspace path for a project
 }
 

@@ -11,13 +11,13 @@ import (
 // Container-side paths for files bind-mounted from the per-project run dir.
 // These are the canonical sources; callers must not hard-code these literals.
 const (
-	ContainerRunDir            = "/opt/roost/run"
-	ContainerBinaryPath        = ContainerRunDir + "/roost-bridge"
-	ContainerSockBridgePath    = ContainerRunDir + "/sockbridge"
-	ContainerSockFileName      = "roost.sock"
-	ContainerSockFilePath      = ContainerRunDir + "/" + ContainerSockFileName
-	ContainerHostExecSockPath  = ContainerRunDir + "/hostexec.sock"
-	ContainerMCPSockPath       = ContainerRunDir + "/mcp.sock"
+	ContainerRunDir           = "/opt/roost/run"
+	ContainerBinaryPath       = ContainerRunDir + "/roost-bridge"
+	ContainerSockBridgePath   = ContainerRunDir + "/sockbridge"
+	ContainerSockFileName     = "roost.sock"
+	ContainerSockFilePath     = ContainerRunDir + "/" + ContainerSockFileName
+	ContainerHostExecSockPath = ContainerRunDir + "/hostexec.sock"
+	ContainerMCPSockPath      = ContainerRunDir + "/mcp.sock"
 )
 
 // ProjectRunDir returns the per-project ephemeral run directory path.

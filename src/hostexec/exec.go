@@ -82,7 +82,6 @@ func compileOverlayEntry(hostBinary, execPath string, allow, deny []string) (*en
 	return &entry{name: hostBinary, execPath: execPath, policy: pol}, nil
 }
 
-
 func executeRequest(ctx context.Context, e *entry, project string, req Request, fds [3]int, callerPID int) int {
 	stdin := os.NewFile(uintptr(fds[0]), "stdin")
 	stdout := os.NewFile(uintptr(fds[1]), "stdout")

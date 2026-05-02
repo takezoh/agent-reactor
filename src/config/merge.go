@@ -100,22 +100,3 @@ func mergeOverlays(user, project []OverlayEntry) []OverlayEntry {
 	}
 	return out
 }
-
-// appendUniq concatenates base and extra, removing duplicates (preserving first occurrence).
-func appendUniq(base, extra []string) []string {
-	seen := make(map[string]struct{}, len(base)+len(extra))
-	out := make([]string, 0, len(base)+len(extra))
-	for _, s := range base {
-		if _, ok := seen[s]; !ok {
-			seen[s] = struct{}{}
-			out = append(out, s)
-		}
-	}
-	for _, s := range extra {
-		if _, ok := seen[s]; !ok {
-			seen[s] = struct{}{}
-			out = append(out, s)
-		}
-	}
-	return out
-}
