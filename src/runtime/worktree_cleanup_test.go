@@ -15,8 +15,8 @@ type wtState struct {
 
 type wtDriver struct{}
 
-func (wtDriver) Name() string                          { return "wt-test" }
-func (wtDriver) DisplayName() string                   { return "wt-test" }
+func (wtDriver) Name() string                            { return "wt-test" }
+func (wtDriver) DisplayName() string                     { return "wt-test" }
 func (wtDriver) Status(_ state.DriverState) state.Status { return state.StatusStopped }
 func (wtDriver) NewState(_ time.Time) state.DriverState  { return wtState{} }
 func (wtDriver) PrepareLaunch(s state.DriverState, _ state.LaunchMode, project, cmd string, _ state.LaunchOptions, _ bool) (state.LaunchPlan, error) {
