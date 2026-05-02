@@ -26,6 +26,7 @@ type CodexState struct {
 	TranscriptInFlight bool
 	WatchedFile        string
 	StatusLine         string
+	LastWindowTitle    string
 	RecentTurns        []SummaryTurn
 	PendingTools       map[string]codexPendingTool
 }
@@ -182,6 +183,12 @@ func (d CodexDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 		}
 		effs := cs.HandleActivity(e)
 		return cs, effs, d.view(cs)
+	case state.DEvPaneOsc:
+		if !ctx.IsRoot {
+			return cs, nil, d.view(cs)
+		}
+		next := d.handleWindowTitle(cs, e.Title, e.Now)
+		return next, nil, d.view(next)
 	case state.DEvFileChanged:
 		next, effs := d.handleTranscriptChanged(cs, e)
 		return next, effs, d.view(next)

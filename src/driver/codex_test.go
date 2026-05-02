@@ -202,6 +202,49 @@ func TestCodexPendingTransitionsToRunningOnPreToolUse(t *testing.T) {
 	}
 }
 
+func TestCodexWindowTitleActionRequiredTransitionsPending(t *testing.T) {
+	d, cs, now := newCodex(t)
+	cs.Status = state.StatusRunning
+
+	next := d.handleWindowTitle(cs, "[ ! ] Action Required | agent-roost", now)
+
+	if next.Status != state.StatusPending {
+		t.Fatalf("Status = %v, want pending", next.Status)
+	}
+	if next.StatusChangedAt != now {
+		t.Fatalf("StatusChangedAt = %v, want %v", next.StatusChangedAt, now)
+	}
+	if next.LastWindowTitle != "[ ! ] Action Required | agent-roost" {
+		t.Fatalf("LastWindowTitle = %q", next.LastWindowTitle)
+	}
+}
+
+func TestCodexWindowTitleSpinnerDoesNotTransitionPending(t *testing.T) {
+	d, cs, now := newCodex(t)
+	cs.Status = state.StatusRunning
+
+	next := d.handleWindowTitle(cs, "⠹ agent-roost", now)
+
+	if next.Status != state.StatusRunning {
+		t.Fatalf("Status = %v, want running", next.Status)
+	}
+}
+
+func TestCodexWindowTitleViaStepIgnoresNonRoot(t *testing.T) {
+	d, cs, now := newCodex(t)
+	cs.Status = state.StatusRunning
+
+	next, _, _ := d.Step(cs, state.FrameContext{IsRoot: false}, state.DEvPaneOsc{
+		Cmd:   0,
+		Title: "[ ! ] Action Required | agent-roost",
+		Now:   now,
+	})
+
+	if next.(CodexState).Status != state.StatusRunning {
+		t.Fatalf("Status = %v, want running", next.(CodexState).Status)
+	}
+}
+
 func TestCodexDropsStaleHook(t *testing.T) {
 	d, cs, now := newCodex(t)
 	cs.LastHookAt = now

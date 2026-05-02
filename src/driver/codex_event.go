@@ -59,6 +59,22 @@ func applyHookStatus(cs CodexState, status state.Status, ts time.Time) CodexStat
 	return cs
 }
 
+func (d CodexDriver) handleWindowTitle(cs CodexState, title string, now time.Time) CodexState {
+	if title == cs.LastWindowTitle {
+		return cs
+	}
+	cs.LastWindowTitle = title
+	if codexTitleNeedsUserAction(title) && cs.Status != state.StatusPending {
+		cs.Status = state.StatusPending
+		cs.StatusChangedAt = statusTime(now, cs.StatusChangedAt)
+	}
+	return cs
+}
+
+func codexTitleNeedsUserAction(title string) bool {
+	return strings.Contains(title, "Action Required")
+}
+
 func (d CodexDriver) handleHook(cs CodexState, ctx state.FrameContext, e state.DEvHook) (CodexState, []state.Effect) {
 	hp := parseCodexHookPayload(e.Payload)
 	if !cs.applyHookPreamble(hookPreamble{
