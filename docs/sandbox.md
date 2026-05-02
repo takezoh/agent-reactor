@@ -132,7 +132,7 @@ Generic layers (`runtime/`, `sandbox/`, `state/`, `tui/`, `proto/`) never refere
 Behavior of each provider (credential fetch flow, security model, container env vars) is documented in the credproxy repository:
 
 - [providers/awssso](https://github.com/takezoh/credproxy/tree/main/providers/awssso) — `credential_process` via proxy HTTP route; `~/.aws/sso/cache` never bind-mounted
-- [providers/gcloudcli](https://github.com/takezoh/credproxy/tree/main/providers/gcloudcli) — synthetic `CLOUDSDK_CONFIG` + bind-mounted access token; `~/.config/gcloud` never bind-mounted
+- [providers/gcloudcli](https://github.com/takezoh/credproxy/tree/main/providers/gcloudcli) — GCE metadata server emulator + synthetic `CLOUDSDK_CONFIG`; tokens fetched on demand via `gcloud auth print-access-token`; `~/.config/gcloud` never bind-mounted
 - [providers/sshagent](https://github.com/takezoh/credproxy/tree/main/providers/sshagent) — per-project ephemeral agent; container receives socket only
 
 `SSH_AUTH_SOCK` is injected at both container-creation time (`docker create -e`) and at each frame launch (`docker exec -e`), so updating the key list takes effect on the next launch without recreating the container.

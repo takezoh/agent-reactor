@@ -97,7 +97,7 @@ aws_profiles = ["default", "master", "general"]
 
 Each name becomes a `[profile <name>]` section in a synthetic `~/.aws/config` inside the container, wired to `credential_process`. Profiles outside the list are not reachable from the container. `~/.aws/sso/cache` is never bind-mounted.
 
-**gcloud — credential isolation.** The OAuth refresh token never enters the container. Only short-lived access tokens (≤1h) are bind-mounted; containers have no means to refresh them.
+**gcloud — credential isolation.** The OAuth refresh token never enters the container. The container reaches a GCE metadata server emulator running on the host, which calls `gcloud auth print-access-token` on demand. Tokens are always fresh — `gcloud` on the host auto-refreshes via the stored refresh token when needed.
 
 Two modes, selected by the presence of `service_account`. Both require `account` and `active`.
 
@@ -136,7 +136,7 @@ account = "user@example.com"
 active  = "my-project"
 ```
 
-`gcloud` must be installed in the container image. `gcloud auth login` inside the container fails by design.
+`gcloud` must be installed in the container image. `gcloud auth login` inside the container fails by design — credentials flow only from the host via the metadata emulator.
 
 **SSH agent — ephemeral keys only.** roost spawns an ephemeral `ssh-agent`, loads only the listed keys, and exposes its socket as `SSH_AUTH_SOCK` inside the container. Direct forwarding of the host `$SSH_AUTH_SOCK` is not supported.
 

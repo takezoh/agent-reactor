@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/takezoh/agent-roost/config"
@@ -165,16 +166,16 @@ func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, proxy *C
 		if err != nil {
 			return sandboxdc.SpecOverlay{}, fmt.Errorf("devcontainer: install binary: %w", err)
 		}
+		if err := InstallSockBridgeInRunDir(runDir); err != nil {
+			slog.Warn("devcontainer: sockbridge install failed", "err", err)
+		}
 
 		env := buildOverlayEnv(scriptEnv, proxySpec)
 		mounts := append([]string{
 			fmt.Sprintf("type=bind,source=%s,target=%s", runDir, ContainerRunDir),
 		}, proxySpec.Mounts...)
 
-		var postCreate []string
-		if postCreateSubcmd != "" {
-			postCreate = []string{"bash", "-lc", binPath + " " + postCreateSubcmd}
-		}
+		postCreate := buildPostCreate(binPath, postCreateSubcmd, proxySpec.BridgeSpecs)
 
 		return sandboxdc.SpecOverlay{
 			Env:                     env,
@@ -224,6 +225,24 @@ func buildOverlayEnv(scriptEnv map[string]string, proxySpec container.Spec) map[
 	env["ROOST_SOCKET"] = ContainerSockFilePath
 	env["ROOST_DATA_DIR"] = ContainerRunDir
 	return env
+}
+
+// buildPostCreate assembles a bash -lc postCreateCommand that:
+//  1. starts each bridge as a background daemon, and
+//  2. runs the roost postCreateSubcmd (if any) in the foreground.
+func buildPostCreate(binPath, postCreateSubcmd string, bridges []container.BridgeSpec) []string {
+	var parts []string
+	for _, bs := range bridges {
+		parts = append(parts, fmt.Sprintf("%s -listen %s -socket %s &",
+			ContainerSockBridgePath, bs.ListenAddr, bs.ContainerSocketPath))
+	}
+	if postCreateSubcmd != "" {
+		parts = append(parts, binPath+" "+postCreateSubcmd)
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return []string{"bash", "-lc", strings.Join(parts, "\n")}
 }
 
 // isProjectEnvScriptAllowed checks whether projectPath is in the allowlist.

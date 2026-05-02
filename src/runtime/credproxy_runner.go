@@ -60,7 +60,7 @@ func StartCredProxy(ctx context.Context, dataDir string, resolveSandbox func(str
 	sockPath := filepath.Join(runBase, "credproxy.sock")
 
 	runner := &CredProxyRunner{tokens: make(map[string]string)}
-	providers := buildProviders(ctx, dataDir, runBase, sockPath, resolveSandbox, runner.ProjectToken)
+	providers := buildProviders(ctx, runBase, sockPath, resolveSandbox, runner.ProjectToken)
 
 	var routes []credproxylib.Route
 	for _, p := range providers {
@@ -94,11 +94,22 @@ func StartCredProxy(ctx context.Context, dataDir string, resolveSandbox func(str
 
 func buildProviders(
 	ctx context.Context,
-	dataDir, runBase, sockPath string,
+	runBase, sockPath string,
 	resolveSandbox func(string) config.SandboxConfig,
 	tokenFor func(string) (string, error),
 ) []container.Provider {
-	awsSpec := awssso.NewSpecBuilder(
+	cred := buildCredProviders(ctx, runBase, sockPath, resolveSandbox, tokenFor)
+	tool := buildToolProviders(ctx, runBase, resolveSandbox)
+	return append(cred, tool...)
+}
+
+func buildCredProviders(
+	ctx context.Context,
+	runBase, sockPath string,
+	resolveSandbox func(string) config.SandboxConfig,
+	tokenFor func(string) (string, error),
+) []container.Provider {
+	aws := awssso.NewSpecBuilder(
 		awssso.Config{
 			HostRunBase:       runBase,
 			HostSockPath:      sockPath,
@@ -108,47 +119,42 @@ func buildProviders(
 		func(p string) []string { return resolveSandbox(p).Proxy.AWSProfiles },
 		tokenFor,
 	)
-	gcpSpec := gcloudcli.NewSpecBuilder(
+	gcp := gcloudcli.NewSpecBuilder(
 		ctx,
-		gcloudcli.Config{GCPDir: dataDir + "/gcp", RunBase: runBase, ContainerRunDir: ContainerRunDir},
+		gcloudcli.Config{RunBase: runBase, ContainerRunDir: ContainerRunDir},
 		func(p string) gcloudcli.GCPConfig {
 			g := resolveSandbox(p).Proxy.GCP
 			return gcloudcli.GCPConfig{Account: g.Account, ServiceAccount: g.ServiceAccount, Active: g.Active, Projects: g.Projects}
 		},
 	)
-	sshSpec := sshagent.NewSpecBuilder(
+	ssh := sshagent.NewSpecBuilder(
 		ctx,
 		sshagent.Config{RunBase: runBase, ContainerRunDir: ContainerRunDir},
 		func(p string) []string { return resolveSandbox(p).Proxy.SSHAgent.Keys },
 	)
-	hostExecSpec := hostexec.NewSpecBuilder(
-		ctx,
-		hostexec.Config{
-			RunBase:          runBase,
-			ContainerRunDir:  ContainerRunDir,
-			ContainerBinPath: ContainerBinaryPath,
-			WorkspaceFolderFor: func(p string) string {
-				return resolveWorkspaceFallback(p, resolveSandbox(p).Devcontainer.HostPathMountPrefix)
-			},
-		},
-		func(p string) config.HostExecConfig { return resolveSandbox(p).Proxy.HostExec },
-	)
-	mcpSpec := mcpproxy.NewSpecBuilder(
-		ctx,
-		mcpproxy.Config{
-			RunBase:           runBase,
-			ContainerSockPath: ContainerMCPSockPath,
-			ContainerBinPath:  ContainerBinaryPath,
-			WorkspaceFolderFor: func(p string) string {
-				return resolveWorkspaceFallback(p, resolveSandbox(p).Devcontainer.HostPathMountPrefix)
-			},
-		},
-		func(p string) config.MCPProxyConfig { return resolveSandbox(p).Proxy.MCPProxy },
-	)
-	return []container.Provider{awsSpec, gcpSpec, sshSpec, hostExecSpec, mcpSpec}
+	return []container.Provider{aws, gcp, ssh}
 }
 
-// ContainerSpec fans out to all providers and merges their Env and Mounts.
+func buildToolProviders(
+	ctx context.Context,
+	runBase string,
+	resolveSandbox func(string) config.SandboxConfig,
+) []container.Provider {
+	wsFolderFor := func(p string) string {
+		return resolveWorkspaceFallback(p, resolveSandbox(p).Devcontainer.HostPathMountPrefix)
+	}
+	he := hostexec.NewSpecBuilder(ctx,
+		hostexec.Config{RunBase: runBase, ContainerRunDir: ContainerRunDir, ContainerBinPath: ContainerBinaryPath, WorkspaceFolderFor: wsFolderFor},
+		func(p string) config.HostExecConfig { return resolveSandbox(p).Proxy.HostExec },
+	)
+	mcp := mcpproxy.NewSpecBuilder(ctx,
+		mcpproxy.Config{RunBase: runBase, ContainerSockPath: ContainerMCPSockPath, ContainerBinPath: ContainerBinaryPath, WorkspaceFolderFor: wsFolderFor},
+		func(p string) config.MCPProxyConfig { return resolveSandbox(p).Proxy.MCPProxy },
+	)
+	return []container.Provider{he, mcp}
+}
+
+// ContainerSpec fans out to all providers and merges their Env, Mounts, and BridgeSpecs.
 // Provider errors are logged as warnings and do not abort the other providers.
 func (r *CredProxyRunner) ContainerSpec(ctx context.Context, projectPath string) (container.Spec, error) {
 	out := container.Spec{Env: map[string]string{}}
@@ -162,6 +168,7 @@ func (r *CredProxyRunner) ContainerSpec(ctx context.Context, projectPath string)
 			out.Env[k] = v
 		}
 		out.Mounts = append(out.Mounts, s.Mounts...)
+		out.BridgeSpecs = append(out.BridgeSpecs, s.BridgeSpecs...)
 	}
 	return out, nil
 }

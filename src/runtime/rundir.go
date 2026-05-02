@@ -11,12 +11,13 @@ import (
 // Container-side paths for files bind-mounted from the per-project run dir.
 // These are the canonical sources; callers must not hard-code these literals.
 const (
-	ContainerRunDir           = "/opt/roost/run"
-	ContainerBinaryPath       = ContainerRunDir + "/roost"
-	ContainerSockFileName     = "roost.sock"
-	ContainerSockFilePath     = ContainerRunDir + "/" + ContainerSockFileName
-	ContainerHostExecSockPath = ContainerRunDir + "/hostexec.sock"
-	ContainerMCPSockPath      = ContainerRunDir + "/mcp.sock"
+	ContainerRunDir            = "/opt/roost/run"
+	ContainerBinaryPath        = ContainerRunDir + "/roost"
+	ContainerSockBridgePath    = ContainerRunDir + "/sockbridge"
+	ContainerSockFileName      = "roost.sock"
+	ContainerSockFilePath      = ContainerRunDir + "/" + ContainerSockFileName
+	ContainerHostExecSockPath  = ContainerRunDir + "/hostexec.sock"
+	ContainerMCPSockPath       = ContainerRunDir + "/mcp.sock"
 )
 
 // ProjectRunDir returns the per-project ephemeral run directory path.
@@ -47,8 +48,7 @@ func ContainerSockPath(runDir string) string {
 // InstallBinaryInRunDir copies the current roost executable into runDir as
 // "roost" (mode 0o755). The file is bind-mounted into the devcontainer at
 // ContainerRunDir, so the copy is accessible inside the container as
-// ContainerBinaryPath. The copy is skipped when an existing dst already
-// matches the source size+mtime. Returns the container-internal path.
+// ContainerBinaryPath. Returns the container-internal path.
 func InstallBinaryInRunDir(runDir string) (string, error) {
 	src, err := os.Executable()
 	if err != nil {
@@ -57,24 +57,45 @@ func InstallBinaryInRunDir(runDir string) (string, error) {
 	if resolved, e := filepath.EvalSymlinks(src); e == nil {
 		src = resolved
 	}
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return "", fmt.Errorf("rundir: stat src: %w", err)
-	}
-
-	dst := filepath.Join(runDir, "roost")
-	if dstInfo, err := os.Stat(dst); err == nil &&
-		dstInfo.Size() == srcInfo.Size() &&
-		dstInfo.ModTime().Equal(srcInfo.ModTime()) {
-		return ContainerBinaryPath, nil
-	}
-
-	if err := copyFile(src, dst, 0o755); err != nil {
+	if err := installExecInRunDir(src, filepath.Join(runDir, "roost")); err != nil {
 		return "", err
 	}
-	// Mirror src mtime so the next call can short-circuit via the size+mtime check.
-	_ = os.Chtimes(dst, srcInfo.ModTime(), srcInfo.ModTime())
 	return ContainerBinaryPath, nil
+}
+
+// InstallSockBridgeInRunDir copies the sockbridge binary (expected alongside the
+// roost executable) into runDir as "sockbridge" (mode 0o755).
+func InstallSockBridgeInRunDir(runDir string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("rundir: executable: %w", err)
+	}
+	if resolved, e := filepath.EvalSymlinks(exe); e == nil {
+		exe = resolved
+	}
+	src := filepath.Join(filepath.Dir(exe), "sockbridge")
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("rundir: sockbridge binary not found at %s: %w", src, err)
+	}
+	return installExecInRunDir(src, filepath.Join(runDir, "sockbridge"))
+}
+
+// installExecInRunDir copies src to dst (mode 0o755) with size+mtime short-circuit.
+func installExecInRunDir(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("rundir: stat %s: %w", src, err)
+	}
+	if dstInfo, e := os.Stat(dst); e == nil &&
+		dstInfo.Size() == srcInfo.Size() &&
+		dstInfo.ModTime().Equal(srcInfo.ModTime()) {
+		return nil
+	}
+	if err := copyFile(src, dst, 0o755); err != nil {
+		return err
+	}
+	_ = os.Chtimes(dst, srcInfo.ModTime(), srcInfo.ModTime())
+	return nil
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {
