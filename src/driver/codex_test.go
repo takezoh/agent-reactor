@@ -260,6 +260,32 @@ func TestCodexPrepareLaunchStripsWorktreeWithoutResume(t *testing.T) {
 	}
 }
 
+func TestCodexPrepareLaunchAddsYoloWhenSandboxed(t *testing.T) {
+	d, cs, _ := newCodex(t)
+	plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", "codex --model gpt-5-codex", state.LaunchOptions{}, true)
+	if err != nil {
+		t.Fatalf("PrepareLaunch error: %v", err)
+	}
+	got := plan.Command
+	want := "codex --model gpt-5-codex --yolo"
+	if got != want {
+		t.Fatalf("PrepareLaunch.Command = %q, want %q", got, want)
+	}
+}
+
+func TestCodexPrepareLaunchDoesNotDuplicateYolo(t *testing.T) {
+	d, cs, _ := newCodex(t)
+	plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", "codex --model gpt-5-codex --yolo", state.LaunchOptions{}, true)
+	if err != nil {
+		t.Fatalf("PrepareLaunch error: %v", err)
+	}
+	got := plan.Command
+	want := "codex --model gpt-5-codex --yolo"
+	if got != want {
+		t.Fatalf("PrepareLaunch.Command = %q, want %q", got, want)
+	}
+}
+
 func TestCodexPrepareLaunchSkipsNonCodexBaseCommand(t *testing.T) {
 	d, cs, _ := newCodex(t)
 	cs.CodexSessionID = "abc-123"

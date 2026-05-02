@@ -14,6 +14,7 @@ const (
 	codexKeyCodexSessionID      = "codex_session_id"
 	codexKeyManagedWorkingDir   = "managed_working_dir"
 	codexPromptPreviewMaxLength = 80
+	codexSandboxYoloFlag        = "--yolo"
 )
 
 type CodexState struct {
@@ -87,7 +88,7 @@ func (d CodexDriver) NewState(now time.Time) state.DriverState {
 	}
 }
 
-func (d CodexDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, project, baseCommand string, options state.LaunchOptions, _ bool) (state.LaunchPlan, error) {
+func (d CodexDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, project, baseCommand string, options state.LaunchOptions, sandboxed bool) (state.LaunchPlan, error) {
 	cs, ok := s.(CodexState)
 	if !ok {
 		cs = CodexState{}
@@ -105,6 +106,7 @@ func (d CodexDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, p
 	if mode == state.LaunchModeCreate || req.Enabled || cs.ManagedWorkingDir != "" {
 		base = stripped
 	}
+	base = ensureCodexSandboxFlag(base, sandboxed)
 	if mode != state.LaunchModeColdStart || cs.CodexSessionID == "" || !isAlphanumHyphen(cs.CodexSessionID) || hasResumeToken(base) {
 		return state.LaunchPlan{
 			Command:  base,
@@ -119,6 +121,13 @@ func (d CodexDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, p
 		Options:  state.LaunchOptions{Worktree: state.WorktreeOption{Enabled: req.Enabled || cs.ManagedWorkingDir != ""}},
 		Stdin:    options.InitialInput,
 	}, nil
+}
+
+func ensureCodexSandboxFlag(command string, sandboxed bool) string {
+	if hasFlagToken(command, codexSandboxYoloFlag) {
+		return command
+	}
+	return appendFlag(command, codexSandboxYoloFlag, sandboxed)
 }
 
 func hasResumeToken(command string) bool {
