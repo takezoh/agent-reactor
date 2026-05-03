@@ -105,7 +105,15 @@ func (d GeminiDriver) handleHook(gs GeminiState, ctx state.FrameContext, e state
 	}
 
 	effs := watchGeminiTranscript(&gs)
+	gs, effs = d.handleGeminiHookEvent(gs, hp, e, effs)
 
+	if line := strings.TrimSpace(hp.formatLog()); line != "" {
+		effs = append(effs, state.EffEventLogAppend{Line: line})
+	}
+	return gs, effs
+}
+
+func (d GeminiDriver) handleGeminiHookEvent(gs GeminiState, hp geminiHookPayload, e state.DEvHook, effs []state.Effect) (GeminiState, []state.Effect) {
 	switch hp.HookEventName {
 	case "SessionStart":
 		gs.PendingTools = nil
@@ -153,10 +161,6 @@ func (d GeminiDriver) handleHook(gs GeminiState, ctx state.FrameContext, e state
 		gs.PendingTools = nil
 		gs.Status = state.StatusStopped
 		gs.StatusChangedAt = statusTime(e.Timestamp, gs.StatusChangedAt)
-	}
-
-	if line := strings.TrimSpace(hp.formatLog()); line != "" {
-		effs = append(effs, state.EffEventLogAppend{Line: line})
 	}
 	return gs, effs
 }

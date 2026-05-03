@@ -275,11 +275,7 @@ func reduceTmuxPaneSpawned(s State, e EvTmuxPaneSpawned) (State, []Effect) {
 	}
 	var bootstrapEffs []Effect
 	if frameIdx == 0 {
-		var bootstrapped bool
-		s, bootstrapEffs, bootstrapped = bootstrapDriverSessionStart(s, e.FrameID)
-		if bootstrapped {
-			sess = s.Sessions[e.SessionID]
-		}
+		s, bootstrapEffs, _ = bootstrapDriverSessionStart(s, e.FrameID)
 	}
 	s, pre := ensureMainAtVisibleSlot(s)
 	s.ActiveOccupant = OccupantFrame

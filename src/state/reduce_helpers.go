@@ -246,6 +246,12 @@ func bootstrapDriverSessionStart(s State, frameID FrameID) (State, []Effect, boo
 	}
 
 	newStatus := drv.Status(nextDS)
+	out = appendStatusNotify(out, sessID, frameID, sess, frame, drv, oldStatus, newStatus)
+
+	return s, out, true
+}
+
+func appendStatusNotify(out []Effect, sessID SessionID, frameID FrameID, sess Session, frame SessionFrame, drv Driver, oldStatus, newStatus Status) []Effect {
 	if kind, ok := ClassifyStatusTransition(oldStatus, newStatus); ok {
 		out = append(out, EffNotify{
 			SessionID: sessID,
@@ -258,8 +264,7 @@ func bootstrapDriverSessionStart(s State, frameID FrameID) (State, []Effect, boo
 			NewStatus: newStatus,
 		})
 	}
-
-	return s, out, true
+	return out
 }
 
 // postProcessEffect fills in session-context fields the driver Step

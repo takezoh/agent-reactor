@@ -37,88 +37,103 @@ type geminiTranscriptMetadata struct {
 }
 
 func newGeminiTranscriptParse() func(context.Context, GeminiTranscriptParseInput) (GeminiTranscriptParseResult, error) {
-	return func(ctx context.Context, in GeminiTranscriptParseInput) (GeminiTranscriptParseResult, error) {
-		if err := ctx.Err(); err != nil {
-			return GeminiTranscriptParseResult{}, err
-		}
-		f, err := os.Open(in.Path)
-		if err != nil {
-			return GeminiTranscriptParseResult{}, err
-		}
-		defer f.Close()
+	return geminiTranscriptParse
+}
 
-		var (
-			meta          geminiTranscriptMetadata
-			messages      []geminiTranscriptMessage
-			lastPrompt    string
-			lastAssistant string
-			currentTool   string
-			recentTurns   []SummaryTurn
-		)
-
-		scanner := bufio.NewScanner(f)
-		buf := make([]byte, 0, 64*1024)
-		scanner.Buffer(buf, 1024*1024)
-		for scanner.Scan() {
-			if err := ctx.Err(); err != nil {
-				return GeminiTranscriptParseResult{}, err
-			}
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-			var raw map[string]any
-			if err := json.Unmarshal([]byte(line), &raw); err != nil {
-				continue
-			}
-			if set, ok := raw["$set"].(map[string]any); ok {
-				applyGeminiMetadataUpdate(&meta, set)
-				continue
-			}
-			if isGeminiMetadata(raw) {
-				applyGeminiMetadataUpdate(&meta, raw)
-				continue
-			}
-			msg, ok := parseGeminiTranscriptMessage(raw)
-			if !ok {
-				continue
-			}
-			messages = upsertGeminiMessage(messages, msg)
-		}
-		if err := scanner.Err(); err != nil {
-			return GeminiTranscriptParseResult{}, err
-		}
-
-		for _, msg := range messages {
-			text := strings.TrimSpace(geminiPartListToString(msg.Display))
-			if text == "" {
-				text = strings.TrimSpace(geminiPartListToString(msg.Content))
-			}
-			switch msg.Type {
-			case "user":
-				if text != "" {
-					lastPrompt = text
-					recentTurns = appendGeminiRecentTurn(recentTurns, "user", text)
-				}
-			case "gemini":
-				if text != "" {
-					lastAssistant = text
-					recentTurns = appendGeminiRecentTurn(recentTurns, "assistant", text)
-				}
-				if tool := lastGeminiCurrentTool(msg.ToolCalls); tool != "" {
-					currentTool = tool
-				}
-			}
-		}
-
-		return GeminiTranscriptParseResult{
-			Title:                strings.TrimSpace(meta.Summary),
-			LastPrompt:           lastPrompt,
-			LastAssistantMessage: lastAssistant,
-			CurrentTool:          currentTool,
-			RecentTurns:          recentTurns,
-		}, nil
+func geminiTranscriptParse(ctx context.Context, in GeminiTranscriptParseInput) (GeminiTranscriptParseResult, error) {
+	if err := ctx.Err(); err != nil {
+		return GeminiTranscriptParseResult{}, err
 	}
+	f, err := os.Open(in.Path)
+	if err != nil {
+		return GeminiTranscriptParseResult{}, err
+	}
+	defer f.Close()
+
+	meta, messages, err := scanGeminiTranscript(ctx, f)
+	if err != nil {
+		return GeminiTranscriptParseResult{}, err
+	}
+
+	lastPrompt, lastAssistant, currentTool, recentTurns := processGeminiMessages(messages)
+	return GeminiTranscriptParseResult{
+		Title:                strings.TrimSpace(meta.Summary),
+		LastPrompt:           lastPrompt,
+		LastAssistantMessage: lastAssistant,
+		CurrentTool:          currentTool,
+		RecentTurns:          recentTurns,
+	}, nil
+}
+
+func scanGeminiTranscript(ctx context.Context, f *os.File) (geminiTranscriptMetadata, []geminiTranscriptMessage, error) {
+	var (
+		meta     geminiTranscriptMetadata
+		messages []geminiTranscriptMessage
+	)
+	scanner := bufio.NewScanner(f)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return meta, nil, err
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			continue
+		}
+		if set, ok := raw["$set"].(map[string]any); ok {
+			applyGeminiMetadataUpdate(&meta, set)
+			continue
+		}
+		if isGeminiMetadata(raw) {
+			applyGeminiMetadataUpdate(&meta, raw)
+			continue
+		}
+		msg, ok := parseGeminiTranscriptMessage(raw)
+		if !ok {
+			continue
+		}
+		messages = upsertGeminiMessage(messages, msg)
+	}
+	if err := scanner.Err(); err != nil {
+		return meta, nil, err
+	}
+	return meta, messages, nil
+}
+
+func processGeminiMessages(messages []geminiTranscriptMessage) (string, string, string, []SummaryTurn) {
+	var (
+		lastPrompt    string
+		lastAssistant string
+		currentTool   string
+		recentTurns   []SummaryTurn
+	)
+	for _, msg := range messages {
+		text := strings.TrimSpace(geminiPartListToString(msg.Display))
+		if text == "" {
+			text = strings.TrimSpace(geminiPartListToString(msg.Content))
+		}
+		switch msg.Type {
+		case "user":
+			if text != "" {
+				lastPrompt = text
+				recentTurns = appendGeminiRecentTurn(recentTurns, "user", text)
+			}
+		case "gemini":
+			if text != "" {
+				lastAssistant = text
+				recentTurns = appendGeminiRecentTurn(recentTurns, "assistant", text)
+			}
+			if tool := lastGeminiCurrentTool(msg.ToolCalls); tool != "" {
+				currentTool = tool
+			}
+		}
+	}
+	return lastPrompt, lastAssistant, currentTool, recentTurns
 }
 
 func isGeminiMetadata(raw map[string]any) bool {

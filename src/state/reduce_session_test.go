@@ -74,7 +74,7 @@ type bootstrapState struct {
 	bootstrapped bool
 }
 
-type bootstrapDriver struct{ stubDriver }
+type bootstrapDriver struct{}
 
 func (bootstrapDriver) Name() string                       { return "bootstrap" }
 func (bootstrapDriver) DisplayName() string                { return "bootstrap" }
