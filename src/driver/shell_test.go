@@ -120,24 +120,62 @@ func TestShellStepDEvPanePromptInputSetsSawPromptEvent(t *testing.T) {
 	if !ns.SawPromptEvent {
 		t.Error("SawPromptEvent should be true after DEvPanePrompt{PromptPhaseInput}")
 	}
+	if ns.Status != state.StatusWaiting {
+		t.Errorf("Status = %v, want Waiting", ns.Status)
+	}
 	if ns.LastExitCode != nil {
 		t.Error("LastExitCode should remain nil for PromptPhaseInput")
 	}
 }
 
-func TestShellStepDEvPanePromptCompleteSetsLastExitCode(t *testing.T) {
+func TestShellStepDEvPanePromptCommandSetsRunning(t *testing.T) {
 	d, s, now := newShellState(t, 5*time.Second)
+	next, _, _ := d.Step(s, state.FrameContext{IsRoot: true}, state.DEvPanePrompt{
+		Phase: state.PromptPhaseCommand,
+		Now:   now.Add(time.Second),
+	})
+	ns := next.(ShellState)
+	if ns.Status != state.StatusRunning {
+		t.Errorf("Status = %v, want Running", ns.Status)
+	}
+	if !ns.StatusChangedAt.Equal(now.Add(time.Second)) {
+		t.Errorf("StatusChangedAt = %v, want %v", ns.StatusChangedAt, now.Add(time.Second))
+	}
+}
+
+func TestShellStepDEvPanePromptCompleteSetsLastExitCodeAndWaiting(t *testing.T) {
+	d, s, now := newShellState(t, 5*time.Second)
+	s.Status = state.StatusRunning
+	s.StatusChangedAt = now
 	code := 42
 	next, _, _ := d.Step(s, state.FrameContext{IsRoot: true}, state.DEvPanePrompt{
 		Phase:    state.PromptPhaseComplete,
 		ExitCode: &code,
-		Now:      now,
+		Now:      now.Add(2 * time.Second),
 	})
 	ns := next.(ShellState)
 	if !ns.SawPromptEvent {
 		t.Error("SawPromptEvent should be true after DEvPanePrompt{PromptPhaseComplete}")
 	}
+	if ns.Status != state.StatusWaiting {
+		t.Errorf("Status = %v, want Waiting", ns.Status)
+	}
 	if ns.LastExitCode == nil || *ns.LastExitCode != 42 {
 		t.Errorf("LastExitCode = %v, want 42", ns.LastExitCode)
+	}
+	if !ns.StatusChangedAt.Equal(now.Add(2 * time.Second)) {
+		t.Errorf("StatusChangedAt = %v, want %v", ns.StatusChangedAt, now.Add(2*time.Second))
+	}
+}
+
+func TestShellStepDEvPanePromptInputPreservesStatusChangedAtWhenAlreadyWaiting(t *testing.T) {
+	d, s, now := newShellState(t, 5*time.Second)
+	next, _, _ := d.Step(s, state.FrameContext{IsRoot: true}, state.DEvPanePrompt{
+		Phase: state.PromptPhaseInput,
+		Now:   now.Add(time.Second),
+	})
+	ns := next.(ShellState)
+	if !ns.StatusChangedAt.Equal(now) {
+		t.Errorf("StatusChangedAt = %v, want %v", ns.StatusChangedAt, now)
 	}
 }

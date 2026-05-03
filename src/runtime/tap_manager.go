@@ -139,17 +139,7 @@ func newPaneTapTerminal(frameID state.FrameID, enqueue func(state.Event)) *vt.Te
 			enqueue(state.EvPaneOsc{FrameID: frameID, Cmd: n.Cmd, Title: title, Body: body, Now: time.Now()})
 		}
 	}
-	// OSC 133 A/B/C only matter the first time (they set SawPromptEvent in the
-	// shell driver). After that, only D (Complete) carries new information.
-	// Filter here to avoid per-prompt event-loop round-trips.
-	var promptSeen bool
 	term.OnPromptEvent = func(e vt.PromptEvent) {
-		if e.Phase != vt.PromptPhaseComplete {
-			if promptSeen {
-				return
-			}
-			promptSeen = true
-		}
 		enqueue(state.EvPanePrompt{FrameID: frameID, Phase: vtPromptPhase(e.Phase), ExitCode: e.ExitCode, Now: time.Now()})
 	}
 	return term

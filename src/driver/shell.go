@@ -162,10 +162,7 @@ func (d ShellDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 		return ss, nil, d.view(ss)
 
 	case state.DEvPanePrompt:
-		ss.SawPromptEvent = true
-		if e.Phase == state.PromptPhaseComplete {
-			ss.LastExitCode = e.ExitCode
-		}
+		ss = applyShellPromptEvent(ss, e)
 		return ss, nil, d.view(ss)
 
 	case state.DEvHook:
@@ -173,6 +170,29 @@ func (d ShellDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 	}
 
 	return ss, nil, d.view(ss)
+}
+
+func applyShellPromptEvent(ss ShellState, e state.DEvPanePrompt) ShellState {
+	ss.SawPromptEvent = true
+	switch e.Phase {
+	case state.PromptPhaseInput:
+		ss = setShellStatus(ss, state.StatusWaiting, e.Now)
+	case state.PromptPhaseCommand:
+		ss = setShellStatus(ss, state.StatusRunning, e.Now)
+	case state.PromptPhaseComplete:
+		ss.LastExitCode = e.ExitCode
+		ss = setShellStatus(ss, state.StatusWaiting, e.Now)
+	}
+	return ss
+}
+
+func setShellStatus(ss ShellState, next state.Status, now time.Time) ShellState {
+	if ss.Status == next {
+		return ss
+	}
+	ss.Status = next
+	ss.StatusChangedAt = now
+	return ss
 }
 
 func (d ShellDriver) applyJobResult(ss ShellState, e state.DEvJobResult) ShellState {

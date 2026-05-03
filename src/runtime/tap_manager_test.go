@@ -69,6 +69,49 @@ func TestReadTapEmitsOscEvents(t *testing.T) {
 	}
 }
 
+func TestReadTapEmitsRepeatedPromptEvents(t *testing.T) {
+	frameID := state.FrameID("f1")
+	ch := make(chan []byte, 4)
+	ch <- []byte("\x1b]133;C\x07")
+	ch <- []byte("\x1b]133;D;0\x07")
+	ch <- []byte("\x1b]133;C\x07")
+	ch <- []byte("\x1b]133;D;42\x07")
+	close(ch)
+
+	var events []state.Event
+	enqueue := func(e state.Event) { events = append(events, e) }
+
+	readTap(context.Background(), frameID, "%1", ch, enqueue)
+
+	var prompts []state.EvPanePrompt
+	for _, ev := range events {
+		if p, ok := ev.(state.EvPanePrompt); ok {
+			prompts = append(prompts, p)
+		}
+	}
+	if len(prompts) != 4 {
+		t.Fatalf("prompt events = %d, want 4", len(prompts))
+	}
+	if prompts[0].Phase != state.PromptPhaseCommand {
+		t.Errorf("prompts[0].Phase = %v, want Command", prompts[0].Phase)
+	}
+	if prompts[1].Phase != state.PromptPhaseComplete {
+		t.Errorf("prompts[1].Phase = %v, want Complete", prompts[1].Phase)
+	}
+	if prompts[1].ExitCode == nil || *prompts[1].ExitCode != 0 {
+		t.Errorf("prompts[1].ExitCode = %v, want 0", prompts[1].ExitCode)
+	}
+	if prompts[2].Phase != state.PromptPhaseCommand {
+		t.Errorf("prompts[2].Phase = %v, want Command", prompts[2].Phase)
+	}
+	if prompts[3].Phase != state.PromptPhaseComplete {
+		t.Errorf("prompts[3].Phase = %v, want Complete", prompts[3].Phase)
+	}
+	if prompts[3].ExitCode == nil || *prompts[3].ExitCode != 42 {
+		t.Errorf("prompts[3].ExitCode = %v, want 42", prompts[3].ExitCode)
+	}
+}
+
 func TestParseOscNotification_OSC9(t *testing.T) {
 	title, body := parseOscNotification(vt.OscNotification{Cmd: 9, Payload: "  hello  "})
 	if title != "hello" || body != "" {

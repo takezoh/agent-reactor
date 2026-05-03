@@ -199,6 +199,21 @@ func TestReducePanePrompt_AppendsEventLog_CompleteWithExitCode(t *testing.T) {
 	}
 }
 
+func TestReducePanePrompt_AppendsPersistAndBroadcastWithoutDriverEffects(t *testing.T) {
+	s := New()
+	sessID := SessionID("sess1")
+	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
+	frameID := FrameID(sessID)
+
+	_, effs := Reduce(s, EvPanePrompt{FrameID: frameID, Phase: PromptPhaseInput})
+	if _, ok := findEff[EffPersistSnapshot](effs); !ok {
+		t.Fatal("expected EffPersistSnapshot")
+	}
+	if _, ok := findEff[EffBroadcastSessionsChanged](effs); !ok {
+		t.Fatal("expected EffBroadcastSessionsChanged")
+	}
+}
+
 func TestReducePaneOsc_OSC9_StillEmitsRecordNotification(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")

@@ -55,10 +55,27 @@ func reducePanePrompt(s State, e EvPanePrompt) (State, []Effect) {
 		Now:      e.Now,
 	})
 	effs = append(effs, dEffs...)
-	if len(dEffs) > 0 {
-		effs = append(effs, EffPersistSnapshot{}, EffBroadcastSessionsChanged{})
-	}
+	effs = appendMissingSessionRefreshEffects(effs)
 	return next, effs
+}
+
+func appendMissingSessionRefreshEffects(effs []Effect) []Effect {
+	var hasPersist, hasBroadcast bool
+	for _, eff := range effs {
+		switch eff.(type) {
+		case EffPersistSnapshot:
+			hasPersist = true
+		case EffBroadcastSessionsChanged:
+			hasBroadcast = true
+		}
+	}
+	if !hasPersist {
+		effs = append(effs, EffPersistSnapshot{})
+	}
+	if !hasBroadcast {
+		effs = append(effs, EffBroadcastSessionsChanged{})
+	}
+	return effs
 }
 
 func promptEventLogLine(phase PromptPhase, exitCode *int) string {
