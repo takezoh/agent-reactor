@@ -157,6 +157,42 @@ func TestGeminiPrepareLaunchAddsWorktreeFlagFromOptions(t *testing.T) {
 	}
 }
 
+func TestGeminiPrepareLaunchSandboxedAddsYolo(t *testing.T) {
+	d, gs, _ := newGemini(t)
+	plan, err := d.PrepareLaunch(gs, state.LaunchModeCreate, "/repo", "gemini", state.LaunchOptions{}, true)
+	if err != nil {
+		t.Fatalf("PrepareLaunch error: %v", err)
+	}
+	if got := plan.Command; got != "gemini --yolo" {
+		t.Fatalf("PrepareLaunch.Command = %q, want %q", got, "gemini --yolo")
+	}
+}
+
+func TestGeminiPrepareLaunchSandboxedResumeAddsYolo(t *testing.T) {
+	d, gs, _ := newGemini(t)
+	gs.GeminiSessionID = "sess-123"
+	plan, err := d.PrepareLaunch(gs, state.LaunchModeColdStart, "/repo", "gemini", state.LaunchOptions{}, true)
+	if err != nil {
+		t.Fatalf("PrepareLaunch error: %v", err)
+	}
+	// Expected order: gemini --yolo --resume sess-123
+	// Note: stripGeminiWorktreeFlag strips --worktree/--workspace, but keeps --yolo
+	if got := plan.Command; got != "gemini --yolo --resume sess-123" {
+		t.Fatalf("PrepareLaunch.Command = %q, want %q", got, "gemini --yolo --resume sess-123")
+	}
+}
+
+func TestGeminiPrepareLaunchSandboxedNoDuplicateYolo(t *testing.T) {
+	d, gs, _ := newGemini(t)
+	plan, err := d.PrepareLaunch(gs, state.LaunchModeCreate, "/repo", "gemini --yolo", state.LaunchOptions{}, true)
+	if err != nil {
+		t.Fatalf("PrepareLaunch error: %v", err)
+	}
+	if got := plan.Command; got != "gemini --yolo" {
+		t.Fatalf("PrepareLaunch.Command = %q, want %q", got, "gemini --yolo")
+	}
+}
+
 func TestGeminiSessionStartSetsIdle(t *testing.T) {
 	d, gs, now := newGemini(t)
 	ev := geminiHook(map[string]string{
