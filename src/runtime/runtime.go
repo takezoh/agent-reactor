@@ -49,8 +49,9 @@ type Config struct {
 	TerminalEvict func(pane string)
 
 	// Tap, if non-nil, is used to attach a raw byte stream reader to each
-	// frame's pane. The reader feeds a per-frame vt.Terminal and emits
-	// EvPaneOsc events for OSC 9/99/777 notifications detected in the stream.
+	// frame's pane. The reader feeds bytes into a VT emulator that fires
+	// callbacks for OSC 9/99/777 notifications, OSC 133 prompt events, and
+	// OSC 0/2 window titles; each callback enqueues the corresponding event.
 	Tap PaneTap
 
 	// Features is the set of runtime flags built from the config file.

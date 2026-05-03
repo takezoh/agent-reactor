@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/takezoh/agent-roost/driver/vt"
 	codextranscript "github.com/takezoh/agent-roost/lib/codex/transcript"
 	"github.com/takezoh/agent-roost/state"
 )
@@ -553,7 +552,7 @@ func TestCodexTranscriptParseResultMergesFields(t *testing.T) {
 	cs.TranscriptInFlight = true
 	cs.Status = state.StatusRunning
 	cs.CurrentTool = "Bash"
-	next, effs := d.handleJobResult(cs, state.DEvJobResult{
+	next := d.handleJobResult(cs, state.DEvJobResult{
 		Now: now,
 		Result: CodexTranscriptParseResult{
 			Title:                "saved-session",
@@ -581,15 +580,12 @@ func TestCodexTranscriptParseResultMergesFields(t *testing.T) {
 	if len(next.RecentTurns) != 2 {
 		t.Fatalf("RecentTurns len = %d, want 2", len(next.RecentTurns))
 	}
-	if len(effs) != 0 {
-		t.Fatalf("effects = %d, want 0", len(effs))
-	}
 }
 
 func TestCodexSummaryResultMergesFields(t *testing.T) {
 	d, cs, now := newCodex(t)
 	cs.SummaryInFlight = true
-	next, _ := d.handleJobResult(cs, state.DEvJobResult{
+	next := d.handleJobResult(cs, state.DEvJobResult{
 		Now:    now,
 		Result: SummaryCommandResult{Summary: "test failures investigation"},
 	})
@@ -791,37 +787,5 @@ func TestCodexBranchDetectJobResultUpdatesTag(t *testing.T) {
 	}
 	if got.BranchTag != "main" || got.BranchParentBranch != "origin/main" {
 		t.Fatalf("branch state mismatch: %+v", got)
-	}
-}
-
-func TestCodexCapturePaneOscNotificationsBecomeEffects(t *testing.T) {
-	d, cs, _ := newCodex(t)
-	cs.CaptureInFlight = true
-	now := time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC)
-	_, effs := d.handleJobResult(cs, state.DEvJobResult{
-		Now: now,
-		Result: CapturePaneResult{
-			Snapshot: vt.Snapshot{
-				Stable:        "hash",
-				Notifications: []vt.OscNotification{{Cmd: 9, Payload: "hello"}},
-			},
-		},
-	})
-	var notif state.EffRecordNotification
-	found := false
-	for _, e := range effs {
-		if n, ok := e.(state.EffRecordNotification); ok {
-			notif = n
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("expected EffRecordNotification from OSC 9")
-	}
-	if notif.Cmd != 9 {
-		t.Errorf("Cmd = %d, want 9", notif.Cmd)
-	}
-	if notif.Title != "hello" {
-		t.Errorf("Title = %q, want hello", notif.Title)
 	}
 }

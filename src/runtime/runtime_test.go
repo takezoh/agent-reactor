@@ -208,9 +208,6 @@ func (f *fakeTmuxBackend) RespawnPane(target, cmd string) error {
 func (f *fakeTmuxBackend) CapturePane(string, int) (string, error) {
 	return f.captured, nil
 }
-func (f *fakeTmuxBackend) CapturePaneEscaped(string, int) (string, error) {
-	return f.captured, nil
-}
 func (f *fakeTmuxBackend) DetachClient() error { return nil }
 func (f *fakeTmuxBackend) KillSession() error {
 	f.mu.Lock()

@@ -7,7 +7,3 @@ type PaneOperator interface {
 	RunChain(commands ...[]string) error
 	DisplayMessage(target, format string) (string, error)
 }
-
-type PaneCapturer interface {
-	CapturePaneLines(target string, n int) (string, error)
-}

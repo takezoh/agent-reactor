@@ -4,9 +4,8 @@ import "context"
 
 // PaneTap is a source of raw terminal byte streams from a tmux pane.
 // The event loop starts one tap per frame when the pane is registered
-// and stops it when the pane is unregistered. The reader goroutine feeds
-// bytes into a vt.Terminal and emits EvPaneOsc events for any OSC
-// notifications detected.
+// and stops it when the pane is unregistered. The tap byte stream is fed
+// into a VT emulator; OSC callbacks enqueue EvPaneOsc and EvPanePrompt events.
 //
 // tmux pipe-pane is the current implementation. Future implementations
 // may read from a PTY or libghostty session without changing this interface.

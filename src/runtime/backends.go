@@ -50,9 +50,6 @@ type PaneInspect interface {
 	// CapturePane returns the trailing nLines of a pane's content (no SGR).
 	// Used by polling drivers via the worker pool.
 	CapturePane(paneTarget string, nLines int) (string, error)
-	// CapturePaneEscaped returns the trailing nLines with ANSI escape sequences
-	// preserved (-e flag). Used by the VT-parser-based state detection.
-	CapturePaneEscaped(paneTarget string, nLines int) (string, error)
 }
 
 // SessionEnv covers tmux session-level environment variable operations.
@@ -195,28 +192,27 @@ func (noopTmux) BreakPane(string, string) error { return nil }
 func (noopTmux) BreakPaneToNewWindow(string, string) (string, error) {
 	return "", nil
 }
-func (noopTmux) JoinPane(string, string, bool, int) error       { return nil }
-func (noopTmux) PaneID(string) (string, error)                  { return "", nil }
-func (noopTmux) PaneSize(string) (int, int, error)              { return 0, 0, nil }
-func (noopTmux) SelectPane(string) error                        { return nil }
-func (noopTmux) ResizeWindow(string, int, int) error            { return nil }
-func (noopTmux) SetStatusLine(string) error                     { return nil }
-func (noopTmux) SetEnv(string, string) error                    { return nil }
-func (noopTmux) UnsetEnv(string) error                          { return nil }
-func (noopTmux) PaneAlive(string) (bool, error)                 { return true, nil }
-func (noopTmux) RespawnPane(string, string) error               { return nil }
-func (noopTmux) CapturePane(string, int) (string, error)        { return "", nil }
-func (noopTmux) CapturePaneEscaped(string, int) (string, error) { return "", nil }
-func (noopTmux) ShowEnvironment() (string, error)               { return "", nil }
-func (noopTmux) DetachClient() error                            { return nil }
-func (noopTmux) KillSession() error                             { return nil }
-func (noopTmux) DisplayPopup(string, string, string) error      { return nil }
-func (noopTmux) PipePane(string, string) error                  { return nil }
-func (noopTmux) SendKeys(string, string) error                  { return nil }
-func (noopTmux) SendKey(string, string) error                   { return nil }
-func (noopTmux) LoadBuffer(string, string) error                { return nil }
-func (noopTmux) PasteBuffer(string, string) error               { return nil }
-func (noopTmux) SendEnter(string) error                         { return nil }
+func (noopTmux) JoinPane(string, string, bool, int) error  { return nil }
+func (noopTmux) PaneID(string) (string, error)             { return "", nil }
+func (noopTmux) PaneSize(string) (int, int, error)         { return 0, 0, nil }
+func (noopTmux) SelectPane(string) error                   { return nil }
+func (noopTmux) ResizeWindow(string, int, int) error       { return nil }
+func (noopTmux) SetStatusLine(string) error                { return nil }
+func (noopTmux) SetEnv(string, string) error               { return nil }
+func (noopTmux) UnsetEnv(string) error                     { return nil }
+func (noopTmux) PaneAlive(string) (bool, error)            { return true, nil }
+func (noopTmux) RespawnPane(string, string) error          { return nil }
+func (noopTmux) CapturePane(string, int) (string, error)   { return "", nil }
+func (noopTmux) ShowEnvironment() (string, error)          { return "", nil }
+func (noopTmux) DetachClient() error                       { return nil }
+func (noopTmux) KillSession() error                        { return nil }
+func (noopTmux) DisplayPopup(string, string, string) error { return nil }
+func (noopTmux) PipePane(string, string) error             { return nil }
+func (noopTmux) SendKeys(string, string) error             { return nil }
+func (noopTmux) SendKey(string, string) error              { return nil }
+func (noopTmux) LoadBuffer(string, string) error           { return nil }
+func (noopTmux) PasteBuffer(string, string) error          { return nil }
+func (noopTmux) SendEnter(string) error                    { return nil }
 
 type noopPersist struct{}
 

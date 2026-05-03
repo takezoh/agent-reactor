@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/takezoh/agent-roost/driver/vt"
 	"github.com/takezoh/agent-roost/state"
 )
 
@@ -40,60 +41,6 @@ func (f *fakePaneTap) startedSorted() []string {
 	return out
 }
 
-func TestReadTapEmitsPaneActivity(t *testing.T) {
-	frameID := state.FrameID("f1")
-	pane := "%1"
-	ch := make(chan []byte, 4)
-	ch <- []byte("hello")
-	close(ch)
-
-	var events []state.Event
-	enqueue := func(e state.Event) { events = append(events, e) }
-
-	readTap(context.Background(), frameID, pane, ch, enqueue)
-
-	var gotActivity bool
-	for _, ev := range events {
-		if a, ok := ev.(state.EvPaneActivity); ok {
-			gotActivity = true
-			if a.FrameID != frameID {
-				t.Errorf("FrameID = %q, want %q", a.FrameID, frameID)
-			}
-			if a.PaneTarget != pane {
-				t.Errorf("PaneTarget = %q, want %q", a.PaneTarget, pane)
-			}
-		}
-	}
-	if !gotActivity {
-		t.Error("expected EvPaneActivity event")
-	}
-}
-
-func TestReadTapDebounceActivity(t *testing.T) {
-	frameID := state.FrameID("f1")
-	ch := make(chan []byte, 4)
-	ch <- []byte("a")
-	ch <- []byte("b")
-	ch <- []byte("c")
-	close(ch)
-
-	var events []state.Event
-	enqueue := func(e state.Event) { events = append(events, e) }
-
-	readTap(context.Background(), frameID, "%1", ch, enqueue)
-
-	var activityCount int
-	for _, ev := range events {
-		if _, ok := ev.(state.EvPaneActivity); ok {
-			activityCount++
-		}
-	}
-	// Three rapid messages arrive within 100ms → only 1 activity event expected.
-	if activityCount != 1 {
-		t.Errorf("activity event count = %d, want 1 (debounced)", activityCount)
-	}
-}
-
 func TestReadTapEmitsOscEvents(t *testing.T) {
 	frameID := state.FrameID("f1")
 	ch := make(chan []byte, 4)
@@ -119,6 +66,27 @@ func TestReadTapEmitsOscEvents(t *testing.T) {
 	}
 	if !gotOsc {
 		t.Error("expected EvPaneOsc event")
+	}
+}
+
+func TestParseOscNotification_OSC9(t *testing.T) {
+	title, body := parseOscNotification(vt.OscNotification{Cmd: 9, Payload: "  hello  "})
+	if title != "hello" || body != "" {
+		t.Errorf("got title=%q body=%q", title, body)
+	}
+}
+
+func TestParseOscNotification_OSC777(t *testing.T) {
+	title, body := parseOscNotification(vt.OscNotification{Cmd: 777, Payload: "notify;My Title;My Body"})
+	if title != "My Title" || body != "My Body" {
+		t.Errorf("got title=%q body=%q", title, body)
+	}
+}
+
+func TestParseOscNotification_OSC99(t *testing.T) {
+	title, body := parseOscNotification(vt.OscNotification{Cmd: 99, Payload: "i=1:d=Alert:p=Something happened"})
+	if title != "Alert" || body != "Something happened" {
+		t.Errorf("got title=%q body=%q", title, body)
 	}
 }
 

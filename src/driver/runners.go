@@ -3,27 +3,16 @@ package driver
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"sync"
 
-	"github.com/takezoh/agent-roost/driver/vt"
 	roostgit "github.com/takezoh/agent-roost/lib/git"
 	"github.com/takezoh/agent-roost/lib/vcs"
 	"github.com/takezoh/agent-roost/runtime/worker"
-	"github.com/takezoh/agent-roost/state"
 )
 
-var _ state.DriverState = GenericState{}
-
 // RegisterRunners registers all worker-pool runners for the driver package.
-// It returns an evict function that removes the VT terminal for a given pane
-// target; callers should invoke it when a pane is unregistered to prevent
-// unbounded terminal accumulation.
-func RegisterRunners(capturePaneFn func(string, int) (string, error), summarizeCmd string) (evict func(pane string)) {
-	store := &terminalStore{entries: map[string]*vt.Terminal{}}
-	worker.RegisterRunner("capture_pane", store.newRunner(capturePaneFn))
+func RegisterRunners(summarizeCmd string) {
 	tp, hs := newTranscriptSummaryRunners(summarizeCmd)
 	worker.RegisterRunner("transcript_parse", tp)
 	worker.RegisterRunner("codex_transcript_parse", newCodexTranscriptParse())
@@ -31,67 +20,6 @@ func RegisterRunners(capturePaneFn func(string, int) (string, error), summarizeC
 	worker.RegisterRunner("summary_command", hs)
 	worker.RegisterRunner("branch_detect", newBranchDetect())
 	worker.RegisterRunner("worktree_setup", newWorktreeSetup())
-	return store.evict
-}
-
-// terminalStore holds per-pane VT emulators protected by a mutex so that
-// multiple worker-pool goroutines can access different panes concurrently
-// without a data race. The mutex also guards each Terminal's state for the
-// rare case where two capture jobs for the same pane overlap in flight.
-type terminalStore struct {
-	mu      sync.Mutex
-	entries map[string]*vt.Terminal
-}
-
-// feedAndSnapshot feeds ANSI bytes into the terminal for pane and returns a
-// Snapshot. The entire operation is mutex-guarded to prevent concurrent map
-// access and concurrent Terminal mutations across worker-pool goroutines.
-func (s *terminalStore) feedAndSnapshot(pane string, ansi []byte) vt.Snapshot {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	t, ok := s.entries[pane]
-	if !ok {
-		t = vt.New(0, 0)
-		s.entries[pane] = t
-	}
-	_ = t.Feed(ansi)
-	snap := t.Snapshot()
-	if oscTraceEnabled() {
-		markers := countOscMarkers(ansi)
-		slog.Debug("osc_trace capture",
-			"pane", pane,
-			"bytes", len(ansi),
-			"osc_markers", markers,
-			"notifications", len(snap.Notifications),
-			"prompt_events", len(snap.PromptEvents),
-		)
-	}
-	return snap
-}
-
-// evict removes the terminal for a pane. Called when a session pane is
-// unregistered so that the scrollback buffer is not held indefinitely.
-func (s *terminalStore) evict(pane string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.entries, pane)
-}
-
-func (s *terminalStore) newRunner(captureEscapedFn func(string, int) (string, error)) func(context.Context, CapturePaneInput) (CapturePaneResult, error) {
-	return func(ctx context.Context, in CapturePaneInput) (CapturePaneResult, error) {
-		if err := ctx.Err(); err != nil {
-			return CapturePaneResult{}, err
-		}
-		ansiContent, err := captureEscapedFn(in.PaneTarget, in.NLines)
-		if err != nil {
-			return CapturePaneResult{}, err
-		}
-		snap := s.feedAndSnapshot(in.PaneTarget, []byte(ansiContent))
-		return CapturePaneResult{
-			Content:  ansiContent,
-			Snapshot: snap,
-		}, nil
-	}
 }
 
 func newBranchDetect() func(context.Context, BranchDetectInput) (BranchDetectResult, error) {

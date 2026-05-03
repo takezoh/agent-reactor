@@ -179,9 +179,6 @@ func (d CodexDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 	case state.DEvTick:
 		effs := cs.HandleTick(e, false)
 		return cs, effs, d.view(cs)
-	case state.DEvPaneActivity:
-		effs := cs.HandleActivity(e)
-		return cs, effs, d.view(cs)
 	case state.DEvPaneOsc:
 		next := d.handleWindowTitle(cs, e.Title, e.Now)
 		return next, nil, d.view(next)
@@ -189,8 +186,8 @@ func (d CodexDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 		next, effs := d.handleTranscriptChanged(cs, e)
 		return next, effs, d.view(next)
 	case state.DEvJobResult:
-		next, effs := d.handleJobResult(cs, e)
-		return next, effs, d.view(next)
+		next := d.handleJobResult(cs, e)
+		return next, nil, d.view(next)
 	case state.DEvStatusLineClick:
 		return cs, nil, d.view(cs)
 	}

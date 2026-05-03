@@ -260,15 +260,12 @@ func (d ClaudeDriver) Step(prev state.DriverState, ctx state.FrameContext, ev st
 	case state.DEvTick:
 		next, effs := d.handleTick(cs, e)
 		return next, effs, d.view(next)
-	case state.DEvPaneActivity:
-		effs := cs.HandleActivity(e)
-		return cs, effs, d.view(cs)
 	case state.DEvFileChanged:
 		next, effs := d.handleTranscriptChanged(cs, e)
 		return next, effs, d.view(next)
 	case state.DEvJobResult:
-		next, effs := d.handleJobResult(cs, e)
-		return next, effs, d.view(next)
+		next := d.handleJobResult(cs, e)
+		return next, nil, d.view(next)
 	case state.DEvPaneOsc:
 		next := d.handleWindowTitle(cs, e.Title, e.Now)
 		return next, nil, d.view(next)

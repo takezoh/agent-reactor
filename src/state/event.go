@@ -173,15 +173,6 @@ type EvTmuxSpawnFailed struct {
 	ReplyReqID string
 }
 
-// EvPaneActivity is fired by the PaneTap reader goroutine when bytes arrive
-// from a pane's raw stream. The runtime pre-fills PaneTarget and Now so the
-// reducer can pass them to the driver without accessing runtime internals.
-type EvPaneActivity struct {
-	FrameID    FrameID
-	PaneTarget string
-	Now        time.Time
-}
-
 // EvPaneOsc is fired by the PaneTap reader goroutine when an OSC
 // notification is detected in the raw byte stream from a pane.
 // Title and Body are already parsed from the raw payload.
@@ -191,6 +182,26 @@ type EvPaneOsc struct {
 	Title   string
 	Body    string
 	Now     time.Time
+}
+
+// PromptPhase classifies an OSC 133 semantic-prompt event.
+type PromptPhase int
+
+const (
+	PromptPhaseNone     PromptPhase = iota
+	PromptPhaseStart                // 133;A — prompt rendering started
+	PromptPhaseInput                // 133;B — prompt done, awaiting input
+	PromptPhaseCommand              // 133;C — command execution started
+	PromptPhaseComplete             // 133;D — command finished
+)
+
+// EvPanePrompt is fired by the PaneTap reader goroutine when an OSC 133
+// semantic-prompt sequence is detected in the raw byte stream from a pane.
+type EvPanePrompt struct {
+	FrameID  FrameID
+	Phase    PromptPhase
+	ExitCode *int
+	Now      time.Time
 }
 
 // === isEvent markers ===
@@ -212,5 +223,5 @@ func (EvPaneDied) isEvent()           {}
 func (EvTmuxWindowVanished) isEvent() {}
 func (EvTmuxPaneSpawned) isEvent()    {}
 func (EvTmuxSpawnFailed) isEvent()    {}
-func (EvPaneActivity) isEvent()       {}
 func (EvPaneOsc) isEvent()            {}
+func (EvPanePrompt) isEvent()         {}

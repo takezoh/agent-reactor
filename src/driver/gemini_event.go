@@ -280,17 +280,17 @@ func watchGeminiTranscript(gs *GeminiState) []state.Effect {
 	return []state.Effect{state.EffWatchFile{Path: gs.TranscriptPath, Kind: "transcript"}}
 }
 
-func (d GeminiDriver) handleJobResult(gs GeminiState, e state.DEvJobResult) (GeminiState, []state.Effect) {
+func (d GeminiDriver) handleJobResult(gs GeminiState, e state.DEvJobResult) GeminiState {
 	if summary, inFlight, ok := applySummaryJobResult(gs.Summary, gs.SummaryInFlight, e); ok {
 		gs.Summary = summary
 		gs.SummaryInFlight = inFlight
-		return gs, nil
+		return gs
 	}
 	switch r := e.Result.(type) {
 	case GeminiTranscriptParseResult:
 		gs.TranscriptInFlight = false
 		if e.Err != nil {
-			return gs, nil
+			return gs
 		}
 		if r.Title != "" {
 			gs.Title = r.Title
@@ -305,18 +305,7 @@ func (d GeminiDriver) handleJobResult(gs GeminiState, e state.DEvJobResult) (Gem
 		gs.RecentTurns = r.RecentTurns
 		gs.CurrentTool = r.CurrentTool
 	case BranchDetectResult:
-		gs.BranchInFlight = false
-		if e.Err != nil || r.Branch == "" {
-			return gs, nil
-		}
-		gs.BranchTag = r.Branch
-		gs.BranchBG = r.Background
-		gs.BranchFG = r.Foreground
-		gs.BranchAt = e.Now
-		gs.BranchIsWorktree = r.IsWorktree
-		gs.BranchParentBranch = r.ParentBranch
-	case CapturePaneResult:
-		return gs, gs.HandleCapturePaneResult(r, e.Err, e.Now)
+		gs.ApplyBranchResult(r, e.Err, e.Now)
 	}
-	return gs, nil
+	return gs
 }

@@ -160,18 +160,18 @@ func (d CodexDriver) applySessionStart(cs CodexState, ctx state.FrameContext, no
 	return cs, effs
 }
 
-func (d CodexDriver) handleJobResult(cs CodexState, e state.DEvJobResult) (CodexState, []state.Effect) {
+func (d CodexDriver) handleJobResult(cs CodexState, e state.DEvJobResult) CodexState {
 	if summary, inFlight, ok := applySummaryJobResult(cs.Summary, cs.SummaryInFlight, e); ok {
 		cs.Summary = summary
 		cs.SummaryInFlight = inFlight
-		return cs, nil
+		return cs
 	}
 
 	switch r := e.Result.(type) {
 	case CodexTranscriptParseResult:
 		cs.TranscriptInFlight = false
 		if e.Err != nil {
-			return cs, nil
+			return cs
 		}
 		if r.Title != "" {
 			cs.Title = r.Title
@@ -187,22 +187,11 @@ func (d CodexDriver) handleJobResult(cs CodexState, e state.DEvJobResult) (Codex
 		if cs.Status != state.StatusRunning {
 			cs.CurrentTool = ""
 		}
-		return cs, nil
+		return cs
 	case BranchDetectResult:
-		cs.BranchInFlight = false
-		if e.Err != nil || r.Branch == "" {
-			return cs, nil
-		}
-		cs.BranchTag = r.Branch
-		cs.BranchBG = r.Background
-		cs.BranchFG = r.Foreground
-		cs.BranchAt = e.Now
-		cs.BranchIsWorktree = r.IsWorktree
-		cs.BranchParentBranch = r.ParentBranch
-	case CapturePaneResult:
-		return cs, cs.HandleCapturePaneResult(r, e.Err, e.Now)
+		cs.ApplyBranchResult(r, e.Err, e.Now)
 	}
-	return cs, nil
+	return cs
 }
 
 func (d CodexDriver) handleTranscriptChanged(cs CodexState, e state.DEvFileChanged) (CodexState, []state.Effect) {

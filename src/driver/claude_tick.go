@@ -50,18 +50,18 @@ func (d ClaudeDriver) handleTranscriptChanged(cs ClaudeState, e state.DEvFileCha
 
 // handleJobResult routes a finished worker pool result back to the
 // matching field on ClaudeState.
-func (d ClaudeDriver) handleJobResult(cs ClaudeState, e state.DEvJobResult) (ClaudeState, []state.Effect) {
+func (d ClaudeDriver) handleJobResult(cs ClaudeState, e state.DEvJobResult) ClaudeState {
 	if summary, inFlight, ok := applySummaryJobResult(cs.Summary, cs.SummaryInFlight, e); ok {
 		cs.Summary = summary
 		cs.SummaryInFlight = inFlight
-		return cs, nil
+		return cs
 	}
 
 	switch r := e.Result.(type) {
 	case TranscriptParseResult:
 		cs.TranscriptInFlight = false
 		if e.Err != nil {
-			return cs, nil
+			return cs
 		}
 		if r.Title != "" {
 			cs.Title = r.Title
@@ -74,23 +74,11 @@ func (d ClaudeDriver) handleJobResult(cs ClaudeState, e state.DEvJobResult) (Cla
 		cs.SubagentCounts = r.Subagents
 		cs.RecentTurns = r.RecentTurns
 		cs.PlanFile = r.PlanFile
-		return cs, nil
+		return cs
 
 	case BranchDetectResult:
-		cs.BranchInFlight = false
-		if e.Err != nil || r.Branch == "" {
-			return cs, nil // preserve existing tag; retry on next tick
-		}
-		cs.BranchTag = r.Branch
-		cs.BranchBG = r.Background
-		cs.BranchFG = r.Foreground
-		cs.BranchAt = e.Now
-		cs.BranchIsWorktree = r.IsWorktree
-		cs.BranchParentBranch = r.ParentBranch
-		return cs, nil
-
-	case CapturePaneResult:
-		return cs, cs.HandleCapturePaneResult(r, e.Err, e.Now)
+		cs.ApplyBranchResult(r, e.Err, e.Now)
+		return cs
 	}
-	return cs, nil
+	return cs
 }

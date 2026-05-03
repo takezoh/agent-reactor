@@ -4,144 +4,102 @@ import (
 	"testing"
 )
 
-func TestFeedAndSnapshot_Basic(t *testing.T) {
+func TestFeed_NoOsc(t *testing.T) {
 	term := New(40, 10)
+	var notifs []OscNotification
+	term.OnOscNotification = func(n OscNotification) { notifs = append(notifs, n) }
 	if err := term.Feed([]byte("hello $ ")); err != nil {
 		t.Fatalf("Feed: %v", err)
 	}
-	snap := term.Snapshot()
-	if snap.Cols != 40 || snap.Rows != 10 {
-		t.Errorf("size = %dx%d, want 40x10", snap.Cols, snap.Rows)
-	}
-	if snap.LastLine == "" {
-		t.Error("LastLine should not be empty after writing text")
-	}
-	if snap.Stable == "" {
-		t.Error("Stable hash should not be empty")
+	if len(notifs) != 0 {
+		t.Fatalf("expected no OSC notifications, got %d", len(notifs))
 	}
 }
 
-func TestFeedAndSnapshot_DirtyCount_SameInput(t *testing.T) {
+func TestFeed_OscHyperlinkNotNotification(t *testing.T) {
 	term := New(40, 10)
-	if err := term.Feed([]byte("static content")); err != nil {
-		t.Fatalf("Feed: %v", err)
-	}
-	snap1 := term.Snapshot()
-	// Feed the same data again (no visual change).
-	if err := term.Feed([]byte("")); err != nil {
-		t.Fatalf("Feed empty: %v", err)
-	}
-	snap2 := term.Snapshot()
-	if snap1.Stable != snap2.Stable {
-		t.Errorf("Stable changed without screen change: %q → %q", snap1.Stable, snap2.Stable)
-	}
-	if snap2.DirtyCount != 0 {
-		t.Errorf("DirtyCount = %d, want 0 when screen unchanged", snap2.DirtyCount)
-	}
-}
-
-func TestFeedAndSnapshot_DirtyCount_Changed(t *testing.T) {
-	term := New(40, 10)
-	if err := term.Feed([]byte("first")); err != nil {
-		t.Fatalf("Feed: %v", err)
-	}
-	snap1 := term.Snapshot()
-	if err := term.Feed([]byte(" second")); err != nil {
-		t.Fatalf("Feed: %v", err)
-	}
-	snap2 := term.Snapshot()
-	if snap1.Stable == snap2.Stable {
-		t.Error("Stable should differ after writing new content")
-	}
-	if snap2.DirtyCount == 0 {
-		t.Error("DirtyCount should be >0 when screen changed")
-	}
-}
-
-func TestFeedAndSnapshot_OscHyperlink(t *testing.T) {
-	term := New(40, 10)
-	// OSC 8 hyperlink: ESC]8;;https://example.com\aLinkText\ESC]8;;\a
+	var notifs []OscNotification
+	term.OnOscNotification = func(n OscNotification) { notifs = append(notifs, n) }
 	link := "\x1b]8;;https://example.com\x07Link\x1b]8;;\x07"
 	if err := term.Feed([]byte(link)); err != nil {
 		t.Fatalf("Feed OSC 8: %v", err)
 	}
-	snap := term.Snapshot()
-	// Verify no OSC 8 ends up in Notifications (OSC 8 is not 9/99/777).
-	for _, n := range snap.Notifications {
+	for _, n := range notifs {
 		if n.Cmd == 8 {
-			t.Errorf("OSC 8 should not appear in Notifications, got %+v", n)
+			t.Errorf("OSC 8 should not appear in notifications, got %+v", n)
 		}
 	}
-	// The hyperlink URL should be stored in the cell's Link.URL — we don't
-	// expose CellAt directly from Terminal, but we verify no panic / error.
 }
 
-func TestFeedAndSnapshot_OscNotification9(t *testing.T) {
+func TestFeed_OscNotification9(t *testing.T) {
 	term := New(40, 10)
-	// iTerm2 OSC 9: ESC]9;Hello from agent\a
-	osc9 := "\x1b]9;Hello from agent\x07"
-	if err := term.Feed([]byte(osc9)); err != nil {
-		t.Fatalf("Feed OSC 9: %v", err)
-	}
-	snap := term.Snapshot()
-	if len(snap.Notifications) != 1 {
-		t.Fatalf("expected 1 notification, got %d", len(snap.Notifications))
-	}
-	n := snap.Notifications[0]
-	if n.Cmd != 9 {
-		t.Errorf("Cmd = %d, want 9", n.Cmd)
-	}
-	if n.Payload != "Hello from agent" {
-		t.Errorf("Payload = %q, want %q", n.Payload, "Hello from agent")
-	}
-}
-
-func TestFeedAndSnapshot_OscNotification777(t *testing.T) {
-	term := New(40, 10)
-	// urxvt OSC 777: ESC]777;notify;Title;Body\a
-	osc777 := "\x1b]777;notify;MyTitle;MyBody\x07"
-	if err := term.Feed([]byte(osc777)); err != nil {
-		t.Fatalf("Feed OSC 777: %v", err)
-	}
-	snap := term.Snapshot()
-	if len(snap.Notifications) != 1 {
-		t.Fatalf("expected 1 notification, got %d", len(snap.Notifications))
-	}
-	n := snap.Notifications[0]
-	if n.Cmd != 777 {
-		t.Errorf("Cmd = %d, want 777", n.Cmd)
-	}
-	if n.Payload != "notify;MyTitle;MyBody" {
-		t.Errorf("Payload = %q, want %q", n.Payload, "notify;MyTitle;MyBody")
-	}
-}
-
-func TestFeedAndSnapshot_NotificationsFlushOnSnapshot(t *testing.T) {
-	term := New(40, 10)
-	osc9 := "\x1b]9;once\x07"
-	if err := term.Feed([]byte(osc9)); err != nil {
+	var notifs []OscNotification
+	term.OnOscNotification = func(n OscNotification) { notifs = append(notifs, n) }
+	if err := term.Feed([]byte("\x1b]9;Hello from agent\x07")); err != nil {
 		t.Fatalf("Feed: %v", err)
 	}
-	snap1 := term.Snapshot()
-	if len(snap1.Notifications) != 1 {
-		t.Fatalf("first snapshot: expected 1 notification, got %d", len(snap1.Notifications))
+	if len(notifs) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(notifs))
 	}
-	snap2 := term.Snapshot()
-	if len(snap2.Notifications) != 0 {
-		t.Errorf("second snapshot: expected 0 notifications, got %d (should flush)", len(snap2.Notifications))
+	if notifs[0].Cmd != 9 {
+		t.Errorf("Cmd = %d, want 9", notifs[0].Cmd)
+	}
+	if notifs[0].Payload != "Hello from agent" {
+		t.Errorf("Payload = %q, want %q", notifs[0].Payload, "Hello from agent")
 	}
 }
 
-func TestResize(t *testing.T) {
+func TestFeed_OscNotification99(t *testing.T) {
 	term := New(40, 10)
-	term.Resize(100, 30)
-	snap := term.Snapshot()
-	if snap.Cols != 100 || snap.Rows != 30 {
-		t.Errorf("after resize: size = %dx%d, want 100x30", snap.Cols, snap.Rows)
+	var notifs []OscNotification
+	term.OnOscNotification = func(n OscNotification) { notifs = append(notifs, n) }
+	if err := term.Feed([]byte("\x1b]99;d=MyTitle:p=MyBody\x07")); err != nil {
+		t.Fatalf("Feed: %v", err)
+	}
+	if len(notifs) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(notifs))
+	}
+	if notifs[0].Cmd != 99 {
+		t.Errorf("Cmd = %d, want 99", notifs[0].Cmd)
+	}
+	if notifs[0].Payload != "d=MyTitle:p=MyBody" {
+		t.Errorf("Payload = %q, want %q", notifs[0].Payload, "d=MyTitle:p=MyBody")
 	}
 }
 
-func TestOsc133PromptPhases(t *testing.T) {
+func TestFeed_OscNotification777(t *testing.T) {
+	term := New(40, 10)
+	var notifs []OscNotification
+	term.OnOscNotification = func(n OscNotification) { notifs = append(notifs, n) }
+	if err := term.Feed([]byte("\x1b]777;notify;MyTitle;MyBody\x07")); err != nil {
+		t.Fatalf("Feed: %v", err)
+	}
+	if len(notifs) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(notifs))
+	}
+	if notifs[0].Cmd != 777 {
+		t.Errorf("Cmd = %d, want 777", notifs[0].Cmd)
+	}
+	if notifs[0].Payload != "notify;MyTitle;MyBody" {
+		t.Errorf("Payload = %q, want %q", notifs[0].Payload, "notify;MyTitle;MyBody")
+	}
+}
+
+func TestFeed_CallbackFiredImmediately(t *testing.T) {
+	term := New(40, 10)
+	var count int
+	term.OnOscNotification = func(n OscNotification) { count++ }
+	_ = term.Feed([]byte("\x1b]9;first\x07"))
+	if count != 1 {
+		t.Errorf("count after first Feed = %d, want 1", count)
+	}
+	_ = term.Feed([]byte("\x1b]9;second\x07"))
+	if count != 2 {
+		t.Errorf("count after second Feed = %d, want 2", count)
+	}
+}
+
+func TestFeed_Osc133Phases(t *testing.T) {
 	tests := []struct {
 		name      string
 		seq       string
@@ -158,14 +116,15 @@ func TestOsc133PromptPhases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			term := New(40, 10)
+			var events []PromptEvent
+			term.OnPromptEvent = func(e PromptEvent) { events = append(events, e) }
 			if err := term.Feed([]byte(tt.seq)); err != nil {
 				t.Fatalf("Feed: %v", err)
 			}
-			snap := term.Snapshot()
-			if len(snap.PromptEvents) != 1 {
-				t.Fatalf("PromptEvents len = %d, want 1", len(snap.PromptEvents))
+			if len(events) != 1 {
+				t.Fatalf("PromptEvents len = %d, want 1", len(events))
 			}
-			ev := snap.PromptEvents[0]
+			ev := events[0]
 			if ev.Phase != tt.wantPhase {
 				t.Errorf("Phase = %v, want %v", ev.Phase, tt.wantPhase)
 			}
@@ -184,65 +143,66 @@ func TestOsc133PromptPhases(t *testing.T) {
 	}
 }
 
-func TestOsc133MultipleEventsOrdered(t *testing.T) {
+func TestFeed_Osc133MultipleEventsOrdered(t *testing.T) {
 	term := New(40, 10)
-	seq := "\x1b]133;C\x07" + "\x1b]133;D;0\x07"
-	if err := term.Feed([]byte(seq)); err != nil {
+	var events []PromptEvent
+	term.OnPromptEvent = func(e PromptEvent) { events = append(events, e) }
+	if err := term.Feed([]byte("\x1b]133;C\x07" + "\x1b]133;D;0\x07")); err != nil {
 		t.Fatalf("Feed: %v", err)
 	}
-	snap := term.Snapshot()
-	if len(snap.PromptEvents) != 2 {
-		t.Fatalf("PromptEvents len = %d, want 2", len(snap.PromptEvents))
+	if len(events) != 2 {
+		t.Fatalf("PromptEvents len = %d, want 2", len(events))
 	}
-	if snap.PromptEvents[0].Phase != PromptPhaseCommand {
-		t.Errorf("events[0].Phase = %v, want Command", snap.PromptEvents[0].Phase)
+	if events[0].Phase != PromptPhaseCommand {
+		t.Errorf("events[0].Phase = %v, want Command", events[0].Phase)
 	}
-	if snap.PromptEvents[1].Phase != PromptPhaseComplete {
-		t.Errorf("events[1].Phase = %v, want Complete", snap.PromptEvents[1].Phase)
+	if events[1].Phase != PromptPhaseComplete {
+		t.Errorf("events[1].Phase = %v, want Complete", events[1].Phase)
 	}
 }
 
-func TestOsc133UnknownPhaseSilentlyDropped(t *testing.T) {
+func TestFeed_Osc133UnknownPhaseSilentlyDropped(t *testing.T) {
 	term := New(40, 10)
-	// Z is not a valid phase.
+	var events []PromptEvent
+	term.OnPromptEvent = func(e PromptEvent) { events = append(events, e) }
 	if err := term.Feed([]byte("\x1b]133;Z\x07")); err != nil {
 		t.Fatalf("Feed: %v", err)
 	}
-	snap := term.Snapshot()
-	if len(snap.PromptEvents) != 0 {
-		t.Errorf("PromptEvents len = %d, want 0 for unknown phase", len(snap.PromptEvents))
+	if len(events) != 0 {
+		t.Errorf("PromptEvents len = %d, want 0 for unknown phase", len(events))
 	}
 }
 
-func TestOsc133PromptEventsFlushOnSnapshot(t *testing.T) {
+func TestFeed_WindowTitle(t *testing.T) {
 	term := New(40, 10)
-	if err := term.Feed([]byte("\x1b]133;C\x07")); err != nil {
+	var titles []string
+	term.OnWindowTitle = func(cmd int, title string) { titles = append(titles, title) }
+	if err := term.Feed([]byte("\x1b]0;mytitle\x07")); err != nil {
 		t.Fatalf("Feed: %v", err)
 	}
-	snap1 := term.Snapshot()
-	if len(snap1.PromptEvents) != 1 {
-		t.Fatalf("first snapshot: expected 1 event, got %d", len(snap1.PromptEvents))
+	if len(titles) != 1 || titles[0] != "mytitle" {
+		t.Errorf("titles = %v, want [mytitle]", titles)
 	}
-	snap2 := term.Snapshot()
-	if len(snap2.PromptEvents) != 0 {
-		t.Errorf("second snapshot: expected 0 events after flush, got %d", len(snap2.PromptEvents))
+}
+
+func TestResize(t *testing.T) {
+	term := New(40, 10)
+	term.Resize(100, 30)
+}
+
+func TestReset_ClearsEmulatorState(t *testing.T) {
+	term := New(40, 10)
+	var count int
+	term.OnOscNotification = func(n OscNotification) { count++ }
+	_ = term.Feed([]byte("\x1b]9;before-reset\x07"))
+	if count != 1 {
+		t.Fatalf("expected 1 notification before reset, got %d", count)
+	}
+	term.Reset()
+	_ = term.Feed([]byte("\x1b]9;after-reset\x07"))
+	if count != 2 {
+		t.Fatalf("expected 2 total notifications after reset, got %d", count)
 	}
 }
 
 func intPtr(v int) *int { return &v }
-
-func TestReset(t *testing.T) {
-	term := New(40, 10)
-	if err := term.Feed([]byte("some content")); err != nil {
-		t.Fatalf("Feed: %v", err)
-	}
-	snap1 := term.Snapshot()
-	term.Reset()
-	snap2 := term.Snapshot()
-	if snap1.LastLine == snap2.LastLine && snap1.LastLine != "" {
-		t.Error("Reset should clear screen; LastLine should be empty")
-	}
-	if snap2.DirtyCount != 0 {
-		t.Error("DirtyCount after Reset should be 0 (no previous baseline)")
-	}
-}

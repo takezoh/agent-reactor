@@ -182,11 +182,7 @@ func (b *RealTmuxBackend) RespawnPane(target, command string) error {
 }
 
 func (b *RealTmuxBackend) CapturePane(paneTarget string, nLines int) (string, error) {
-	return b.client.CapturePaneLines(paneTarget, nLines)
-}
-
-func (b *RealTmuxBackend) CapturePaneEscaped(paneTarget string, nLines int) (string, error) {
-	return b.client.CapturePaneEscaped(paneTarget, nLines)
+	return b.client.Run("capture-pane", "-p", "-t", paneTarget, "-S", fmt.Sprintf("-%d", nLines))
 }
 
 // ShowEnvironment returns the raw tmux show-environment output for the

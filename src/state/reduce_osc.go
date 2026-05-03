@@ -29,3 +29,22 @@ func reducePaneOsc(s State, e EvPaneOsc) (State, []Effect) {
 		Body:      e.Body,
 	}}
 }
+
+// reducePanePrompt routes an OSC 133 semantic-prompt event to the owning
+// frame's driver as DEvPanePrompt. Drivers may use this to update
+// SawPromptEvent / LastExitCode state.
+func reducePanePrompt(s State, e EvPanePrompt) (State, []Effect) {
+	s.Now = e.Now
+	next, effs, ok := stepDriver(s, e.FrameID, DEvPanePrompt{
+		Phase:    e.Phase,
+		ExitCode: e.ExitCode,
+		Now:      e.Now,
+	})
+	if !ok {
+		return s, nil
+	}
+	if len(effs) > 0 {
+		effs = append(effs, EffPersistSnapshot{}, EffBroadcastSessionsChanged{})
+	}
+	return next, effs
+}

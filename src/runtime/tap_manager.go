@@ -3,15 +3,12 @@ package runtime
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/takezoh/agent-roost/driver/vt"
 	"github.com/takezoh/agent-roost/state"
 )
-
-// tapActivityDebounce is the minimum interval between consecutive EvPaneActivity
-// events emitted by a tap reader. Prevents flooding the event loop when the
-// pane is producing high-volume output.
-const tapActivityDebounce = 100 * time.Millisecond
 
 // tapEntry holds the cancel function and pane identifier for one running tap.
 type tapEntry struct {
@@ -75,42 +72,102 @@ func (m *tapManager) stopAll() {
 	}
 }
 
-// readTap parses raw bytes from ch and emits two event types:
-//   - EvPaneActivity: debounced (100ms), emitted on any byte receipt so the
-//     event loop can trigger a capture-pane without waiting for the next tick.
-//   - EvPaneOsc: emitted per OSC sequence for notification routing.
-//
+// parseOscNotification extracts (title, body) from a vt.OscNotification.
+func parseOscNotification(n vt.OscNotification) (title, body string) {
+	switch n.Cmd {
+	case 9:
+		return strings.TrimSpace(n.Payload), ""
+	case 777:
+		parts := strings.SplitN(n.Payload, ";", 3)
+		if len(parts) >= 3 {
+			return parts[1], parts[2]
+		}
+		if len(parts) == 2 {
+			return parts[1], ""
+		}
+	case 99:
+		for _, part := range strings.Split(n.Payload, ":") {
+			k, v, ok := strings.Cut(part, "=")
+			if !ok {
+				continue
+			}
+			switch k {
+			case "d":
+				title = v
+			case "p":
+				body = v
+			}
+		}
+		if title == "" && body == "" {
+			body = n.Payload
+		}
+	}
+	return title, body
+}
+
+// vtPromptPhase converts a vt.PromptPhase to its state equivalent.
+// The two enums are defined independently (state must not import vt),
+// so an explicit switch ensures they stay in sync even if one is reordered.
+func vtPromptPhase(p vt.PromptPhase) state.PromptPhase {
+	switch p {
+	case vt.PromptPhaseStart:
+		return state.PromptPhaseStart
+	case vt.PromptPhaseInput:
+		return state.PromptPhaseInput
+	case vt.PromptPhaseCommand:
+		return state.PromptPhaseCommand
+	case vt.PromptPhaseComplete:
+		return state.PromptPhaseComplete
+	default:
+		return state.PromptPhaseNone
+	}
+}
+
+// newPaneTapTerminal creates a VT emulator wired to emit EvPaneOsc and
+// EvPanePrompt events via enqueue. Minimal 1×1 dimensions are used because
+// the emulator is only needed for OSC sequence extraction, not rendering.
+func newPaneTapTerminal(frameID state.FrameID, enqueue func(state.Event)) *vt.Terminal {
+	term := vt.New(1, 1)
+	term.OnWindowTitle = func(cmd int, title string) {
+		if title != "" {
+			enqueue(state.EvPaneOsc{FrameID: frameID, Cmd: cmd, Title: title, Now: time.Now()})
+		}
+	}
+	term.OnOscNotification = func(n vt.OscNotification) {
+		title, body := parseOscNotification(n)
+		if title != "" || body != "" {
+			enqueue(state.EvPaneOsc{FrameID: frameID, Cmd: n.Cmd, Title: title, Body: body, Now: time.Now()})
+		}
+	}
+	// OSC 133 A/B/C only matter the first time (they set SawPromptEvent in the
+	// shell driver). After that, only D (Complete) carries new information.
+	// Filter here to avoid per-prompt event-loop round-trips.
+	var promptSeen bool
+	term.OnPromptEvent = func(e vt.PromptEvent) {
+		if e.Phase != vt.PromptPhaseComplete {
+			if promptSeen {
+				return
+			}
+			promptSeen = true
+		}
+		enqueue(state.EvPanePrompt{FrameID: frameID, Phase: vtPromptPhase(e.Phase), ExitCode: e.ExitCode, Now: time.Now()})
+	}
+	return term
+}
+
+// readTap feeds raw bytes from ch into a VT emulator and enqueues EvPaneOsc
+// and EvPanePrompt events for each OSC sequence detected.
 // Runs in its own goroutine; exits when ch is closed or ctx is cancelled.
 func readTap(ctx context.Context, frameID state.FrameID, pane string, ch <-chan []byte, enqueue func(state.Event)) {
-	parser := &oscParser{}
-	var lastActivity time.Time
+	term := newPaneTapTerminal(frameID, enqueue)
 	for {
 		select {
 		case data, ok := <-ch:
 			if !ok {
 				return
 			}
-			now := time.Now()
-			if now.Sub(lastActivity) >= tapActivityDebounce {
-				lastActivity = now
-				enqueue(state.EvPaneActivity{
-					FrameID:    frameID,
-					PaneTarget: pane,
-					Now:        now,
-				})
-			}
-			for _, seq := range parser.feed(data) {
-				title, body := parseOscPayload(seq.cmd, seq.payload)
-				if title == "" && body == "" {
-					continue
-				}
-				enqueue(state.EvPaneOsc{
-					FrameID: frameID,
-					Cmd:     seq.cmd,
-					Title:   title,
-					Body:    body,
-					Now:     now,
-				})
+			if err := term.Feed(data); err != nil {
+				slog.Debug("panetap: feed error", "frame", frameID, "pane", pane, "err", err)
 			}
 		case <-ctx.Done():
 			return

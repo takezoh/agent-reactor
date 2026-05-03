@@ -105,6 +105,30 @@ func TestReducePaneOsc_OSC2_EmptyTitle_NoEffect(t *testing.T) {
 	}
 }
 
+func TestReducePanePrompt_UnknownFrame_NoEffect(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvPanePrompt{FrameID: "ghost", Phase: PromptPhaseInput})
+	if len(effs) != 0 {
+		t.Errorf("expected no effects for unknown frame, got %d", len(effs))
+	}
+}
+
+func TestReducePanePrompt_RoutesToDriver(t *testing.T) {
+	s := New()
+	sessID := SessionID("sess1")
+	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
+	frameID := FrameID(sessID)
+
+	// stubSession uses stubDriver which returns nil effects for all events,
+	// so we just verify no EffRecordNotification (prompt events are not notifications).
+	_, effs := Reduce(s, EvPanePrompt{FrameID: frameID, Phase: PromptPhaseInput})
+	for _, e := range effs {
+		if _, ok := e.(EffRecordNotification); ok {
+			t.Error("EvPanePrompt should not produce EffRecordNotification")
+		}
+	}
+}
+
 func TestReducePaneOsc_OSC9_StillEmitsRecordNotification(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")

@@ -1,7 +1,6 @@
 package driver
 
 import (
-	"github.com/takezoh/agent-roost/driver/vt"
 	"github.com/takezoh/agent-roost/state"
 )
 
@@ -11,23 +10,6 @@ import (
 //
 // Each *Input is what the reducer hands to the worker pool; each
 // *Result is what the worker hands back via EvJobResult.
-
-// CapturePaneInput asks the worker pool to run `tmux capture-pane`
-// against a specific pane and return the trailing
-// NLines lines. Used by polling drivers (e.g. genericDriver) to
-// detect activity.
-type CapturePaneInput struct {
-	PaneTarget string
-	NLines     int
-}
-
-// CapturePaneResult carries the captured content. Snapshot.Stable is the
-// FNV-64a structural hash of the VT screen; Content is kept for building
-// summary prompts.
-type CapturePaneResult struct {
-	Content  string
-	Snapshot vt.Snapshot
-}
 
 // SummaryCommandInput is the fully assembled prompt text. Prompt
 // construction is driver-owned; the worker only pipes this prompt
@@ -128,7 +110,6 @@ type WorktreeSetupResult struct {
 	Name     string
 }
 
-func (CapturePaneInput) JobKind() string     { return "capture_pane" }
 func (TranscriptParseInput) JobKind() string { return "transcript_parse" }
 func (CodexTranscriptParseInput) JobKind() string {
 	return "codex_transcript_parse"

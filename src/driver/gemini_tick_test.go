@@ -1,11 +1,9 @@
 package driver
 
 import (
-	"errors"
 	"testing"
 	"time"
 
-	"github.com/takezoh/agent-roost/driver/vt"
 	"github.com/takezoh/agent-roost/state"
 )
 
@@ -64,76 +62,7 @@ func TestGeminiHandleTickCompletesStartDir(t *testing.T) {
 	}
 }
 
-func TestGeminiHangDetection(t *testing.T) {
-	d := NewGeminiDriver("/tmp/events")
-	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
-	gs := d.NewState(now).(GeminiState)
-	gs.Status = state.StatusRunning
-	gs.StatusChangedAt = now
-
-	// 1. First tick should emit CapturePaneInput
-	e := state.DEvTick{Now: now.Add(time.Second), Active: false, PaneTarget: "1"}
-	next, effs, _ := d.Step(gs, state.FrameContext{IsRoot: true}, e)
-	gs = next.(GeminiState)
-
-	found := false
-	for _, eff := range effs {
-		if ej, ok := eff.(state.EffStartJob); ok {
-			if _, ok := ej.Input.(CapturePaneInput); ok {
-				found = true
-				break
-			}
-		}
-	}
-	if !found {
-		t.Fatal("expected CapturePaneInput on first background tick")
-	}
-
-	// 2. Job result primes the baseline
-	gs.HandleCapturePaneResult(CapturePaneResult{Snapshot: vt.Snapshot{Stable: "abc"}}, nil, now.Add(2*time.Second))
-	if gs.PaneHash != "abc" {
-		t.Errorf("PaneHash = %q, want abc", gs.PaneHash)
-	}
-
-	// 3. Tick after threshold should trigger Idle
-	e.Now = now.Add(commonHangThreshold + 10*time.Second)
-	next, _, _ = d.Step(gs, state.FrameContext{IsRoot: true}, e)
-	gs = next.(GeminiState)
-
-	if gs.Status != state.StatusStopped {
-		t.Errorf("Status = %v, want Stopped after hang", gs.Status)
-	}
-	if !gs.HangDetected {
-		t.Error("HangDetected should be true")
-	}
-}
-
-func TestGeminiHandleCapturePaneResultError(t *testing.T) {
-	d := NewGeminiDriver("/tmp/events")
-	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
-	gs := d.NewState(now).(GeminiState)
-
-	// Prime baseline
-	gs.HandleCapturePaneResult(CapturePaneResult{Snapshot: vt.Snapshot{Stable: "abc"}}, nil, now)
-	at := gs.PaneHashAt
-
-	// Errored capture (zero-value result)
-	gs.CaptureInFlight = true
-	gs.HandleCapturePaneResult(CapturePaneResult{}, errors.New("tmux failed"), now.Add(10*time.Second))
-
-	// Expect: PaneHash still "abc", PaneHashAt unchanged
-	if gs.PaneHash != "abc" {
-		t.Errorf("PaneHash = %q, want abc (should not be overwritten on error)", gs.PaneHash)
-	}
-	if !gs.PaneHashAt.Equal(at) {
-		t.Error("PaneHashAt was updated on error")
-	}
-	if gs.CaptureInFlight {
-		t.Error("CaptureInFlight should be cleared even on error")
-	}
-}
-
-// IsRoot=false ガード: 非 root frame は DEvTick / DEvPaneActivity を無視する。
+// IsRoot=false ガード: 非 root frame は DEvTick を無視する。
 
 func TestGeminiStepNonRootSkipsTick(t *testing.T) {
 	d := NewGeminiDriver("/tmp/events")
@@ -149,19 +78,6 @@ func TestGeminiStepNonRootSkipsTick(t *testing.T) {
 	}
 	if next.(GeminiState).StartDir != "/repo" {
 		t.Errorf("non-root DEvTick mutated StartDir: got %q", next.(GeminiState).StartDir)
-	}
-}
-
-func TestGeminiStepNonRootSkipsPaneActivity(t *testing.T) {
-	d := NewGeminiDriver("/tmp/events")
-	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
-	gs := d.NewState(now).(GeminiState)
-	gs.Status = state.StatusRunning
-	_, effs, _ := d.Step(gs, state.FrameContext{IsRoot: false}, state.DEvPaneActivity{
-		PaneTarget: "%5", Now: now.Add(time.Second),
-	})
-	if len(effs) != 0 {
-		t.Errorf("non-root DEvPaneActivity effects = %d, want 0", len(effs))
 	}
 }
 

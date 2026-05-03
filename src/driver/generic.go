@@ -5,26 +5,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/takezoh/agent-roost/driver/vt"
 	"github.com/takezoh/agent-roost/state"
 )
 
 // Generic driver: polling-driven status producer for arbitrary terminal panes
-// (vim, tig, build output, unknown commands, fallback). Detects activity by
-// hashing capture-pane content; when the hash stays stable for IdleThreshold
-// the session transitions Running → Waiting.
+// (vim, tig, build output, unknown commands, fallback). Receives OSC events
+// via DEvPaneOsc when the pane emits semantic sequences; otherwise transitions
+// Running → Waiting after IdleThreshold elapses.
 //
 // Shell-specific logic (OSC 133, promptRe heuristic) lives in ShellDriver.
 //
 // All state lives in GenericState, all I/O is delegated to the worker
-// pool via JobCapturePane. Step is a pure function — the same input
-// always produces the same output and effects.
+// pool via jobs. Step is a pure function.
 
 // GenericState is the per-session state for the generic driver. Plain
 // data — no goroutines, no I/O.
 type GenericState struct {
 	CommonState
-	PanePolling
 
 	// Driver name (e.g. "bash", "codex", "gemini", or "" for fallback).
 	// Stored on the state so the same generic driver impl can serve
@@ -94,10 +91,6 @@ func (d GenericDriver) NewState(now time.Time) state.DriverState {
 			Status:          state.StatusWaiting,
 			StatusChangedAt: now,
 		},
-		PanePolling: PanePolling{
-			IdleThreshold: d.threshold,
-			LastActivity:  now,
-		},
 	}
 }
 
@@ -137,10 +130,6 @@ func (d GenericDriver) Restore(bag map[string]string, now time.Time) state.Drive
 			Status:          state.StatusWaiting,
 			StatusChangedAt: now,
 		},
-		PanePolling: PanePolling{
-			IdleThreshold: d.threshold,
-			LastActivity:  now,
-		},
 	}
 	if len(bag) == 0 {
 		return gs
@@ -150,7 +139,7 @@ func (d GenericDriver) Restore(bag map[string]string, now time.Time) state.Drive
 }
 
 // Step is the pure reducer for the generic driver.
-func (d GenericDriver) Step(prev state.DriverState, ctx state.FrameContext, ev state.DriverEvent) (state.DriverState, []state.Effect, state.View) { //nolint:funlen
+func (d GenericDriver) Step(prev state.DriverState, ctx state.FrameContext, ev state.DriverEvent) (state.DriverState, []state.Effect, state.View) {
 	gs, ok := prev.(GenericState)
 	if !ok {
 		gs = d.NewState(time.Time{}).(GenericState)
@@ -169,11 +158,7 @@ func (d GenericDriver) Step(prev state.DriverState, ctx state.FrameContext, ev s
 		if !e.Active && gs.Status != state.StatusRunning {
 			return gs, nil, d.view(gs)
 		}
-		effs := paneTickEffects(&gs.CommonState, e)
-		return gs, effs, d.view(gs)
-
-	case state.DEvPaneActivity:
-		effs := paneActivityEffects(&gs.CommonState, e)
+		effs := gs.HandleTick(e, false)
 		return gs, effs, d.view(gs)
 
 	case state.DEvJobResult:
@@ -197,18 +182,7 @@ func (d GenericDriver) Step(prev state.DriverState, ctx state.FrameContext, ev s
 			return gs, nil, d.view(gs)
 		}
 
-		result, ok := e.Result.(CapturePaneResult)
-		if !ok {
-			return gs, nil, d.view(gs)
-		}
-		if e.Err != nil {
-			return gs, nil, d.view(gs)
-		}
-		next := d.applyCapture(gs, e.Now, result.Snapshot)
-		effs, inFlight := d.summaryEffects(gs, next, result)
-		next.SummaryInFlight = inFlight
-		effs = append(effs, extractOscNotificationEffects(result.Snapshot.Notifications)...)
-		return next, effs, d.view(next)
+		return gs, nil, d.view(gs)
 
 	case state.DEvHook:
 		// generic drivers don't consume hooks
@@ -262,22 +236,4 @@ func (d GenericDriver) ManagedWorktreePath(s state.DriverState) string {
 		return ""
 	}
 	return managedWorktreePath(gs.StartDir)
-}
-
-// applyCapture is the pure status transition logic for generic pane polling.
-// Shell-specific heuristics (OSC 133, promptRe) live in ShellDriver.applyCapture.
-func (d GenericDriver) applyCapture(gs GenericState, now time.Time, snap vt.Snapshot) GenericState {
-	if applyPollingBaseline(&gs.PanePolling, &gs.CommonState, now, snap) {
-		return gs
-	}
-	applyIdleThresholdFallback(gs.PanePolling, &gs.CommonState, now)
-	return gs
-}
-
-func (d GenericDriver) summaryEffects(prev, next GenericState, result CapturePaneResult) ([]state.Effect, bool) {
-	if next.Status != state.StatusWaiting || prev.Status == state.StatusWaiting {
-		return nil, next.SummaryInFlight
-	}
-	prompt := formatGenericSummaryPrompt(next.Summary, d.displayName, next.StartDir, result.Content)
-	return enqueueSummaryJob(nil, next.SummaryInFlight, prompt)
 }

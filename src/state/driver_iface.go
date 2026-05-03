@@ -70,10 +70,10 @@ func (DEvHook) isDriverEvent() {}
 // DEvTick is the periodic tick. Active reflects whether this session is
 // currently shown in pane 0.0 — drivers use it to gate expensive work
 // that only matters when the user is looking. PaneTarget is the tmux
-// pane id (e.g. "%5") for capture-pane polling.
-// N and Seq are used for bucketing: drivers gate periodic work (e.g.
-// capture-pane) to ticks where (N+Seq)%interval==0, so sessions are
-// spread across different ticks rather than all firing simultaneously.
+// pane id (e.g. "%5").
+// N and Seq are used for bucketing: drivers gate periodic work to ticks
+// where (N+Seq)%interval==0, so sessions are spread across different
+// ticks rather than all firing simultaneously.
 type DEvTick struct {
 	Now        time.Time
 	Active     bool
@@ -84,17 +84,6 @@ type DEvTick struct {
 }
 
 func (DEvTick) isDriverEvent() {}
-
-// DEvPaneActivity is fired when the PaneTap reader receives bytes from a pane.
-// Drivers respond by issuing a CapturePaneInput job to sample the current
-// screen state and update their status. PaneTarget and Now are pre-filled
-// by the event loop so Driver.Step remains pure.
-type DEvPaneActivity struct {
-	PaneTarget string
-	Now        time.Time
-}
-
-func (DEvPaneActivity) isDriverEvent() {}
 
 // DEvJobResult delivers an async worker pool result back to the driver
 // that requested it. Result is typed by the worker (the driver dispatches
@@ -130,6 +119,16 @@ type DEvPaneOsc struct {
 }
 
 func (DEvPaneOsc) isDriverEvent() {}
+
+// DEvPanePrompt delivers an OSC 133 semantic-prompt event to the driver.
+// ExitCode is non-nil only for PromptPhaseComplete (133;D;<exit-code>).
+type DEvPanePrompt struct {
+	Phase    PromptPhase
+	ExitCode *int
+	Now      time.Time
+}
+
+func (DEvPanePrompt) isDriverEvent() {}
 
 // DEvStatusLineClick is fired when the user clicks the tmux status bar
 // (bound to MouseDown1Status in the root key table). Range is the
