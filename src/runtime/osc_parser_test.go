@@ -95,9 +95,27 @@ func TestOscParserFeed_OSC0_WaitingTitle(t *testing.T) {
 	}
 }
 
+func TestOscParserFeed_OSC2_Title(t *testing.T) {
+	p := &oscParser{}
+	seqs := p.feed([]byte("\x1b]2;\xe2\x9c\x8b Action Required\x07")) // ✋ Action Required
+	if len(seqs) != 1 || seqs[0].cmd != 2 {
+		t.Fatalf("expected 1 OSC 2 seq, got %+v", seqs)
+	}
+	if seqs[0].payload != "✋ Action Required" {
+		t.Errorf("payload = %q, want %q", seqs[0].payload, "✋ Action Required")
+	}
+}
+
 func TestParseOscPayload_OSC0(t *testing.T) {
 	title, body := parseOscPayload(0, "  ✳ Claude Code  ")
 	if title != "✳ Claude Code" || body != "" {
+		t.Errorf("got title=%q body=%q", title, body)
+	}
+}
+
+func TestParseOscPayload_OSC2(t *testing.T) {
+	title, body := parseOscPayload(2, "  ✦ Working  ")
+	if title != "✦ Working" || body != "" {
 		t.Errorf("got title=%q body=%q", title, body)
 	}
 }

@@ -78,6 +78,33 @@ func TestReducePaneOsc_OSC0_EmptyTitle_NoEffect(t *testing.T) {
 	}
 }
 
+func TestReducePaneOsc_OSC2_RoutesToDriver_NotRecordNotification(t *testing.T) {
+	s := New()
+	sessID := SessionID("sess1")
+	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
+	frameID := FrameID(sessID)
+
+	_, effs := Reduce(s, EvPaneOsc{FrameID: frameID, Cmd: 2, Title: "✋ Action Required"})
+
+	for _, e := range effs {
+		if _, ok := e.(EffRecordNotification); ok {
+			t.Error("OSC 2 should not produce EffRecordNotification")
+		}
+	}
+}
+
+func TestReducePaneOsc_OSC2_EmptyTitle_NoEffect(t *testing.T) {
+	s := New()
+	sessID := SessionID("sess1")
+	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
+	frameID := FrameID(sessID)
+
+	_, effs := Reduce(s, EvPaneOsc{FrameID: frameID, Cmd: 2, Title: ""})
+	if len(effs) != 0 {
+		t.Errorf("expected no effects for empty OSC 2 title, got %d", len(effs))
+	}
+}
+
 func TestReducePaneOsc_OSC9_StillEmitsRecordNotification(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")

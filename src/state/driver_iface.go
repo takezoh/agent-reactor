@@ -119,7 +119,7 @@ type DEvFileChanged struct {
 func (DEvFileChanged) isDriverEvent() {}
 
 // DEvPaneOsc delivers a parsed OSC sequence from the PaneTap byte stream to
-// the driver. Only OSC 0 (window title) is routed here; OSC 9/99/777 go
+// the driver. Only OSC 0/2 (window title) is routed here; OSC 9/99/777 go
 // directly to EffRecordNotification in the state reducer instead. The driver
 // interprets the title string and may update its status accordingly.
 type DEvPaneOsc struct {

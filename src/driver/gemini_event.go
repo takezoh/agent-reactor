@@ -69,8 +69,18 @@ func (d GeminiDriver) handleWindowTitle(gs GeminiState, title string, now time.T
 		return gs
 	}
 	gs.LastWindowTitle = title
-	if codexTitleNeedsUserAction(title) && gs.Status != state.StatusPending {
+	if gs.Status == state.StatusIdle || gs.Status == state.StatusStopped {
+		return gs
+	}
+	switch {
+	case strings.Contains(title, "✋") || strings.Contains(title, "Action Required"):
 		gs.Status = state.StatusPending
+		gs.StatusChangedAt = statusTime(now, gs.StatusChangedAt)
+	case strings.Contains(title, "✦"):
+		gs.Status = state.StatusRunning
+		gs.StatusChangedAt = statusTime(now, gs.StatusChangedAt)
+	case strings.Contains(title, "◇"):
+		gs.Status = state.StatusWaiting
 		gs.StatusChangedAt = statusTime(now, gs.StatusChangedAt)
 	}
 	return gs

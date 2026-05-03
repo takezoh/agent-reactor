@@ -4,7 +4,7 @@ import "strings"
 
 // oscParser extracts OSC sequences from a raw terminal byte stream.
 // It is a lightweight state machine that does not perform full VT emulation;
-// it only captures OSC 0 / 9 / 99 / 777 sequences needed for EvPaneOsc.
+// it only captures OSC 0 / 2 / 9 / 99 / 777 sequences needed for EvPaneOsc.
 // State is carried across successive feed calls.
 type oscParser struct {
 	buf   []byte
@@ -56,7 +56,7 @@ func (p *oscParser) feed(data []byte) []oscSeq {
 	return out
 }
 
-// splitOscSeq splits "cmd;payload" and filters to notification commands only.
+// splitOscSeq splits "cmd;payload" and filters to title / notification commands only.
 func splitOscSeq(s string) (oscSeq, bool) {
 	idx := strings.IndexByte(s, ';')
 	if idx < 0 {
@@ -70,7 +70,7 @@ func splitOscSeq(s string) (oscSeq, bool) {
 		}
 		cmd = cmd*10 + int(c-'0')
 	}
-	if cmd != 0 && cmd != 9 && cmd != 99 && cmd != 777 {
+	if cmd != 0 && cmd != 2 && cmd != 9 && cmd != 99 && cmd != 777 {
 		return oscSeq{}, false
 	}
 	return oscSeq{cmd: cmd, payload: s[idx+1:]}, true
@@ -79,7 +79,7 @@ func splitOscSeq(s string) (oscSeq, bool) {
 // parseOscPayload extracts (title, body) from an OSC notification payload.
 func parseOscPayload(cmd int, payload string) (title, body string) {
 	switch cmd {
-	case 0:
+	case 0, 2:
 		return strings.TrimSpace(payload), ""
 	case 9:
 		return strings.TrimSpace(payload), ""

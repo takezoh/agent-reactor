@@ -1,16 +1,16 @@
 package state
 
 // reducePaneOsc handles an OSC notification event fired by the PaneTap reader.
-// OSC 0 (window title) is routed to the driver via DEvPaneOsc so each driver
+// OSC 0/2 (window title) is routed to the driver via DEvPaneOsc so each driver
 // can interpret the title string in its own way (e.g. Claude reads Braille
 // spinner vs ✳ to infer working/waiting status). OSC 9/99/777 are broadcast
 // directly as EffRecordNotification.
 func reducePaneOsc(s State, e EvPaneOsc) (State, []Effect) {
-	if e.Cmd == 0 {
+	if e.Cmd == 0 || e.Cmd == 2 {
 		if e.Title == "" {
 			return s, nil
 		}
-		next, effs, _ := stepDriver(s, e.FrameID, DEvPaneOsc{Cmd: 0, Title: e.Title, Now: e.Now})
+		next, effs, _ := stepDriver(s, e.FrameID, DEvPaneOsc{Cmd: e.Cmd, Title: e.Title, Now: e.Now})
 		return next, effs
 	}
 
