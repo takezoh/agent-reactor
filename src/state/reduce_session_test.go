@@ -68,6 +68,36 @@ type fallbackDriver struct{ stubDriver }
 
 func (fallbackDriver) Name() string { return "" }
 
+type bootstrapState struct {
+	DriverStateBase
+	status       Status
+	bootstrapped bool
+}
+
+type bootstrapDriver struct{ stubDriver }
+
+func (bootstrapDriver) Name() string                       { return "bootstrap" }
+func (bootstrapDriver) DisplayName() string                { return "bootstrap" }
+func (bootstrapDriver) Status(s DriverState) Status        { return s.(bootstrapState).status }
+func (bootstrapDriver) NewState(now time.Time) DriverState { return bootstrapState{} }
+func (bootstrapDriver) PrepareLaunch(s DriverState, mode LaunchMode, project, baseCommand string, options LaunchOptions, _ bool) (LaunchPlan, error) {
+	return LaunchPlan{Command: baseCommand, StartDir: project}, nil
+}
+func (bootstrapDriver) Persist(s DriverState) map[string]string { return nil }
+func (bootstrapDriver) Restore(bag map[string]string, now time.Time) DriverState {
+	return bootstrapState{}
+}
+func (bootstrapDriver) View(s DriverState) View { return View{} }
+func (bootstrapDriver) Step(prev DriverState, ctx FrameContext, ev DriverEvent) (DriverState, []Effect, View) {
+	return prev, nil, View{}
+}
+func (bootstrapDriver) BootstrapSessionStart(s DriverState, ctx FrameContext, now time.Time) (DriverState, []Effect) {
+	bs, _ := s.(bootstrapState)
+	bs.status = StatusIdle
+	bs.bootstrapped = true
+	return bs, []Effect{EffEventLogAppend{Line: "[event:SessionStart] startup"}}
+}
+
 // sdState is a StartDirAware driver state for testing StartDir inheritance.
 type sdState struct {
 	DriverStateBase
@@ -122,6 +152,9 @@ func init() {
 	}
 	if _, exists := driverRegistry["planner"]; !exists {
 		Register(plannerDriver{})
+	}
+	if _, exists := driverRegistry["bootstrap"]; !exists {
+		Register(bootstrapDriver{})
 	}
 	if _, exists := driverRegistry["sdstub"]; !exists {
 		Register(sdDriver{})
@@ -398,6 +431,66 @@ func TestTmuxSpawnedChildFrameSetsTapFalse(t *testing.T) {
 	}
 	if reg.Tap {
 		t.Error("EffRegisterPane.Tap should be false for non-root frame (Frames[1])")
+	}
+}
+
+func TestTmuxSpawnedRootBootstrapRunsBeforeRegister(t *testing.T) {
+	s := New()
+	id := SessionID("boot")
+	s.Sessions[id] = Session{
+		ID:      id,
+		Project: "/foo",
+		Command: "bootstrap",
+		Driver:  bootstrapState{},
+		Frames: []SessionFrame{{
+			ID:      FrameID(id),
+			Project: "/foo",
+			Command: "bootstrap",
+			Driver:  bootstrapState{},
+		}},
+	}
+
+	next, effs := Reduce(s, EvTmuxPaneSpawned{
+		SessionID:  id,
+		FrameID:    FrameID(id),
+		PaneTarget: "%1",
+	})
+
+	got := next.Sessions[id].Frames[0].Driver.(bootstrapState)
+	if !got.bootstrapped {
+		t.Fatal("root frame should be bootstrapped")
+	}
+	assertEffectOrder[EffEventLogAppend, EffRegisterPane](t, effs)
+}
+
+func TestTmuxSpawnedChildFrameSkipsBootstrap(t *testing.T) {
+	s := New()
+	id := SessionID("boot")
+	childID := FrameID("boot-child")
+	s.Sessions[id] = Session{
+		ID:      id,
+		Project: "/foo",
+		Command: "bootstrap",
+		Driver:  bootstrapState{},
+		Frames: []SessionFrame{
+			{ID: FrameID(id), Project: "/foo", Command: "bootstrap", Driver: bootstrapState{}},
+			{ID: childID, Project: "/foo", Command: "bootstrap", Driver: bootstrapState{}},
+		},
+	}
+
+	next, effs := Reduce(s, EvTmuxPaneSpawned{
+		SessionID:  id,
+		FrameID:    childID,
+		PaneTarget: "%2",
+	})
+
+	root := next.Sessions[id].Frames[0].Driver.(bootstrapState)
+	child := next.Sessions[id].Frames[1].Driver.(bootstrapState)
+	if root.bootstrapped || child.bootstrapped {
+		t.Fatal("non-root spawn should not bootstrap")
+	}
+	if _, ok := findEff[EffEventLogAppend](effs); ok {
+		t.Fatal("child spawn should not emit bootstrap event log")
 	}
 }
 

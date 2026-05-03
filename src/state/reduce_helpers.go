@@ -205,6 +205,63 @@ func stepDriver(s State, frameID FrameID, ev DriverEvent) (State, []Effect, bool
 	return s, out, true
 }
 
+func bootstrapDriverSessionStart(s State, frameID FrameID) (State, []Effect, bool) {
+	sessID, sess, frameIdx, ok := findFrame(s, frameID)
+	if !ok || frameIdx != 0 {
+		return s, nil, false
+	}
+	frame := sess.Frames[frameIdx]
+	drv := GetDriver(frame.Command)
+	if drv == nil {
+		return s, nil, false
+	}
+	bootstrapper, ok := drv.(SessionBootstrapper)
+	if !ok {
+		return s, nil, false
+	}
+
+	ctx := FrameContext{
+		ID:            frame.ID,
+		Project:       frame.Project,
+		Command:       frame.Command,
+		LaunchOptions: frame.LaunchOptions,
+		CreatedAt:     frame.CreatedAt,
+		IsRoot:        true,
+	}
+
+	oldStatus := drv.Status(frame.Driver)
+	nextDS, rawEffs := bootstrapper.BootstrapSessionStart(frame.Driver, ctx, s.Now)
+
+	s.Sessions = cloneSessions(s.Sessions)
+	sess.Frames = append([]SessionFrame(nil), sess.Frames...)
+	frame.Driver = nextDS
+	sess.Frames[frameIdx] = frame
+	s.Sessions[sessID] = sess
+
+	out := make([]Effect, 0, len(rawEffs))
+	for _, eff := range rawEffs {
+		patched, newState := postProcessEffect(s, sessID, frameID, eff)
+		s = newState
+		out = append(out, patched)
+	}
+
+	newStatus := drv.Status(nextDS)
+	if kind, ok := ClassifyStatusTransition(oldStatus, newStatus); ok {
+		out = append(out, EffNotify{
+			SessionID: sessID,
+			FrameID:   frameID,
+			Driver:    drv.Name(),
+			Command:   FirstToken(frame.Command),
+			Project:   sess.Project,
+			Kind:      kind,
+			OldStatus: oldStatus,
+			NewStatus: newStatus,
+		})
+	}
+
+	return s, out, true
+}
+
 // postProcessEffect fills in session-context fields the driver Step
 // left blank and (for EffStartJob) registers JobMeta + assigns a fresh
 // JobID. Returns the patched effect and the (possibly mutated) State.

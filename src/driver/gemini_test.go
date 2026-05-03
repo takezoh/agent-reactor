@@ -29,8 +29,12 @@ func TestGeminiPrepareCreateWithoutWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareCreate error: %v", err)
 	}
-	if next.(GeminiState).WorktreeName != "" {
+	got := next.(GeminiState)
+	if got.WorktreeName != "" {
 		t.Fatalf("unexpected worktree state: %+v", next)
+	}
+	if got.StartDir != "/repo" {
+		t.Fatalf("StartDir = %q, want /repo", got.StartDir)
 	}
 	if plan.SetupJob != nil {
 		t.Fatal("expected no setup job")

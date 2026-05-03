@@ -118,6 +118,90 @@ func TestCodexSessionStartNonRootSkipsBranchDetect(t *testing.T) {
 	}
 }
 
+func TestCodexBootstrapSessionStartSetsIdleWithoutIdentity(t *testing.T) {
+	d, cs, now := newCodex(t)
+	cs.Status = state.StatusRunning
+	cs.StartDir = "/repo"
+	nextState, effs := d.BootstrapSessionStart(cs, state.FrameContext{
+		ID:      "frame-1",
+		Project: "/repo",
+		Command: "codex",
+		IsRoot:  true,
+	}, now)
+	next := nextState.(CodexState)
+
+	if next.Status != state.StatusIdle {
+		t.Fatalf("Status = %v, want idle", next.Status)
+	}
+	if next.CodexSessionID != "" {
+		t.Fatalf("CodexSessionID = %q, want empty", next.CodexSessionID)
+	}
+	if next.TranscriptPath != "" {
+		t.Fatalf("TranscriptPath = %q, want empty", next.TranscriptPath)
+	}
+	if !next.BranchInFlight {
+		t.Fatal("BranchInFlight should be true")
+	}
+	if next.BranchTarget != "/repo" {
+		t.Fatalf("BranchTarget = %q", next.BranchTarget)
+	}
+	if next.WatchedFile != "" {
+		t.Fatalf("WatchedFile = %q, want empty", next.WatchedFile)
+	}
+
+	foundBranch := false
+	foundLog := false
+	for _, eff := range effs {
+		if logEff, ok := eff.(state.EffEventLogAppend); ok && logEff.Line == "[event:SessionStart] startup" {
+			foundLog = true
+		}
+		job, ok := eff.(state.EffStartJob)
+		if ok {
+			_, foundBranch = job.Input.(BranchDetectInput)
+		}
+	}
+	if !foundBranch {
+		t.Fatal("expected BranchDetectInput job")
+	}
+	if !foundLog {
+		t.Fatal("expected SessionStart startup event log")
+	}
+}
+
+func TestCodexBootstrapThenHookAbsorbsIdentity(t *testing.T) {
+	d, cs, now := newCodex(t)
+	cs.StartDir = "/repo"
+	nextState, _ := d.BootstrapSessionStart(cs, state.FrameContext{
+		ID:      "frame-1",
+		Project: "/repo",
+		Command: "codex",
+		IsRoot:  true,
+	}, now)
+
+	next, effs := d.handleHook(nextState.(CodexState), state.FrameContext{IsRoot: true}, codexHook(map[string]string{
+		"session_id":      "sess-1",
+		"hook_event_name": "UserPromptSubmit",
+		"transcript_path": "/tmp/t.jsonl",
+		"prompt":          "implement this",
+	}, now.Add(time.Second)))
+
+	if next.CodexSessionID != "sess-1" {
+		t.Fatalf("CodexSessionID = %q", next.CodexSessionID)
+	}
+	if next.TranscriptPath != "/tmp/t.jsonl" {
+		t.Fatalf("TranscriptPath = %q", next.TranscriptPath)
+	}
+	if next.Status != state.StatusRunning {
+		t.Fatalf("Status = %v, want running", next.Status)
+	}
+	if next.WatchedFile != "/tmp/t.jsonl" {
+		t.Fatalf("WatchedFile = %q", next.WatchedFile)
+	}
+	if _, ok := findCodexEffect[state.EffWatchFile](effs); !ok {
+		t.Fatal("expected EffWatchFile")
+	}
+}
+
 func TestCodexUserPromptTransitionsRunning(t *testing.T) {
 	d, cs, now := newCodex(t)
 	cs.RecentTurns = []SummaryTurn{
@@ -584,8 +668,12 @@ func TestCodexPrepareCreateWithoutWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareCreate error: %v", err)
 	}
-	if next.(CodexState).WorktreeName != "" {
+	got := next.(CodexState)
+	if got.WorktreeName != "" {
 		t.Fatalf("unexpected worktree state: %+v", next)
+	}
+	if got.StartDir != "/repo" {
+		t.Fatalf("StartDir = %q, want /repo", got.StartDir)
 	}
 	if plan.SetupJob != nil {
 		t.Fatal("expected no setup job")

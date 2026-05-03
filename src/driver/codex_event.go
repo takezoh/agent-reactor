@@ -71,6 +71,17 @@ func (d CodexDriver) handleWindowTitle(cs CodexState, title string, now time.Tim
 	return cs
 }
 
+func (d CodexDriver) BootstrapSessionStart(s state.DriverState, ctx state.FrameContext, now time.Time) (state.DriverState, []state.Effect) {
+	cs, ok := s.(CodexState)
+	if !ok {
+		cs = d.NewState(now).(CodexState)
+	}
+	effs := watchCodexTranscript(&cs)
+	cs, effs = d.applySessionStart(cs, ctx, now, effs)
+	effs = append(effs, state.EffEventLogAppend{Line: eventLogLine("SessionStart", "startup")})
+	return cs, effs
+}
+
 func codexTitleNeedsUserAction(title string) bool {
 	return strings.Contains(title, "Action Required")
 }
@@ -106,18 +117,7 @@ func (d CodexDriver) handleHook(cs CodexState, ctx state.FrameContext, e state.D
 func (d CodexDriver) applyHookEvent(cs CodexState, ctx state.FrameContext, hp codexHookPayload, e state.DEvHook, effs []state.Effect) (CodexState, []state.Effect) {
 	switch hp.HookEventName {
 	case "SessionStart":
-		cs.PendingTools = nil
-		cs.CurrentTool = ""
-		cs = applyHookStatus(cs, state.StatusIdle, e.Timestamp)
-		effs = append(effs, d.startCodexTranscriptParse(&cs)...)
-		if ctx.IsRoot {
-			target := cs.StartDir
-			if target != "" && !cs.BranchInFlight {
-				cs.BranchInFlight = true
-				cs.BranchTarget = target
-				effs = append(effs, state.EffStartJob{Input: BranchDetectInput{WorkingDir: target}})
-			}
-		}
+		cs, effs = d.applySessionStart(cs, ctx, e.Timestamp, effs)
 	case "UserPromptSubmit":
 		cs.LastPrompt = strings.TrimSpace(hp.Prompt)
 		cs = applyHookStatus(cs, state.StatusRunning, e.Timestamp)
@@ -140,6 +140,22 @@ func (d CodexDriver) applyHookEvent(cs CodexState, ctx state.FrameContext, hp co
 		}
 		cs = applyHookStatus(cs, state.StatusWaiting, e.Timestamp)
 		effs = append(effs, d.startCodexTranscriptParse(&cs)...)
+	}
+	return cs, effs
+}
+
+func (d CodexDriver) applySessionStart(cs CodexState, ctx state.FrameContext, now time.Time, effs []state.Effect) (CodexState, []state.Effect) {
+	cs.PendingTools = nil
+	cs.CurrentTool = ""
+	cs = applyHookStatus(cs, state.StatusIdle, now)
+	effs = append(effs, d.startCodexTranscriptParse(&cs)...)
+	if ctx.IsRoot {
+		target := cs.StartDir
+		if target != "" && !cs.BranchInFlight {
+			cs.BranchInFlight = true
+			cs.BranchTarget = target
+			effs = append(effs, state.EffStartJob{Input: BranchDetectInput{WorkingDir: target}})
+		}
 	}
 	return cs, effs
 }

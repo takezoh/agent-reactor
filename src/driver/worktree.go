@@ -129,6 +129,9 @@ func CommonPrepareCreate(c *CommonState, project, command string, options state.
 	if err != nil {
 		return state.CreatePlan{}, err
 	}
+	if project != "" {
+		c.StartDir = project
+	}
 	if name != "" {
 		c.WorktreeName = name
 	}

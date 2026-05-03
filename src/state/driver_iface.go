@@ -260,6 +260,14 @@ type WarmStartRecoverer interface {
 	WarmStartRecover(s DriverState, now time.Time) (DriverState, []Effect)
 }
 
+// SessionBootstrapper is an optional driver capability for running
+// post-spawn initialization when a brand-new root frame has been
+// created, but the external agent has not yet emitted its own startup
+// hook.
+type SessionBootstrapper interface {
+	BootstrapSessionStart(s DriverState, ctx FrameContext, now time.Time) (DriverState, []Effect)
+}
+
 // StartDirAware is an optional driver extension that lets the state
 // layer read and write the session's working directory without
 // inspecting driver-specific concrete types. Used by reducePushDriver

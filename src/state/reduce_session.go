@@ -273,15 +273,25 @@ func reduceTmuxPaneSpawned(s State, e EvTmuxPaneSpawned) (State, []Effect) {
 	if frameIdx < 0 {
 		return s, nil
 	}
+	var bootstrapEffs []Effect
+	if frameIdx == 0 {
+		var bootstrapped bool
+		s, bootstrapEffs, bootstrapped = bootstrapDriverSessionStart(s, e.FrameID)
+		if bootstrapped {
+			sess = s.Sessions[e.SessionID]
+		}
+	}
 	s, pre := ensureMainAtVisibleSlot(s)
 	s.ActiveOccupant = OccupantFrame
 	s.ActiveSession = e.SessionID
 
-	effs := []Effect{EffRegisterPane{
+	effs := []Effect{}
+	effs = append(effs, bootstrapEffs...)
+	effs = append(effs, EffRegisterPane{
 		FrameID:    e.FrameID,
 		PaneTarget: e.PaneTarget,
 		Tap:        frameIdx == 0,
-	}}
+	})
 	effs = append(effs, pre...)
 	effs = append(effs,
 		EffActivateSession{SessionID: e.SessionID, Reason: EventCreateSession},
