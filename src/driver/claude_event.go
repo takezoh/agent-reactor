@@ -135,6 +135,24 @@ func (d ClaudeDriver) handleHook(cs ClaudeState, ctx state.FrameContext, e state
 	}
 
 	ts := e.Timestamp
+	if !ctx.IsRoot {
+		if !ts.IsZero() && !ts.After(cs.LastBridgeTS) {
+			return cs, nil
+		}
+		if hp.SessionID != "" {
+			cs.ClaudeSessionID = hp.SessionID
+		}
+		if hp.Cwd != "" {
+			cs.StartDir = hp.Cwd
+		}
+		if hp.ContainerCwd != "" {
+			cs.ContainerStartDir = hp.ContainerCwd
+		}
+		if !ts.IsZero() {
+			cs.LastBridgeTS = ts
+		}
+		return cs, nil
+	}
 
 	if hp.HookEventName == "SessionStart" {
 		cs.LastBridgeTS = ts

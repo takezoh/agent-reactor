@@ -166,27 +166,23 @@ func (d CodexDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 	if !ok {
 		cs = d.NewState(time.Time{}).(CodexState)
 	}
+	if !ctx.IsRoot {
+		if _, ok := ev.(state.DEvHook); !ok {
+			return cs, nil, d.view(cs)
+		}
+	}
 
 	switch e := ev.(type) {
 	case state.DEvHook:
 		next, effs := d.handleHook(cs, ctx, e)
 		return next, effs, d.view(next)
 	case state.DEvTick:
-		if !ctx.IsRoot {
-			return cs, nil, d.view(cs)
-		}
 		effs := cs.HandleTick(e, false)
 		return cs, effs, d.view(cs)
 	case state.DEvPaneActivity:
-		if !ctx.IsRoot {
-			return cs, nil, d.view(cs)
-		}
 		effs := cs.HandleActivity(e)
 		return cs, effs, d.view(cs)
 	case state.DEvPaneOsc:
-		if !ctx.IsRoot {
-			return cs, nil, d.view(cs)
-		}
 		next := d.handleWindowTitle(cs, e.Title, e.Now)
 		return next, nil, d.view(next)
 	case state.DEvFileChanged:

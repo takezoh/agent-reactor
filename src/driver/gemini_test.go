@@ -204,16 +204,17 @@ func TestGeminiSessionStartNonRootSkipsBranchDetect(t *testing.T) {
 	if next.BranchInFlight {
 		t.Error("BranchInFlight should be false for non-root frame")
 	}
-	for _, eff := range effs {
-		if j, ok := eff.(state.EffStartJob); ok {
-			if _, ok := j.Input.(BranchDetectInput); ok {
-				t.Error("non-root SessionStart must not emit BranchDetectInput")
-			}
-		}
+	if len(effs) != 0 {
+		t.Fatalf("non-root SessionStart effects = %d, want 0", len(effs))
 	}
-	// Status transition must still run (non-branch-detect hook work is not gated).
+	if next.GeminiSessionID != "sess-1" {
+		t.Errorf("GeminiSessionID = %q", next.GeminiSessionID)
+	}
+	if next.StartDir != "/repo" {
+		t.Errorf("StartDir = %q", next.StartDir)
+	}
 	if next.Status != state.StatusIdle {
-		t.Errorf("Status = %v, want Idle (SessionStart transitions for non-root too)", next.Status)
+		t.Errorf("Status = %v, want Idle", next.Status)
 	}
 }
 

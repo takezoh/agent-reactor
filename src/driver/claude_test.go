@@ -135,20 +135,21 @@ func TestClaudeSessionStartNonRootSkipsBranchDetect(t *testing.T) {
 		"transcript_path": "/tmp/x.jsonl",
 		"hook_event_name": "SessionStart",
 	}, now))
-	// Non-root: BranchDetect must NOT be emitted, other effects must still arrive.
+	// Non-root: identity only. No branch detect or transcript work.
 	if next.BranchInFlight {
 		t.Error("BranchInFlight should be false for non-root frame")
 	}
-	for _, e := range effs {
-		if j, ok := e.(state.EffStartJob); ok {
-			if _, ok := j.Input.(BranchDetectInput); ok {
-				t.Error("non-root SessionStart must not emit BranchDetectInput")
-			}
-		}
+	if len(effs) != 0 {
+		t.Fatalf("non-root SessionStart effects = %d, want 0", len(effs))
 	}
-	// Transcript watch should still be set up even for non-root.
-	if _, ok := findEffect[state.EffWatchFile](effs); !ok {
-		t.Error("non-root SessionStart should still emit EffWatchFile")
+	if next.ClaudeSessionID != "uuid" {
+		t.Errorf("ClaudeSessionID = %q", next.ClaudeSessionID)
+	}
+	if next.StartDir != "/work" {
+		t.Errorf("StartDir = %q", next.StartDir)
+	}
+	if next.TranscriptPath != "" {
+		t.Errorf("TranscriptPath = %q, want empty", next.TranscriptPath)
 	}
 }
 

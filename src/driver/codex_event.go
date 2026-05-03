@@ -77,15 +77,21 @@ func codexTitleNeedsUserAction(title string) bool {
 
 func (d CodexDriver) handleHook(cs CodexState, ctx state.FrameContext, e state.DEvHook) (CodexState, []state.Effect) {
 	hp := parseCodexHookPayload(e.Payload)
-	if !cs.applyHookPreamble(hookPreamble{
-		SessionID:      hp.SessionID,
-		HookEventName:  hp.HookEventName,
-		Cwd:            hp.Cwd,
-		TranscriptPath: hp.TranscriptPath,
-	}, e) {
+	preamble := hookPreamble{
+		SessionID:     hp.SessionID,
+		HookEventName: hp.HookEventName,
+		Cwd:           hp.Cwd,
+	}
+	if ctx.IsRoot {
+		preamble.TranscriptPath = hp.TranscriptPath
+	}
+	if !cs.applyHookPreamble(preamble, e) {
 		return cs, nil
 	}
 	cs.CodexSessionID = hp.SessionID
+	if !ctx.IsRoot {
+		return cs, nil
+	}
 
 	effs := watchCodexTranscript(&cs)
 	cs, effs = d.applyHookEvent(cs, ctx, hp, e, effs)

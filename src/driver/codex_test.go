@@ -104,22 +104,17 @@ func TestCodexSessionStartNonRootSkipsBranchDetect(t *testing.T) {
 	if next.BranchInFlight {
 		t.Error("BranchInFlight should be false for non-root frame")
 	}
-	for _, eff := range effs {
-		if j, ok := eff.(state.EffStartJob); ok {
-			if _, ok := j.Input.(BranchDetectInput); ok {
-				t.Error("non-root SessionStart must not emit BranchDetectInput")
-			}
-		}
+	if len(effs) != 0 {
+		t.Fatalf("non-root SessionStart effects = %d, want 0", len(effs))
 	}
-	// Other SessionStart work (transcript watch + parse) must still run.
-	foundWatch := false
-	for _, eff := range effs {
-		if w, ok := eff.(state.EffWatchFile); ok {
-			foundWatch = w.Path == "/tmp/t.jsonl"
-		}
+	if next.CodexSessionID != "sess-1" {
+		t.Errorf("CodexSessionID = %q", next.CodexSessionID)
 	}
-	if !foundWatch {
-		t.Error("non-root SessionStart should still emit EffWatchFile for transcript")
+	if next.StartDir != "/repo" {
+		t.Errorf("StartDir = %q", next.StartDir)
+	}
+	if next.TranscriptPath != "" {
+		t.Errorf("TranscriptPath = %q, want empty", next.TranscriptPath)
 	}
 }
 

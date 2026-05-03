@@ -155,12 +155,14 @@ func (d GenericDriver) Step(prev state.DriverState, ctx state.FrameContext, ev s
 	if !ok {
 		gs = d.NewState(time.Time{}).(GenericState)
 	}
+	if !ctx.IsRoot {
+		if _, ok := ev.(state.DEvHook); !ok {
+			return gs, nil, d.view(gs)
+		}
+	}
 
 	switch e := ev.(type) {
 	case state.DEvTick:
-		if !ctx.IsRoot {
-			return gs, nil, d.view(gs)
-		}
 		// Tick only when visible on the main pane OR actively running
 		// (hash still changing). Parked + waiting sessions skip to save CPU;
 		// the next tick after the user brings them back to active resumes.
@@ -171,9 +173,6 @@ func (d GenericDriver) Step(prev state.DriverState, ctx state.FrameContext, ev s
 		return gs, effs, d.view(gs)
 
 	case state.DEvPaneActivity:
-		if !ctx.IsRoot {
-			return gs, nil, d.view(gs)
-		}
 		effs := paneActivityEffects(&gs.CommonState, e)
 		return gs, effs, d.view(gs)
 

@@ -81,15 +81,21 @@ func (hp geminiHookPayload) formatLog() string {
 
 func (d GeminiDriver) handleHook(gs GeminiState, ctx state.FrameContext, e state.DEvHook) (GeminiState, []state.Effect) {
 	hp := parseGeminiHookPayload(e.Payload)
-	if !gs.applyHookPreamble(hookPreamble{
-		SessionID:      hp.SessionID,
-		HookEventName:  hp.HookEventName,
-		Cwd:            hp.Cwd,
-		TranscriptPath: hp.TranscriptPath,
-	}, e) {
+	preamble := hookPreamble{
+		SessionID:     hp.SessionID,
+		HookEventName: hp.HookEventName,
+		Cwd:           hp.Cwd,
+	}
+	if ctx.IsRoot {
+		preamble.TranscriptPath = hp.TranscriptPath
+	}
+	if !gs.applyHookPreamble(preamble, e) {
 		return gs, nil
 	}
 	gs.GeminiSessionID = hp.SessionID
+	if !ctx.IsRoot {
+		return gs, nil
+	}
 
 	var effs []state.Effect
 

@@ -43,15 +43,10 @@ type DriverEvent interface {
 // It is assembled by stepDriver from the SessionFrame and is never
 // stored inside DriverState or persisted to disk.
 //
-// IsRoot gating policy: drivers must early-return on DEvTick,
-// DEvPaneActivity, and DEvPaneOsc when !IsRoot — these events are
-// routed/emitted only for root frames at the reducer and tap layers,
-// so the driver guard is defense-in-depth. Branch-detect inside
-// SessionStart hooks must also be gated on IsRoot. All other hook
-// behaviors (status transitions, transcript watch, tool logs) and
-// DEvFileChanged / DEvJobResult run on every frame because each child
-// frame owns an independent agent session with its own transcript
-// and hook timestream.
+// IsRoot gating policy: drivers must early-return on every event except
+// DEvHook when !IsRoot. Child frames keep only minimal hook-derived
+// identity needed for relaunch/resume; UI-facing state, transcript work,
+// and polling stay root-only.
 type FrameContext struct {
 	ID            FrameID
 	Project       string
@@ -142,7 +137,6 @@ func (DEvPaneOsc) isDriverEvent() {}
 // #[range=user|<name>] in the driver's StatusLine format string.
 // An empty Range means the click landed outside any named region.
 //
-// IsRoot gating: NOT required — every frame owns its own StatusLine.
 type DEvStatusLineClick struct {
 	Range string
 	Now   time.Time

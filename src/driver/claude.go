@@ -247,41 +247,31 @@ func (d ClaudeDriver) Step(prev state.DriverState, ctx state.FrameContext, ev st
 	if !ok {
 		cs = d.NewState(time.Time{}).(ClaudeState)
 	}
+	if !ctx.IsRoot {
+		if _, ok := ev.(state.DEvHook); !ok {
+			return cs, nil, d.view(cs)
+		}
+	}
 
 	switch e := ev.(type) {
 	case state.DEvHook:
 		next, effs := d.handleHook(cs, ctx, e)
 		return next, effs, d.view(next)
-
 	case state.DEvTick:
-		if !ctx.IsRoot {
-			return cs, nil, d.view(cs)
-		}
 		next, effs := d.handleTick(cs, e)
 		return next, effs, d.view(next)
-
 	case state.DEvPaneActivity:
-		if !ctx.IsRoot {
-			return cs, nil, d.view(cs)
-		}
 		effs := cs.HandleActivity(e)
 		return cs, effs, d.view(cs)
-
 	case state.DEvFileChanged:
 		next, effs := d.handleTranscriptChanged(cs, e)
 		return next, effs, d.view(next)
-
 	case state.DEvJobResult:
 		next, effs := d.handleJobResult(cs, e)
 		return next, effs, d.view(next)
-
 	case state.DEvPaneOsc:
-		if !ctx.IsRoot {
-			return cs, nil, d.view(cs)
-		}
 		next := d.handleWindowTitle(cs, e.Title, e.Now)
 		return next, nil, d.view(next)
-
 	case state.DEvStatusLineClick:
 		next, effs := d.handleStatusLineClick(cs, e)
 		return next, effs, d.view(next)

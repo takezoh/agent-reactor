@@ -161,12 +161,14 @@ func (d ShellDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 	if !ok {
 		ss = d.NewState(time.Time{}).(ShellState)
 	}
+	if !ctx.IsRoot {
+		if _, ok := ev.(state.DEvHook); !ok {
+			return ss, nil, d.view(ss)
+		}
+	}
 
 	switch e := ev.(type) {
 	case state.DEvTick:
-		if !ctx.IsRoot {
-			return ss, nil, d.view(ss)
-		}
 		if !e.Active && ss.Status != state.StatusRunning {
 			return ss, nil, d.view(ss)
 		}
@@ -174,9 +176,6 @@ func (d ShellDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 		return ss, effs, d.view(ss)
 
 	case state.DEvPaneActivity:
-		if !ctx.IsRoot {
-			return ss, nil, d.view(ss)
-		}
 		effs := paneActivityEffects(&ss.CommonState, e)
 		return ss, effs, d.view(ss)
 
