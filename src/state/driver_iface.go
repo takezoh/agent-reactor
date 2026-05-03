@@ -136,7 +136,6 @@ func (DEvPaneOsc) isDriverEvent() {}
 // tmux #{mouse_status_range} value — the name registered via
 // #[range=user|<name>] in the driver's StatusLine format string.
 // An empty Range means the click landed outside any named region.
-//
 type DEvStatusLineClick struct {
 	Range string
 	Now   time.Time
