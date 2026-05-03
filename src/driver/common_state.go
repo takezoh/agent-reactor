@@ -111,7 +111,6 @@ func (c *CommonState) ApplyBranchResult(r BranchDetectResult, err error, now tim
 type hookPreamble struct {
 	SessionID      string
 	HookEventName  string
-	Cwd            string
 	TranscriptPath string
 }
 
@@ -131,9 +130,6 @@ func (c *CommonState) applyHookPreamble(p hookPreamble, e state.DEvHook) bool {
 	}
 	if e.RoostSessionID != "" {
 		c.RoostSessionID = e.RoostSessionID
-	}
-	if p.Cwd != "" {
-		c.StartDir = p.Cwd
 	}
 	if p.TranscriptPath != "" {
 		c.TranscriptPath = p.TranscriptPath

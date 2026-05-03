@@ -12,7 +12,6 @@ type geminiHookPayload struct {
 	SessionID        string         `json:"session_id"`
 	HookEventName    string         `json:"hook_event_name"`
 	NotificationType string         `json:"notification_type"`
-	Cwd              string         `json:"cwd"`
 	TranscriptPath   string         `json:"transcript_path"`
 	Source           string         `json:"source"`
 	Prompt           string         `json:"prompt"`
@@ -91,7 +90,6 @@ func (d GeminiDriver) handleHook(gs GeminiState, ctx state.FrameContext, e state
 	preamble := hookPreamble{
 		SessionID:     hp.SessionID,
 		HookEventName: hp.HookEventName,
-		Cwd:           hp.Cwd,
 	}
 	if ctx.IsRoot {
 		preamble.TranscriptPath = hp.TranscriptPath

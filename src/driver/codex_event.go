@@ -91,7 +91,6 @@ func (d CodexDriver) handleHook(cs CodexState, ctx state.FrameContext, e state.D
 	preamble := hookPreamble{
 		SessionID:     hp.SessionID,
 		HookEventName: hp.HookEventName,
-		Cwd:           hp.Cwd,
 	}
 	if ctx.IsRoot {
 		preamble.TranscriptPath = hp.TranscriptPath

@@ -52,9 +52,9 @@ func TestClaudeSessionStartAbsorbsIdentityAndWatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, cs, now := newClaude(t)
+	cs.StartDir = "/work"
 	next, effs := d.handleHook(cs, state.FrameContext{IsRoot: true}, hookEvent("SessionStart", map[string]string{
 		"session_id":      "claude-uuid",
-		"cwd":             "/work",
 		"transcript_path": tmpPath,
 		"hook_event_name": "SessionStart",
 	}, now))
@@ -128,9 +128,9 @@ func TestClaudeSessionStartSkipsBranchDetectWhenInFlight(t *testing.T) {
 
 func TestClaudeSessionStartNonRootSkipsBranchDetect(t *testing.T) {
 	d, cs, now := newClaude(t)
+	cs.StartDir = "/work"
 	next, effs := d.handleHook(cs, state.FrameContext{IsRoot: false}, hookEvent("SessionStart", map[string]string{
 		"session_id":      "uuid",
-		"cwd":             "/work",
 		"transcript_path": "/tmp/x.jsonl",
 		"hook_event_name": "SessionStart",
 	}, now))
@@ -1437,40 +1437,13 @@ func TestResolveTranscriptPathFallback(t *testing.T) {
 	}
 }
 
-func TestResolveTranscriptPathUsesContainerStartDir(t *testing.T) {
-	d := NewClaudeDriver(testHome, testEventLogDir, ClaudeOptions{}, "less")
-	cs := ClaudeState{
-		CommonState:       CommonState{StartDir: ""},
-		ContainerStartDir: "/workspaces/myapp",
-		ClaudeSessionID:   "uuid-C",
-	}
-	got := d.resolveTranscriptPath(cs)
-	want := "/home/test/.claude/projects/-workspaces-myapp/uuid-C.jsonl"
-	if got != want {
-		t.Errorf("resolveTranscriptPath = %q, want %q", got, want)
-	}
-}
-
-func TestResolveTranscriptPathPrefersContainerStartDir(t *testing.T) {
-	d := NewClaudeDriver(testHome, testEventLogDir, ClaudeOptions{}, "less")
-	cs := ClaudeState{
-		CommonState:       CommonState{StartDir: "/host/path"},
-		ContainerStartDir: "/workspaces/myapp",
-		ClaudeSessionID:   "uuid-D",
-	}
-	got := d.resolveTranscriptPath(cs)
-	want := "/home/test/.claude/projects/-workspaces-myapp/uuid-D.jsonl"
-	if got != want {
-		t.Errorf("resolveTranscriptPath = %q, want %q (should prefer ContainerStartDir)", got, want)
-	}
-}
-
 func TestClaudePrepareLaunchSandboxedNoPathStillResumes(t *testing.T) {
+	// sandboxed cold-start skips host-side transcript_path stat: the JSONL lives
+	// inside the container and only needs the session ID for --resume.
 	d := NewClaudeDriver(testHome, testEventLogDir, ClaudeOptions{}, "less")
 	cs := ClaudeState{
-		CommonState:       CommonState{StartDir: ""},
-		ContainerStartDir: "/workspaces/myapp",
-		ClaudeSessionID:   "uuid-S",
+		CommonState:     CommonState{StartDir: ""},
+		ClaudeSessionID: "uuid-S",
 	}
 	plan, err := d.PrepareLaunch(cs, state.LaunchModeColdStart, "/host/myapp", "claude", state.LaunchOptions{}, true)
 	if err != nil {
@@ -1544,10 +1517,14 @@ func TestResolveTranscriptPathPrefersExplicit(t *testing.T) {
 }
 
 func TestClaudeStateChangeDoesNotUpdateStartDir(t *testing.T) {
+	// StartDir is set at launch and immutable. Hook payloads' cwd field — even
+	// when the agent reports a different working directory after a `cd` — must
+	// not overwrite it.
 	d, cs, now := newClaude(t)
+	cs.StartDir = "/original"
 	cs, _ = d.handleHook(cs, state.FrameContext{IsRoot: true}, hookEvent("SessionStart", map[string]string{
 		"session_id":      "uuid",
-		"cwd":             "/original",
+		"cwd":             "/different",
 		"hook_event_name": "SessionStart",
 	}, now))
 	if cs.StartDir != "/original" {
@@ -1565,9 +1542,10 @@ func TestClaudeStateChangeDoesNotUpdateStartDir(t *testing.T) {
 
 func TestClaudeUserPromptSubmitDoesNotUpdateStartDir(t *testing.T) {
 	d, cs, now := newClaude(t)
+	cs.StartDir = "/original"
 	cs, _ = d.handleHook(cs, state.FrameContext{IsRoot: true}, hookEvent("SessionStart", map[string]string{
 		"session_id":      "uuid",
-		"cwd":             "/original",
+		"cwd":             "/different",
 		"hook_event_name": "SessionStart",
 	}, now))
 	cs, _ = d.handleHook(cs, state.FrameContext{IsRoot: true}, hookEvent("UserPromptSubmit", map[string]string{

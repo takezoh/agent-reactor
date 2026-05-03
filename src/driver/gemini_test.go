@@ -194,10 +194,10 @@ func TestGeminiPrepareLaunchSandboxedNoDuplicateYolo(t *testing.T) {
 
 func TestGeminiSessionStartSetsIdle(t *testing.T) {
 	d, gs, now := newGemini(t)
+	gs.StartDir = "/repo"
 	ev := geminiHook(map[string]string{
 		"session_id":      "sess-1",
 		"hook_event_name": "SessionStart",
-		"cwd":             "/repo",
 		"transcript_path": "/tmp/t.jsonl",
 		"source":          "startup",
 	}, now)
@@ -253,10 +253,10 @@ func TestGeminiSessionStartSetsIdle(t *testing.T) {
 
 func TestGeminiSessionStartNonRootSkipsBranchDetect(t *testing.T) {
 	d, gs, now := newGemini(t)
+	gs.StartDir = "/repo"
 	ev := geminiHook(map[string]string{
 		"session_id":      "sess-1",
 		"hook_event_name": "SessionStart",
-		"cwd":             "/repo",
 	}, now)
 	ev.RoostSessionID = "r1"
 	next, effs := d.handleHook(gs, state.FrameContext{IsRoot: false}, ev)

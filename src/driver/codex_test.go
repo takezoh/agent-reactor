@@ -35,10 +35,10 @@ func findCodexEffect[T state.Effect](effs []state.Effect) (T, bool) {
 
 func TestCodexSessionStartSetsIdle(t *testing.T) {
 	d, cs, now := newCodex(t)
+	cs.StartDir = "/repo"
 	ev := codexHook(map[string]string{
 		"session_id":      "sess-1",
 		"hook_event_name": "SessionStart",
-		"cwd":             "/repo",
 		"transcript_path": "/tmp/t.jsonl",
 		"source":          "resume",
 	}, now)
@@ -91,10 +91,10 @@ func TestCodexSessionStartSetsIdle(t *testing.T) {
 
 func TestCodexSessionStartNonRootSkipsBranchDetect(t *testing.T) {
 	d, cs, now := newCodex(t)
+	cs.StartDir = "/repo"
 	ev := codexHook(map[string]string{
 		"session_id":      "sess-1",
 		"hook_event_name": "SessionStart",
-		"cwd":             "/repo",
 		"transcript_path": "/tmp/t.jsonl",
 	}, now)
 	ev.RoostSessionID = "r1"
