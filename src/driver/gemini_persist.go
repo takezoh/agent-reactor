@@ -16,6 +16,9 @@ func (GeminiDriver) Persist(s state.DriverState) map[string]string {
 	if gs.GeminiSessionID != "" {
 		out[geminiKeyGeminiSessionID] = gs.GeminiSessionID
 	}
+	if gs.ManagedWorkingDir != "" {
+		out[geminiKeyManagedWorkingDir] = gs.ManagedWorkingDir
+	}
 	return out
 }
 
@@ -31,5 +34,6 @@ func (d GeminiDriver) Restore(bag map[string]string, now time.Time) state.Driver
 	}
 	gs.RestoreCommon(bag)
 	gs.GeminiSessionID = bag[geminiKeyGeminiSessionID]
+	gs.ManagedWorkingDir = bag[geminiKeyManagedWorkingDir]
 	return gs
 }

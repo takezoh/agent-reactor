@@ -12,14 +12,29 @@ const (
 	GeminiDriverName = "gemini"
 
 	geminiKeyGeminiSessionID     = "gemini_session_id"
+	geminiKeyManagedWorkingDir   = "managed_working_dir"
 	geminiPromptPreviewMaxLength = 80
 )
 
 type GeminiState struct {
 	CommonState
 
-	GeminiSessionID   string
-	ManagedWorkingDir string // set when roost pre-created the git worktree
+	GeminiSessionID    string
+	ManagedWorkingDir  string
+	CurrentTool        string
+	TranscriptInFlight bool
+	WatchedFile        string
+	StatusLine         string
+	RecentTurns        []SummaryTurn
+	PendingTools       map[string]geminiPendingTool
+	LastWindowTitle    string
+}
+
+type geminiPendingTool struct {
+	Name      string
+	Input     map[string]any
+	StartedAt time.Time
+	SawPrompt bool
 }
 
 type GeminiDriver struct {
@@ -123,11 +138,29 @@ func (d GeminiDriver) Step(prev state.DriverState, ctx state.FrameContext, ev st
 	case state.DEvPaneActivity:
 		effs := gs.HandleActivity(e)
 		return gs, effs, d.view(gs)
+	case state.DEvPaneOsc:
+		next := d.handleWindowTitle(gs, e.Title, e.Now)
+		return next, nil, d.view(next)
+	case state.DEvFileChanged:
+		next, effs := d.handleTranscriptChanged(gs, e)
+		return next, effs, d.view(next)
 	case state.DEvJobResult:
 		next, effs := d.handleJobResult(gs, e)
 		return next, effs, d.view(next)
+	case state.DEvStatusLineClick:
+		return gs, nil, d.view(gs)
 	}
 	return gs, nil, d.view(gs)
+}
+
+func (d GeminiDriver) WarmStartRecover(s state.DriverState, now time.Time) (state.DriverState, []state.Effect) {
+	gs, ok := s.(GeminiState)
+	if !ok {
+		gs = d.NewState(now).(GeminiState)
+	}
+	effs := watchGeminiTranscript(&gs)
+	effs = append(effs, d.startGeminiTranscriptParse(&gs)...)
+	return gs, effs
 }
 
 func parseGeminiHookPayload(payload json.RawMessage) geminiHookPayload {

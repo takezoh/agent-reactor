@@ -2,6 +2,7 @@ package driver
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,8 +177,19 @@ func TestGeminiSessionStartSetsIdle(t *testing.T) {
 	if next.StartDir != "/repo" || next.TranscriptPath != "/tmp/t.jsonl" {
 		t.Fatalf("working data not absorbed: %+v", next)
 	}
+	if next.WatchedFile != "/tmp/t.jsonl" {
+		t.Fatalf("WatchedFile = %q, want /tmp/t.jsonl", next.WatchedFile)
+	}
+	if !next.TranscriptInFlight {
+		t.Fatal("TranscriptInFlight should be true")
+	}
 	foundBranch := false
+	foundWatch := false
+	foundTranscriptParse := false
 	for _, eff := range effs {
+		if watch, ok := eff.(state.EffWatchFile); ok {
+			foundWatch = watch.Path == "/tmp/t.jsonl"
+		}
 		job, ok := eff.(state.EffStartJob)
 		if !ok {
 			continue
@@ -185,9 +197,18 @@ func TestGeminiSessionStartSetsIdle(t *testing.T) {
 		if _, ok := job.Input.(BranchDetectInput); ok {
 			foundBranch = true
 		}
+		if _, ok := job.Input.(GeminiTranscriptParseInput); ok {
+			foundTranscriptParse = true
+		}
 	}
 	if !foundBranch {
 		t.Fatal("expected BranchDetectInput job")
+	}
+	if !foundWatch {
+		t.Fatal("expected EffWatchFile")
+	}
+	if !foundTranscriptParse {
+		t.Fatal("expected GeminiTranscriptParseInput job")
 	}
 }
 
@@ -221,7 +242,7 @@ func TestGeminiSessionStartNonRootSkipsBranchDetect(t *testing.T) {
 func TestGeminiBeforeAgentTransitionsRunning(t *testing.T) {
 	d, gs, now := newGemini(t)
 	gs.GeminiSessionID = "sess-1"
-	next, _ := d.handleHook(gs, state.FrameContext{IsRoot: true}, geminiHook(map[string]string{
+	next, effs := d.handleHook(gs, state.FrameContext{IsRoot: true}, geminiHook(map[string]string{
 		"session_id":      "sess-1",
 		"hook_event_name": "BeforeAgent",
 		"prompt":          "do something",
@@ -232,6 +253,27 @@ func TestGeminiBeforeAgentTransitionsRunning(t *testing.T) {
 	if next.LastPrompt != "do something" {
 		t.Fatalf("LastPrompt = %q", next.LastPrompt)
 	}
+	if !next.SummaryInFlight {
+		t.Fatal("SummaryInFlight should be true")
+	}
+	var summaryJob SummaryCommandInput
+	foundSummary := false
+	for _, eff := range effs {
+		job, ok := eff.(state.EffStartJob)
+		if !ok {
+			continue
+		}
+		if in, ok := job.Input.(SummaryCommandInput); ok {
+			foundSummary = true
+			summaryJob = in
+		}
+	}
+	if !foundSummary {
+		t.Fatal("expected SummaryCommandInput job")
+	}
+	if !strings.Contains(summaryJob.Prompt, "do something") {
+		t.Fatalf("summary prompt missing prompt: %q", summaryJob.Prompt)
+	}
 }
 
 func TestGeminiBeforeToolTransitionsRunning(t *testing.T) {
@@ -241,22 +283,45 @@ func TestGeminiBeforeToolTransitionsRunning(t *testing.T) {
 		"session_id":      "sess-1",
 		"hook_event_name": "BeforeTool",
 		"tool_name":       "read_file",
+		"tool_use_id":     "tool-1",
 	}, now))
 	if next.Status != state.StatusRunning {
 		t.Fatalf("Status = %v, want running", next.Status)
+	}
+	if next.CurrentTool != "read_file" {
+		t.Fatalf("CurrentTool = %q, want read_file", next.CurrentTool)
 	}
 }
 
 func TestGeminiAfterToolTransitionsRunning(t *testing.T) {
 	d, gs, now := newGemini(t)
 	gs.GeminiSessionID = "sess-1"
-	next, _ := d.handleHook(gs, state.FrameContext{IsRoot: true}, geminiHook(map[string]string{
+	gs.StartDir = "/repo"
+	gs, _ = d.handleHook(gs, state.FrameContext{IsRoot: true}, geminiHook(map[string]string{
+		"session_id":      "sess-1",
+		"hook_event_name": "BeforeTool",
+		"tool_name":       "read_file",
+		"tool_use_id":     "tool-1",
+	}, now))
+	next, effs := d.handleHook(gs, state.FrameContext{IsRoot: true}, geminiHook(map[string]string{
 		"session_id":      "sess-1",
 		"hook_event_name": "AfterTool",
 		"tool_name":       "read_file",
-	}, now))
+		"tool_use_id":     "tool-1",
+	}, now.Add(2*time.Second)))
 	if next.Status != state.StatusRunning {
 		t.Fatalf("Status = %v, want running", next.Status)
+	}
+	appendEff, ok := findEffect[state.EffToolLogAppend](effs)
+	if !ok {
+		t.Fatal("expected EffToolLogAppend")
+	}
+	var entry toolLogEntry
+	if err := json.Unmarshal([]byte(appendEff.Line), &entry); err != nil {
+		t.Fatalf("unmarshal tool log: %v", err)
+	}
+	if entry.Kind != "auto" {
+		t.Fatalf("Kind = %q, want auto", entry.Kind)
 	}
 }
 
@@ -264,7 +329,8 @@ func TestGeminiAfterAgentTransitionsWaiting(t *testing.T) {
 	d, gs, now := newGemini(t)
 	gs.GeminiSessionID = "sess-1"
 	gs.Status = state.StatusRunning
-	next, _ := d.handleHook(gs, state.FrameContext{IsRoot: true}, geminiHook(map[string]string{
+	gs.TranscriptPath = "/tmp/t.jsonl"
+	next, effs := d.handleHook(gs, state.FrameContext{IsRoot: true}, geminiHook(map[string]string{
 		"session_id":      "sess-1",
 		"hook_event_name": "AfterAgent",
 		"prompt_response": "here is my answer",
@@ -275,11 +341,27 @@ func TestGeminiAfterAgentTransitionsWaiting(t *testing.T) {
 	if next.LastAssistantMessage != "here is my answer" {
 		t.Fatalf("LastAssistantMessage = %q", next.LastAssistantMessage)
 	}
+	foundTranscriptParse := false
+	for _, eff := range effs {
+		job, ok := eff.(state.EffStartJob)
+		if !ok {
+			continue
+		}
+		if _, ok := job.Input.(GeminiTranscriptParseInput); ok {
+			foundTranscriptParse = true
+		}
+	}
+	if !foundTranscriptParse {
+		t.Fatal("expected GeminiTranscriptParseInput job")
+	}
 }
 
 func TestGeminiNotificationToolPermissionTransitionsPending(t *testing.T) {
 	d, gs, now := newGemini(t)
 	gs.GeminiSessionID = "sess-1"
+	gs.PendingTools = map[string]geminiPendingTool{
+		"tool-1": {Name: "Bash", StartedAt: now.Add(-time.Second)},
+	}
 	next, effs := d.handleHook(gs, state.FrameContext{IsRoot: true}, geminiHook(map[string]string{
 		"session_id":        "sess-1",
 		"hook_event_name":   "Notification",
@@ -290,6 +372,9 @@ func TestGeminiNotificationToolPermissionTransitionsPending(t *testing.T) {
 	}
 	if _, ok := findEffect[state.EffEventLogAppend](effs); !ok {
 		t.Fatal("expected EffEventLogAppend")
+	}
+	if !next.PendingTools["tool-1"].SawPrompt {
+		t.Fatal("pending tool should be marked approved prompt")
 	}
 }
 
@@ -312,12 +397,17 @@ func TestGeminiSessionEndTransitionsStopped(t *testing.T) {
 	d, gs, now := newGemini(t)
 	gs.GeminiSessionID = "sess-1"
 	gs.Status = state.StatusWaiting
+	gs.CurrentTool = "Bash"
+	gs.PendingTools = map[string]geminiPendingTool{"tool-1": {Name: "Bash"}}
 	next, _ := d.handleHook(gs, state.FrameContext{IsRoot: true}, geminiHook(map[string]string{
 		"session_id":      "sess-1",
 		"hook_event_name": "SessionEnd",
 	}, now))
 	if next.Status != state.StatusStopped {
 		t.Fatalf("Status = %v, want stopped", next.Status)
+	}
+	if next.CurrentTool != "" || len(next.PendingTools) != 0 {
+		t.Fatalf("session end should clear tool state: %+v", next)
 	}
 }
 
@@ -380,5 +470,32 @@ func TestGeminiCapturePaneOscNotificationsBecomeEffects(t *testing.T) {
 	}
 	if notif.Title != "hello" {
 		t.Errorf("Title = %q, want hello", notif.Title)
+	}
+}
+
+func TestGeminiPersistRestoreManagedWorktree(t *testing.T) {
+	d, gs, now := newGemini(t)
+	gs.GeminiSessionID = "sess-1"
+	gs.ManagedWorkingDir = "/repo/.roost/worktrees/gemini-1234"
+
+	bag := d.Persist(gs)
+	restored := d.Restore(bag, now).(GeminiState)
+
+	if restored.ManagedWorkingDir != gs.ManagedWorkingDir {
+		t.Fatalf("ManagedWorkingDir = %q, want %q", restored.ManagedWorkingDir, gs.ManagedWorkingDir)
+	}
+}
+
+func TestGeminiWindowTitleActionRequiredTransitionsPending(t *testing.T) {
+	d, gs, now := newGemini(t)
+	gs.Status = state.StatusRunning
+
+	next := d.handleWindowTitle(gs, "[ ! ] Action Required | agent-roost", now)
+
+	if next.Status != state.StatusPending {
+		t.Fatalf("Status = %v, want pending", next.Status)
+	}
+	if next.LastWindowTitle != "[ ! ] Action Required | agent-roost" {
+		t.Fatalf("LastWindowTitle = %q", next.LastWindowTitle)
 	}
 }

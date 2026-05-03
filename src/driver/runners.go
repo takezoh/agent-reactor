@@ -27,6 +27,7 @@ func RegisterRunners(capturePaneFn func(string, int) (string, error), summarizeC
 	tp, hs := newTranscriptSummaryRunners(summarizeCmd)
 	worker.RegisterRunner("transcript_parse", tp)
 	worker.RegisterRunner("codex_transcript_parse", newCodexTranscriptParse())
+	worker.RegisterRunner("gemini_transcript_parse", newGeminiTranscriptParse())
 	worker.RegisterRunner("summary_command", hs)
 	worker.RegisterRunner("branch_detect", newBranchDetect())
 	worker.RegisterRunner("worktree_setup", newWorktreeSetup())

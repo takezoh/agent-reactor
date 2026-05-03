@@ -84,6 +84,20 @@ type CodexTranscriptParseResult struct {
 	RecentTurns          []SummaryTurn
 }
 
+type GeminiTranscriptParseInput struct {
+	SessionID state.SessionID
+	Path      string
+}
+
+type GeminiTranscriptParseResult struct {
+	Title                string
+	LastPrompt           string
+	LastAssistantMessage string
+	StatusLine           string
+	CurrentTool          string
+	RecentTurns          []SummaryTurn
+}
+
 // BranchDetectInput asks the worker to detect the current VCS branch
 // for the given working directory.
 type BranchDetectInput struct {
@@ -118,6 +132,9 @@ func (CapturePaneInput) JobKind() string     { return "capture_pane" }
 func (TranscriptParseInput) JobKind() string { return "transcript_parse" }
 func (CodexTranscriptParseInput) JobKind() string {
 	return "codex_transcript_parse"
+}
+func (GeminiTranscriptParseInput) JobKind() string {
+	return "gemini_transcript_parse"
 }
 func (SummaryCommandInput) JobKind() string { return "summary_command" }
 func (BranchDetectInput) JobKind() string   { return "branch_detect" }

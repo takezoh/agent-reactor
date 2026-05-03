@@ -190,3 +190,41 @@ func TestGeminiViewIncludesBranchTag(t *testing.T) {
 		t.Errorf("branch tag not found or mismatched: %+v", v.Card.Tags)
 	}
 }
+
+func TestGeminiWarmStartRecover(t *testing.T) {
+	d := NewGeminiDriver("/tmp/events")
+	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
+	gs := d.NewState(now).(GeminiState)
+	gs.TranscriptPath = "/tmp/t.jsonl"
+
+	nextState, effs := d.WarmStartRecover(gs, now)
+	next := nextState.(GeminiState)
+
+	if next.WatchedFile != "/tmp/t.jsonl" {
+		t.Fatalf("WatchedFile = %q, want /tmp/t.jsonl", next.WatchedFile)
+	}
+	if !next.TranscriptInFlight {
+		t.Fatal("TranscriptInFlight should be true")
+	}
+	if _, ok := effs[0].(state.EffWatchFile); !ok {
+		t.Fatalf("first effect = %T, want EffWatchFile", effs[0])
+	}
+}
+
+func TestGeminiHandleTranscriptChangedStartsParse(t *testing.T) {
+	d := NewGeminiDriver("/tmp/events")
+	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
+	gs := d.NewState(now).(GeminiState)
+	gs.TranscriptPath = "/tmp/t.jsonl"
+
+	next, effs := d.handleTranscriptChanged(gs, state.DEvFileChanged{Path: "/tmp/t.jsonl"})
+	if next.WatchedFile != "/tmp/t.jsonl" {
+		t.Fatalf("WatchedFile = %q, want /tmp/t.jsonl", next.WatchedFile)
+	}
+	if !next.TranscriptInFlight {
+		t.Fatal("expected TranscriptInFlight")
+	}
+	if _, ok := effs[0].(state.EffWatchFile); !ok {
+		t.Fatalf("first effect = %T, want EffWatchFile", effs[0])
+	}
+}

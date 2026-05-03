@@ -3,6 +3,7 @@ package driver
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/takezoh/agent-roost/state"
 )
@@ -17,6 +18,8 @@ type geminiHookPayload struct {
 	Prompt           string         `json:"prompt"`
 	ToolName         string         `json:"tool_name"`
 	ToolInput        map[string]any `json:"tool_input"`
+	ToolUseID        string         `json:"tool_use_id"`
+	PermissionMode   string         `json:"permission_mode"`
 	PromptResponse   string         `json:"prompt_response"`
 	StopReason       string         `json:"stop_reason"`
 }
@@ -27,24 +30,6 @@ func (hp geminiHookPayload) toolInputString(key string) string {
 	}
 	v, _ := hp.ToolInput[key].(string)
 	return v
-}
-
-func (hp geminiHookPayload) deriveStatus() (state.Status, bool) {
-	switch hp.HookEventName {
-	case "BeforeAgent", "BeforeTool", "AfterTool":
-		return state.StatusRunning, true
-	case "AfterAgent":
-		return state.StatusWaiting, true
-	case "SessionStart":
-		return state.StatusIdle, true
-	case "Notification":
-		if hp.NotificationType == "ToolPermission" {
-			return state.StatusPending, true
-		}
-	case "SessionEnd":
-		return state.StatusStopped, true
-	}
-	return 0, false
 }
 
 func (hp geminiHookPayload) formatLog() string {
@@ -79,6 +64,18 @@ func (hp geminiHookPayload) formatLog() string {
 	return eventLogLine(name, detail)
 }
 
+func (d GeminiDriver) handleWindowTitle(gs GeminiState, title string, now time.Time) GeminiState {
+	if title == gs.LastWindowTitle {
+		return gs
+	}
+	gs.LastWindowTitle = title
+	if codexTitleNeedsUserAction(title) && gs.Status != state.StatusPending {
+		gs.Status = state.StatusPending
+		gs.StatusChangedAt = statusTime(now, gs.StatusChangedAt)
+	}
+	return gs
+}
+
 func (d GeminiDriver) handleHook(gs GeminiState, ctx state.FrameContext, e state.DEvHook) (GeminiState, []state.Effect) {
 	hp := parseGeminiHookPayload(e.Payload)
 	preamble := hookPreamble{
@@ -97,45 +94,202 @@ func (d GeminiDriver) handleHook(gs GeminiState, ctx state.FrameContext, e state
 		return gs, nil
 	}
 
-	var effs []state.Effect
+	effs := watchGeminiTranscript(&gs)
 
-	// Update Status
-	if status, ok := hp.deriveStatus(); ok {
-		gs.Status = status
+	switch hp.HookEventName {
+	case "SessionStart":
+		gs.PendingTools = nil
+		gs.CurrentTool = ""
+		gs.Status = state.StatusIdle
 		gs.StatusChangedAt = statusTime(e.Timestamp, gs.StatusChangedAt)
-	}
-
-	// Session Start specific work
-	if hp.HookEventName == "SessionStart" && ctx.IsRoot {
-		target := gs.StartDir
-		if target != "" && !gs.BranchInFlight {
+		effs = append(effs, d.startGeminiTranscriptParse(&gs)...)
+		if target := gs.StartDir; target != "" && !gs.BranchInFlight {
 			gs.BranchInFlight = true
 			gs.BranchTarget = target
-			effs = append(effs, state.EffStartJob{
-				Input: BranchDetectInput{WorkingDir: target},
-			})
+			effs = append(effs, state.EffStartJob{Input: BranchDetectInput{WorkingDir: target}})
 		}
-	}
-
-	// Capture messages for UI subtitle
-	if hp.HookEventName == "BeforeAgent" {
+	case "BeforeAgent":
 		gs.LastPrompt = strings.TrimSpace(hp.Prompt)
-	}
-	if hp.HookEventName == "AfterAgent" {
+		gs.Status = state.StatusRunning
+		gs.StatusChangedAt = statusTime(e.Timestamp, gs.StatusChangedAt)
+		turns := recentUserTurns(appendHookPromptTurn(gs.RecentTurns, hp.Prompt), 2)
+		effs, gs.SummaryInFlight = enqueueSummaryJob(effs, gs.SummaryInFlight, formatSummaryPrompt(gs.Summary, turns))
+	case "BeforeTool":
+		gs.CurrentTool = strings.TrimSpace(hp.ToolName)
+		gs.Status = state.StatusRunning
+		gs.StatusChangedAt = statusTime(e.Timestamp, gs.StatusChangedAt)
+		gs = handleGeminiPendingTool(gs, hp, e.Timestamp)
+	case "AfterTool":
+		gs.Status = state.StatusRunning
+		gs.StatusChangedAt = statusTime(e.Timestamp, gs.StatusChangedAt)
+		gs, effs = d.emitGeminiToolLog(gs, hp, e.Timestamp, effs)
+	case "AfterAgent":
 		if msg := strings.TrimSpace(hp.PromptResponse); msg != "" {
 			gs.LastAssistantMessage = msg
 		}
+		gs.CurrentTool = ""
+		gs.PendingTools = nil
+		gs.Status = state.StatusWaiting
+		gs.StatusChangedAt = statusTime(e.Timestamp, gs.StatusChangedAt)
+		effs = append(effs, d.startGeminiTranscriptParse(&gs)...)
+	case "Notification":
+		if hp.NotificationType == "ToolPermission" {
+			gs = markGeminiPermissionPrompt(gs)
+			gs.Status = state.StatusPending
+			gs.StatusChangedAt = statusTime(e.Timestamp, gs.StatusChangedAt)
+		}
+	case "SessionEnd":
+		gs.CurrentTool = ""
+		gs.PendingTools = nil
+		gs.Status = state.StatusStopped
+		gs.StatusChangedAt = statusTime(e.Timestamp, gs.StatusChangedAt)
 	}
 
-	line := strings.TrimSpace(hp.formatLog())
-	if line != "" {
+	if line := strings.TrimSpace(hp.formatLog()); line != "" {
 		effs = append(effs, state.EffEventLogAppend{Line: line})
 	}
 	return gs, effs
 }
 
+func handleGeminiPendingTool(gs GeminiState, hp geminiHookPayload, now time.Time) GeminiState {
+	if hp.ToolUseID == "" || hp.ToolName == "" {
+		return gs
+	}
+	if gs.PendingTools == nil {
+		gs.PendingTools = make(map[string]geminiPendingTool)
+	}
+	gs.PendingTools[hp.ToolUseID] = geminiPendingTool{
+		Name:      hp.ToolName,
+		Input:     hp.ToolInput,
+		StartedAt: now,
+	}
+	return gs
+}
+
+func markGeminiPermissionPrompt(gs GeminiState) GeminiState {
+	var oldestID string
+	var oldestTS time.Time
+	for id, p := range gs.PendingTools {
+		if p.SawPrompt {
+			continue
+		}
+		if oldestID == "" || p.StartedAt.Before(oldestTS) {
+			oldestID = id
+			oldestTS = p.StartedAt
+		}
+	}
+	if oldestID == "" {
+		return gs
+	}
+	entry := gs.PendingTools[oldestID]
+	entry.SawPrompt = true
+	gs.PendingTools[oldestID] = entry
+	return gs
+}
+
+func (d GeminiDriver) emitGeminiToolLog(gs GeminiState, hp geminiHookPayload, now time.Time, effs []state.Effect) (GeminiState, []state.Effect) {
+	var (
+		kind       string
+		durationMs int64
+		toolInput  map[string]any
+	)
+	if hp.ToolUseID == "" {
+		kind = "auto"
+		toolInput = hp.ToolInput
+	} else if entry, ok := gs.PendingTools[hp.ToolUseID]; ok {
+		delete(gs.PendingTools, hp.ToolUseID)
+		if entry.SawPrompt {
+			kind = "approved"
+		} else {
+			kind = "auto"
+		}
+		toolInput = entry.Input
+		if !entry.StartedAt.IsZero() && !now.IsZero() {
+			durationMs = now.Sub(entry.StartedAt).Milliseconds()
+		}
+	} else {
+		kind = "orphan"
+		toolInput = hp.ToolInput
+	}
+	project := gs.Project
+	if project == "" {
+		project = gs.StartDir
+	}
+	slug := resolveProjectSlug(project)
+	if slug == "" || hp.ToolName == "" {
+		return gs, effs
+	}
+	line := buildToolLogLine(toolLogEntry{
+		TS:             now,
+		RoostSessionID: gs.RoostSessionID,
+		ToolUseID:      hp.ToolUseID,
+		ToolName:       hp.ToolName,
+		Kind:           kind,
+		PermissionMode: hp.PermissionMode,
+		DurationMs:     durationMs,
+		ToolInput:      summariseToolInput(hp.ToolName, toolInput),
+	})
+	effs = append(effs, state.EffToolLogAppend{
+		Namespace: GeminiDriverName,
+		Project:   slug,
+		Line:      line,
+	})
+	return gs, effs
+}
+
+func (d GeminiDriver) handleTranscriptChanged(gs GeminiState, e state.DEvFileChanged) (GeminiState, []state.Effect) {
+	if gs.TranscriptPath != "" && e.Path != "" && gs.TranscriptPath != e.Path {
+		return gs, nil
+	}
+	effs := watchGeminiTranscript(&gs)
+	effs = append(effs, d.startGeminiTranscriptParse(&gs)...)
+	return gs, effs
+}
+
+func (d GeminiDriver) startGeminiTranscriptParse(gs *GeminiState) []state.Effect {
+	if gs.TranscriptInFlight || gs.TranscriptPath == "" {
+		return nil
+	}
+	gs.TranscriptInFlight = true
+	return []state.Effect{
+		state.EffStartJob{
+			Input: GeminiTranscriptParseInput{Path: gs.TranscriptPath},
+		},
+	}
+}
+
+func watchGeminiTranscript(gs *GeminiState) []state.Effect {
+	if gs.TranscriptPath == "" || gs.WatchedFile == gs.TranscriptPath {
+		return nil
+	}
+	gs.WatchedFile = gs.TranscriptPath
+	return []state.Effect{state.EffWatchFile{Path: gs.TranscriptPath, Kind: "transcript"}}
+}
+
 func (d GeminiDriver) handleJobResult(gs GeminiState, e state.DEvJobResult) (GeminiState, []state.Effect) {
+	if summary, inFlight, ok := applySummaryJobResult(gs.Summary, gs.SummaryInFlight, e); ok {
+		gs.Summary = summary
+		gs.SummaryInFlight = inFlight
+		return gs, nil
+	}
 	switch r := e.Result.(type) {
+	case GeminiTranscriptParseResult:
+		gs.TranscriptInFlight = false
+		if e.Err != nil {
+			return gs, nil
+		}
+		if r.Title != "" {
+			gs.Title = r.Title
+		}
+		if r.LastPrompt != "" {
+			gs.LastPrompt = r.LastPrompt
+		}
+		if r.LastAssistantMessage != "" {
+			gs.LastAssistantMessage = r.LastAssistantMessage
+		}
+		gs.StatusLine = r.StatusLine
+		gs.RecentTurns = r.RecentTurns
+		gs.CurrentTool = r.CurrentTool
 	case BranchDetectResult:
 		gs.BranchInFlight = false
 		if e.Err != nil || r.Branch == "" {

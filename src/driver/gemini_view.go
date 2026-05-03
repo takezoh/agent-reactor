@@ -9,23 +9,39 @@ func (d GeminiDriver) view(gs GeminiState) state.View {
 	tags := CommonTags(gs.CommonState)
 
 	var tabs []state.LogTab
+	if gs.TranscriptPath != "" {
+		tabs = append(tabs, state.LogTab{
+			Label: "TRANSCRIPT",
+			Path:  gs.TranscriptPath,
+			Kind:  state.TabKindText,
+		})
+	}
 	if tab := EventLogTab(gs.CommonState, d.eventLogDir); tab != nil {
 		tabs = append(tabs, *tab)
 	}
 
 	return state.View{
 		Card: state.Card{
-			Subtitle:    firstNonEmpty(gs.LastPrompt, gs.LastAssistantMessage),
+			Subtitle:    firstNonEmpty(gs.Summary, gs.LastPrompt, gs.LastAssistantMessage),
 			Tags:        tags,
+			Indicators:  geminiIndicators(gs),
 			BorderTitle: GeminiCommandTag(),
 			BorderBadge: fishpath.Shorten(gs.StartDir, ""),
 		},
 		DisplayName:     GeminiDriverName,
 		LogTabs:         tabs,
 		InfoExtras:      geminiInfoExtras(gs),
+		StatusLine:      gs.StatusLine,
 		Status:          gs.Status,
 		StatusChangedAt: gs.StatusChangedAt,
 	}
+}
+
+func geminiIndicators(gs GeminiState) []string {
+	if gs.CurrentTool == "" {
+		return nil
+	}
+	return []string{"▸ " + gs.CurrentTool}
 }
 
 func geminiInfoExtras(gs GeminiState) []state.InfoLine {
@@ -37,10 +53,14 @@ func geminiInfoExtras(gs GeminiState) []state.InfoLine {
 	}
 	add("Gemini Session", gs.GeminiSessionID)
 	add("Working Dir", gs.StartDir)
+	add("Managed Worktree", gs.ManagedWorkingDir)
+	add("Current Tool", gs.CurrentTool)
 	if gs.BranchIsWorktree {
 		add("Parent Branch", gs.BranchParentBranch)
 	}
 	add("Transcript", gs.TranscriptPath)
+	add("Summary", gs.Summary)
+	add("Status Line", gs.StatusLine)
 	add("Last Prompt", previewText(gs.LastPrompt))
 	add("Last Assistant", previewText(gs.LastAssistantMessage))
 	add("Last Hook", gs.LastHookEvent)
