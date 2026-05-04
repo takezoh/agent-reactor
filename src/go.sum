@@ -646,12 +646,6 @@ github.com/subosito/gotenv v1.4.1 h1:jyEFiXpy21Wm81FBN71l9VoMMV8H8jG+qIK3GCpY6Qs
 github.com/subosito/gotenv v1.4.1/go.mod h1:ayKnFf/c6rvx/2iiLrJUk1e6plDbT3edrFNGqEflhK0=
 github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd h1:Rf9uhF1+VJ7ZHqxrG8pJ6YacmHvVCmByDmGbAWCc/gA=
 github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd/go.mod h1:EbW0wDK/qEUYI0A5bqq0C2kF8JTQwWONmGDBbzsxxHo=
-github.com/takezoh/credproxy v0.0.0-20260501173832-b99dd6135de0 h1:JCCKGmspzAed2dU8jbBurgAUi0G41eoHaVXz1QzVQAM=
-github.com/takezoh/credproxy v0.0.0-20260501173832-b99dd6135de0/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
-github.com/takezoh/credproxy v0.0.0-20260502100716-ead03ed54cae h1:516wwKnkJaD86YmQdxDWu6keQ6JpJf4B/zqt0B6mKGs=
-github.com/takezoh/credproxy v0.0.0-20260502100716-ead03ed54cae/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
-github.com/takezoh/credproxy v0.0.0-20260503084904-f60aff1a04fc h1:tAuhndHvL1NQiDaXRJAvtnxy76zarB+tKW10uYKP8WQ=
-github.com/takezoh/credproxy v0.0.0-20260503084904-f60aff1a04fc/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
 github.com/takezoh/fishpath-go v0.1.0 h1:50mRtsddcLxhqWHymJDyL8+Ja9yyjbFIncis1nIttts=
 github.com/takezoh/fishpath-go v0.1.0/go.mod h1:74mSi4sk/bOHk8zJmDOQ90WKaxhDNG51icC/P/VolPc=
 github.com/tenntenn/modver v1.0.1 h1:2klLppGhDgzJrScMpkj9Ujy3rXPUspSjAcev9tSEBgA=

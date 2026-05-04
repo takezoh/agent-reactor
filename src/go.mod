@@ -265,4 +265,6 @@ require (
 	mvdan.cc/unparam v0.0.0-20251027182757-5beb8c8f8f15 // indirect
 )
 
+replace github.com/takezoh/credproxy => /workspace/credproxy
+
 tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint

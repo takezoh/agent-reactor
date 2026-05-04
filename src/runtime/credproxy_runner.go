@@ -76,6 +76,11 @@ func StartCredProxy(ctx context.Context, dataDir string, resolveSandbox func(str
 	}
 
 	for _, p := range providers {
+		if r, ok := p.(container.PeriodicRegistrar); ok {
+			r.RegisterPeriodic(srv)
+		}
+	}
+	for _, p := range providers {
 		if err := p.Init(); err != nil {
 			return nil, fmt.Errorf("credproxy: provider %s init: %w", p.Name(), err)
 		}
