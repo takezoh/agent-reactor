@@ -16,7 +16,7 @@ require (
 	github.com/sahilm/fuzzy v0.1.1
 	github.com/stretchr/testify v1.11.1
 	github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd
-	github.com/takezoh/credproxy v0.0.0-20260504022500-2857445b0060
+	github.com/takezoh/credproxy v0.0.0-20260505054453-843a4461ad62
 	github.com/takezoh/fishpath-go v0.1.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/term v0.41.0

@@ -104,7 +104,7 @@ Two modes, selected by the presence of `service_account`. Both require `account`
 | field | required | description |
 |-------|----------|-------------|
 | `account` | yes | host gcloud principal whose credentials are used |
-| `active` | yes | default project inside the container |
+| `active` | yes | GCP project ID used as the container's default project |
 | `service_account` | SA mode only | SA email to impersonate |
 | `projects` | SA mode only | all project IDs available in the container |
 

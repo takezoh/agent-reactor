@@ -650,6 +650,8 @@ github.com/takezoh/credproxy v0.0.0-20260504020020-c81353bc8c87 h1:VjTkBNzjiHMPK
 github.com/takezoh/credproxy v0.0.0-20260504020020-c81353bc8c87/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
 github.com/takezoh/credproxy v0.0.0-20260504022500-2857445b0060 h1:jC5iArh4Fl9GGrZUHWYtiQL35SomD0/8nuzdkLwaocA=
 github.com/takezoh/credproxy v0.0.0-20260504022500-2857445b0060/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
+github.com/takezoh/credproxy v0.0.0-20260505054453-843a4461ad62 h1:7DDDv5sfP6zK+kNnkwkgaUIWJn8T0LZt2oMeuSLOkPc=
+github.com/takezoh/credproxy v0.0.0-20260505054453-843a4461ad62/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
 github.com/takezoh/fishpath-go v0.1.0 h1:50mRtsddcLxhqWHymJDyL8+Ja9yyjbFIncis1nIttts=
 github.com/takezoh/fishpath-go v0.1.0/go.mod h1:74mSi4sk/bOHk8zJmDOQ90WKaxhDNG51icC/P/VolPc=
 github.com/tenntenn/modver v1.0.1 h1:2klLppGhDgzJrScMpkj9Ujy3rXPUspSjAcev9tSEBgA=
