@@ -66,6 +66,10 @@ func TestCompileGlob(t *testing.T) {
 		{"gh * delete*", "gh repo delete", true},
 		{"gh * delete*", "gh repo delete --confirm", true},
 		{"gh * delete*", "gh repo view", false},
+		// * must match newlines so that multi-line commit messages (e.g. -c=...\n...)
+		// are covered by a simple "cmd *" pattern.
+		{"plastic.exe *", "plastic.exe ci 'foo'\n'-c=line1\nline2'", true},
+		{"gh pr *", "gh pr create --body 'multi\nline'", true},
 	}
 	for _, c := range cases {
 		re, err := globutil.CompileGlob(c.pattern)

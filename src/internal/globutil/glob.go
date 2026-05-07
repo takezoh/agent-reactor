@@ -13,5 +13,5 @@ func CompileGlob(pattern string) (*regexp.Regexp, error) {
 	for i, p := range parts {
 		quoted[i] = regexp.QuoteMeta(p)
 	}
-	return regexp.Compile(`\A` + strings.Join(quoted, `.*`) + `\z`)
+	return regexp.Compile(`(?s)\A` + strings.Join(quoted, `.*`) + `\z`)
 }
