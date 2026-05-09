@@ -111,14 +111,14 @@ type EvConnClosed struct {
 // === Timer / I/O feedback ===
 
 // EvTick is the periodic tick fired by runtime's ticker. Drivers run
-// their Step{DEvTick} on every tick. PaneTargets maps each SessionID
+// their Step{DEvTick} on every tick. PaneTargets maps each FrameID
 // to its tmux pane id (e.g. "%5"), pre-filled by the runtime so reducers
 // can forward it to drivers without touching the runtime directly.
 // N is a monotonic counter used for effect bucketing (gate expensive
 // effects to every N-th tick rather than every tick).
 type EvTick struct {
 	Now         time.Time
-	PaneTargets map[SessionID]string
+	PaneTargets map[FrameID]string
 	N           uint64
 }
 

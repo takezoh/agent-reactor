@@ -213,10 +213,10 @@ type ProjectsConfig struct {
 
 func LoadFrom(path string) (*Config, error) {
 	cfg := DefaultConfig()
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return cfg, nil
-	}
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
+		if os.IsNotExist(err) {
+			return cfg, nil
+		}
 		return nil, err
 	}
 	if err := cfg.Notifications.Validate(); err != nil {

@@ -360,13 +360,13 @@ func (r *Runtime) dispatch(ev state.Event) {
 // snapshotPaneTargets returns a copy of sessionPanes for inclusion in
 // EvTick so reducers can forward pane targets to drivers without
 // accessing the runtime directly.
-func (r *Runtime) snapshotPaneTargets() map[state.SessionID]string {
+func (r *Runtime) snapshotPaneTargets() map[state.FrameID]string {
 	if len(r.sessionPanes) == 0 {
 		return nil
 	}
-	out := make(map[state.SessionID]string, len(r.sessionPanes))
+	out := make(map[state.FrameID]string, len(r.sessionPanes))
 	for k, v := range r.sessionPanes {
-		out[state.SessionID(k)] = v
+		out[k] = v
 	}
 	return out
 }

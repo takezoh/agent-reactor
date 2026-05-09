@@ -8,14 +8,6 @@ import (
 	"github.com/takezoh/agent-roost/state"
 )
 
-func (hp codexHookPayload) toolInputString(key string) string {
-	if hp.ToolInput == nil {
-		return ""
-	}
-	v, _ := hp.ToolInput[key].(string)
-	return v
-}
-
 func (hp codexHookPayload) formatLog() string {
 	name := hp.HookEventName
 	detail := ""
@@ -28,9 +20,9 @@ func (hp codexHookPayload) formatLog() string {
 		}
 	case "PreToolUse", "PostToolUse", "PostToolUseFailure":
 		detail = strings.TrimSpace(hp.ToolName)
-		if cmd := hp.toolInputString("command"); cmd != "" {
+		if cmd := toolInputString(hp.ToolInput, "command"); cmd != "" {
 			detail = strings.TrimSpace(fmt.Sprintf(`%s cmd="%s"`, detail, previewText(cmd)))
-		} else if path := hp.toolInputString("file_path"); path != "" {
+		} else if path := toolInputString(hp.ToolInput, "file_path"); path != "" {
 			detail = strings.TrimSpace(fmt.Sprintf(`%s path="%s"`, detail, previewText(path)))
 		}
 	case "Stop":

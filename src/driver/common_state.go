@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/takezoh/agent-roost/state"
@@ -268,4 +269,22 @@ func eventLogLine(name, detail string) string {
 		return "[event:" + name + "]"
 	}
 	return "[event:" + name + "] " + detail
+}
+
+// toolInputString extracts a string value from a hook payload's tool_input map.
+func toolInputString(input map[string]any, key string) string {
+	if input == nil {
+		return ""
+	}
+	v, _ := input[key].(string)
+	return v
+}
+
+// parsePayload deserializes a JSON hook payload into T.
+func parsePayload[T any](payload json.RawMessage) T {
+	var hp T
+	if len(payload) > 0 {
+		_ = json.Unmarshal(payload, &hp)
+	}
+	return hp
 }

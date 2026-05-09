@@ -85,7 +85,10 @@ type Connector interface {
 }
 
 // connector registry. Set once at init time by each connector impl.
-var connectorRegistry = map[string]Connector{}
+var (
+	connectorRegistry    = map[string]Connector{}
+	connectorsSortedOnce []Connector // cached sorted slice, built on first AllConnectors call
+)
 
 // RegisterConnector adds a Connector to the registry under its Name().
 // Panics on duplicate names.
@@ -95,6 +98,7 @@ func RegisterConnector(c Connector) {
 		panic("state: duplicate connector registration: " + name)
 	}
 	connectorRegistry[name] = c
+	connectorsSortedOnce = nil // invalidate cache
 }
 
 // GetConnector returns the Connector for the given name, or nil.
@@ -103,10 +107,14 @@ func GetConnector(name string) Connector {
 }
 
 // AllConnectors returns all registered connectors sorted by name
-// for stable iteration order.
+// for stable iteration order. The result is cached after the first call
+// since the registry is only populated at init time.
 func AllConnectors() []Connector {
 	if len(connectorRegistry) == 0 {
 		return nil
+	}
+	if connectorsSortedOnce != nil && len(connectorsSortedOnce) == len(connectorRegistry) {
+		return connectorsSortedOnce
 	}
 	names := make([]string, 0, len(connectorRegistry))
 	for name := range connectorRegistry {
@@ -117,5 +125,6 @@ func AllConnectors() []Connector {
 	for i, name := range names {
 		out[i] = connectorRegistry[name]
 	}
+	connectorsSortedOnce = out
 	return out
 }

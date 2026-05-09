@@ -41,15 +41,12 @@ func (r *SandboxResolver) Resolve(projectPath string) SandboxConfig {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if entry, ok := r.cache[projectPath]; ok {
-		if entry.settingsPath != "" {
-			info, err := os.Stat(entry.settingsPath)
-			if err == nil && info.ModTime().Equal(entry.mtime) {
-				return entry.resolved
-			}
-		} else if findProjectSettings(projectPath) == "" {
-			return r.user
+	if entry, ok := r.cache[projectPath]; ok && entry.settingsPath != "" {
+		info, err := os.Stat(entry.settingsPath)
+		if err == nil && info.ModTime().Equal(entry.mtime) {
+			return entry.resolved
 		}
+		// File changed or disappeared; fall through to re-read.
 	}
 
 	settingsPath := findProjectSettings(projectPath)

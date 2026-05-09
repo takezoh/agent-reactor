@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"maps"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/takezoh/agent-roost/features"
@@ -40,7 +42,7 @@ func (m Model) handleServerEvent(ev proto.ServerEvent) (tea.Model, tea.Cmd) {
 		m.activeOccupant = e.ActiveOccupant
 		if len(e.Features) > 0 {
 			next := features.FromConfig(stringSliceToMap(e.Features), features.All())
-			if !featureSetsEqual(m.features, next) {
+			if !maps.Equal(m.features, next) {
 				m.features = next
 				m.registry = tools.DefaultRegistry(next)
 			}
@@ -119,15 +121,3 @@ func stringSliceToMap(names []string) map[string]bool {
 	return m
 }
 
-// featureSetsEqual reports whether two feature sets have the same enabled flags.
-func featureSetsEqual(a, b features.Set) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
-}

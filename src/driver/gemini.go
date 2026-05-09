@@ -11,9 +11,8 @@ import (
 const (
 	GeminiDriverName = "gemini"
 
-	geminiKeyGeminiSessionID     = "gemini_session_id"
-	geminiKeyManagedWorkingDir   = "managed_working_dir"
-	geminiPromptPreviewMaxLength = 80
+	geminiKeyGeminiSessionID   = "gemini_session_id"
+	geminiKeyManagedWorkingDir = "managed_working_dir"
 )
 
 type GeminiState struct {
@@ -164,10 +163,5 @@ func (d GeminiDriver) WarmStartRecover(s state.DriverState, now time.Time) (stat
 }
 
 func parseGeminiHookPayload(payload json.RawMessage) geminiHookPayload {
-	if len(payload) == 0 {
-		return geminiHookPayload{}
-	}
-	var hp geminiHookPayload
-	_ = json.Unmarshal(payload, &hp)
-	return hp
+	return parsePayload[geminiHookPayload](payload)
 }

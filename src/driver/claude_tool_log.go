@@ -218,7 +218,7 @@ func (d ClaudeDriver) emitToolLog(cs ClaudeState, hp hookPayload, now time.Time,
 		Error:           hp.Error,
 	})
 
-	return cs, []state.Effect{state.EffToolLogAppend{Namespace: "claude", Project: slug, Line: line}}
+	return cs, []state.Effect{state.EffToolLogAppend{Namespace: ClaudeDriverName, Project: slug, Line: line}}
 }
 
 func truncValue(v any) any {

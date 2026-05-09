@@ -15,7 +15,7 @@ func reduceTick(s State, e EvTick) (State, []Effect) {
 			Now:        e.Now,
 			Active:     active,
 			Project:    frame.Project,
-			PaneTarget: e.PaneTargets[SessionID(frame.ID)],
+			PaneTarget: e.PaneTargets[frame.ID],
 			N:          e.N,
 			Seq:        seq,
 		}

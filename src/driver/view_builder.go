@@ -40,7 +40,6 @@ func firstNonEmpty(candidates ...string) string {
 // previewText truncates long text for display in info lines.
 func previewText(text string) string {
 	const max = 80
-	// Simple truncation; could be improved with ellipsis if needed.
 	if len(text) > max {
 		return text[:max] + "..."
 	}

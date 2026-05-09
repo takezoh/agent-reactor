@@ -1,8 +1,5 @@
 package driver
 
-import (
-	"github.com/takezoh/agent-roost/state"
-)
 
 // Job input/output types passed through state.EffStartJob.Input and
 // state.EvJobResult.Result. Defined here (driver pkg) because both
@@ -36,7 +33,6 @@ type SummaryTurn struct {
 // JSONL file. The worker maintains its own per-session Tracker and
 // returns only the new content (deltas).
 type TranscriptParseInput struct {
-	SessionID  state.SessionID
 	ClaudeUUID string
 	Path       string
 }
@@ -54,8 +50,7 @@ type TranscriptParseResult struct {
 }
 
 type CodexTranscriptParseInput struct {
-	SessionID state.SessionID
-	Path      string
+	Path string
 }
 
 type CodexTranscriptParseResult struct {
@@ -67,8 +62,7 @@ type CodexTranscriptParseResult struct {
 }
 
 type GeminiTranscriptParseInput struct {
-	SessionID state.SessionID
-	Path      string
+	Path string
 }
 
 type GeminiTranscriptParseResult struct {

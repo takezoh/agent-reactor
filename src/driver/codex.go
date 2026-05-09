@@ -11,10 +11,9 @@ import (
 const (
 	CodexDriverName = "codex"
 
-	codexKeyCodexSessionID      = "codex_session_id"
-	codexKeyManagedWorkingDir   = "managed_working_dir"
-	codexPromptPreviewMaxLength = 80
-	codexSandboxYoloFlag        = "--yolo"
+	codexKeyCodexSessionID    = "codex_session_id"
+	codexKeyManagedWorkingDir = "managed_working_dir"
+	codexSandboxYoloFlag      = "--yolo"
 )
 
 type CodexState struct {
@@ -152,12 +151,7 @@ func hasResumeToken(command string) bool {
 }
 
 func parseCodexHookPayload(payload json.RawMessage) codexHookPayload {
-	if len(payload) == 0 {
-		return codexHookPayload{}
-	}
-	var hp codexHookPayload
-	_ = json.Unmarshal(payload, &hp)
-	return hp
+	return parsePayload[codexHookPayload](payload)
 }
 
 func (d CodexDriver) Step(prev state.DriverState, ctx state.FrameContext, ev state.DriverEvent) (state.DriverState, []state.Effect, state.View) {

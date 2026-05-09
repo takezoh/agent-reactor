@@ -37,14 +37,6 @@ type hookPayload struct {
 	IsInterrupt    bool   `json:"is_interrupt"`
 }
 
-func (hp hookPayload) toolInputString(key string) string {
-	if hp.ToolInput == nil {
-		return ""
-	}
-	v, _ := hp.ToolInput[key].(string)
-	return v
-}
-
 // deriveState maps the hook_event_name to a roost status string.
 // Must stay in sync with lib/claude/hookevent.HookEvent.DeriveState.
 func (hp hookPayload) deriveState() string {
@@ -83,16 +75,13 @@ func (hp hookPayload) formatLog() string {
 		detail = hp.ToolName
 		switch hp.ToolName {
 		case "Bash":
-			if cmd := hp.toolInputString("command"); cmd != "" {
-				if len(cmd) > 80 {
-					cmd = cmd[:77] + "..."
-				}
-				detail += " " + cmd
+			if cmd := toolInputString(hp.ToolInput, "command"); cmd != "" {
+				detail += " " + previewText(cmd)
 			}
 		case "Read", "Write", "Edit", "Glob":
-			if fp := hp.toolInputString("file_path"); fp != "" {
+			if fp := toolInputString(hp.ToolInput, "file_path"); fp != "" {
 				detail += " " + fp
-			} else if p := hp.toolInputString("pattern"); p != "" {
+			} else if p := toolInputString(hp.ToolInput, "pattern"); p != "" {
 				detail += " " + p
 			}
 		}
@@ -112,12 +101,7 @@ func (hp hookPayload) logEffects() []state.Effect {
 }
 
 func parseHookPayload(payload json.RawMessage) hookPayload {
-	if len(payload) == 0 {
-		return hookPayload{}
-	}
-	var hp hookPayload
-	_ = json.Unmarshal(payload, &hp)
-	return hp
+	return parsePayload[hookPayload](payload)
 }
 
 // handleHook parses the raw JSON from the bridge and dispatches by
@@ -288,10 +272,8 @@ func (d ClaudeDriver) handleUserPromptSubmit(cs ClaudeState, hp hookPayload, now
 	if !now.IsZero() {
 		cs.StatusChangedAt = now
 	}
-	if status, ok := state.ParseStatus("running"); ok {
-		cs.Status = status
-		cs.StatusChangedAt = now
-	}
+	cs.Status = state.StatusRunning
+	cs.StatusChangedAt = now
 
 	if hp.Prompt != "" {
 		cs.LastPrompt = hp.Prompt

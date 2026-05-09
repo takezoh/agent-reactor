@@ -39,10 +39,10 @@ const MaxWorkspaceNameLen = 64
 // Parse errors are returned as-is.
 func LoadProjectFrom(path string) (*ProjectConfig, error) {
 	cfg := &ProjectConfig{}
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return cfg, nil
-	}
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
+		if os.IsNotExist(err) {
+			return cfg, nil
+		}
 		return nil, err
 	}
 	if cfg.Sandbox != nil {

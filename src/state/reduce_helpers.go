@@ -3,6 +3,7 @@ package state
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"slices"
 )
 
 // Reducer helpers shared by reduce_*.go files. These are pure
@@ -354,7 +355,7 @@ func stepActiveSessions(s State, makeEv func(sessID SessionID, sess Session, act
 	for id := range s.Sessions {
 		ids = append(ids, id)
 	}
-	sortSessionIDs(ids)
+	slices.Sort(ids)
 	var effs []Effect
 	changed := false
 	for _, sessID := range ids {
@@ -380,14 +381,6 @@ func stepActiveSessions(s State, makeEv func(sessID SessionID, sess Session, act
 		}
 	}
 	return s, effs, changed
-}
-
-func sortSessionIDs(ids []SessionID) {
-	for i := 1; i < len(ids); i++ {
-		for j := i; j > 0 && ids[j] < ids[j-1]; j-- {
-			ids[j], ids[j-1] = ids[j-1], ids[j]
-		}
-	}
 }
 
 // errResp wraps a typed error code + message into an EffSendError
