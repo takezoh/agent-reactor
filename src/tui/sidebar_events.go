@@ -120,4 +120,3 @@ func stringSliceToMap(names []string) map[string]bool {
 	}
 	return m
 }
-

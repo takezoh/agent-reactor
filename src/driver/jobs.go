@@ -1,6 +1,5 @@
 package driver
 
-
 // Job input/output types passed through state.EffStartJob.Input and
 // state.EvJobResult.Result. Defined here (driver pkg) because both
 // drivers and worker pool implementations import this package.
