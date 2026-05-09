@@ -16,7 +16,7 @@ import (
 // PaletteContext holds per-invocation state for gating tool visibility.
 // Evaluated fresh each time the palette opens, unlike static feature flags.
 type PaletteContext struct {
-	// ActiveOccupant=="main" and an active session exists.
+	// ActiveOccupant=="frame" and an active session exists.
 	MainHasDriverFrame bool
 }
 

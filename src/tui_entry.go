@@ -168,7 +168,7 @@ func runPalette(args []string) error { //nolint:funlen
 		slog.Warn("palette: ListSessions failed", "err", err)
 	}
 
-	mainHasDriver := activeID != "" && activeOccupant == "main"
+	mainHasDriver := activeID != "" && activeOccupant == proto.OccupantFrame
 
 	var activeProject string
 	if activeID != "" {
