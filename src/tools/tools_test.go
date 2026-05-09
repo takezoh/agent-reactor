@@ -66,7 +66,7 @@ func TestPushDriverHiddenWhenNoDriverFrame(t *testing.T) {
 }
 
 func TestPushDriverVisibleWhenMainHasDriverFrame(t *testing.T) {
-	r := DefaultRegistry(features.Set{features.Peers: true}, PaletteContext{MainHasDriverFrame: true})
+	r := DefaultRegistry(features.Set{features.Peers: true}, PaletteContext{Scope: ScopeProject, MainHasDriverFrame: true})
 	got := r.Get("push-driver")
 	if got == nil {
 		t.Fatal("push-driver should be registered when MainHasDriverFrame is true")
@@ -99,7 +99,7 @@ func TestForkHiddenWhenNoForkableDriver(t *testing.T) {
 }
 
 func TestForkVisibleWhenForkableDriver(t *testing.T) {
-	r := DefaultRegistry(features.Set{}, PaletteContext{MainHasForkableDriver: true})
+	r := DefaultRegistry(features.Set{}, PaletteContext{Scope: ScopeProject, MainHasForkableDriver: true})
 	got := r.Get("fork-session")
 	if got == nil {
 		t.Fatal("fork should be registered when MainHasForkableDriver is true")
@@ -115,6 +115,32 @@ func TestForkVisibleWhenForkableDriver(t *testing.T) {
 	}
 	if !found {
 		t.Error("fork should appear in All() when MainHasForkableDriver is true")
+	}
+}
+
+func TestStandardScopeOmitsProjectTools(t *testing.T) {
+	r := DefaultRegistry(features.Set{features.Peers: true})
+	for _, name := range []string{"push-driver", "fork-session"} {
+		if r.Get(name) != nil {
+			t.Errorf("standard scope: %q should not be registered", name)
+		}
+	}
+	for _, name := range []string{"detach", "shutdown", "new-session"} {
+		if r.Get(name) == nil {
+			t.Errorf("standard scope: %q should be registered", name)
+		}
+	}
+}
+
+func TestProjectScopeOmitsStandardOnlyTools(t *testing.T) {
+	r := DefaultRegistry(features.Set{features.Peers: true}, PaletteContext{Scope: ScopeProject})
+	for _, name := range []string{"detach", "shutdown", "create-project", "stop-session", "send-to-session"} {
+		if r.Get(name) != nil {
+			t.Errorf("project scope: %q should not be registered", name)
+		}
+	}
+	if r.Get("new-session") == nil {
+		t.Error("project scope: new-session should be registered")
 	}
 }
 

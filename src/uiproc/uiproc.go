@@ -45,7 +45,9 @@ func Sessions() UIProcess {
 // tool is the palette tool name; pass "" to open the default palette.
 // args is an optional map of prefill key=value pairs; empty values are skipped.
 // Keys are sorted for deterministic output.
-func Palette(tool string, args map[string]string) UIProcess {
+// scope selects the palette set: "project" for the project palette, "" or
+// "standard" for the standard palette.
+func Palette(tool string, args map[string]string, scope string) UIProcess {
 	var extra []string
 	if tool != "" {
 		extra = append(extra, "--tool="+shellQuote(tool))
@@ -59,6 +61,9 @@ func Palette(tool string, args map[string]string) UIProcess {
 		if v := args[k]; v != "" {
 			extra = append(extra, "--arg="+shellQuote(k+"="+v))
 		}
+	}
+	if scope == "project" {
+		extra = append(extra, "--scope="+shellQuote(scope))
 	}
 	return UIProcess{Name: "palette", Subcommand: "palette", ExtraArgs: extra}
 }

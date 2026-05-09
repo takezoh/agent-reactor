@@ -218,7 +218,7 @@ func (r *Runtime) executeTmuxEffect(eff state.Effect) { //nolint:funlen
 		_ = r.cfg.Tmux.DetachClient()
 
 	case state.EffDisplayPopup:
-		_ = r.cfg.Tmux.DisplayPopup(e.Width, e.Height, uiproc.Palette(e.Tool, e.Args).Command(r.cfg.RoostExe))
+		_ = r.cfg.Tmux.DisplayPopup(e.Width, e.Height, uiproc.Palette(e.Tool, e.Args, "").Command(r.cfg.RoostExe))
 
 	case state.EffKillSession:
 		_ = r.cfg.Tmux.KillSession()

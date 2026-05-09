@@ -61,7 +61,8 @@ type SessionInfo struct {
 	Project        string           `json:"project"`
 	Workspace      string           `json:"workspace,omitempty"`
 	Command        string           `json:"command"`
-	RootDriver     string           `json:"root_driver,omitempty"`
+	RootDriver         string           `json:"root_driver,omitempty"`
+	RootDriverForkable bool             `json:"root_driver_forkable,omitempty"`
 	CreatedAt      string           `json:"created_at"`
 	State          stateview.Status `json:"state,omitempty"`
 	StateChangedAt string           `json:"state_changed_at,omitempty"`

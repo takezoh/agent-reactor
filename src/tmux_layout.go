@@ -104,6 +104,7 @@ func paneHints(prefix string) string {
 		k + prefix + " l" + d + " log" + sep +
 		k + prefix + " z" + d + " zoom" + sep +
 		k + prefix + " p" + d + " palette" + sep +
+		k + prefix + " C-p" + d + " project" + sep +
 		k + prefix + " d" + d + " detach" + sep +
 		k + prefix + " q" + d + " quit"
 
@@ -135,10 +136,13 @@ func setupKeyBindings(client *tmux.Client, sn, exePath string) {
 	_ = client.BindKey("prefix", "d", "detach-client")
 	_ = client.BindKey("prefix", "q",
 		"display-popup", "-E", "-w", "40%", "-h", "20%",
-		"echo 'Shutting down...' && "+uiproc.Palette("shutdown", nil).Command(exePath))
+		"echo 'Shutting down...' && "+uiproc.Palette("shutdown", nil, "").Command(exePath))
 	_ = client.BindKey("prefix", "p",
 		"display-popup", "-E", "-w", "60%", "-h", "50%",
-		uiproc.Palette("", nil).Command(exePath))
+		uiproc.Palette("", nil, "").Command(exePath))
+	_ = client.BindKey("prefix", "C-p",
+		"display-popup", "-E", "-w", "60%", "-h", "50%",
+		uiproc.Palette("", nil, "project").Command(exePath))
 	_ = client.BindKey("root", "MouseDown1Status", "run-shell", exePath+" statusline-click #{mouse_status_range}")
 
 	// Disable right-click context menus (Horizontal/Vertical Split etc.)

@@ -16,7 +16,6 @@ import (
 	"github.com/takezoh/agent-roost/logger"
 	"github.com/takezoh/agent-roost/proto"
 	psess "github.com/takezoh/agent-roost/proto/sessions"
-	"github.com/takezoh/agent-roost/state"
 	"github.com/takezoh/agent-roost/tools"
 	"github.com/takezoh/agent-roost/tui"
 	"github.com/takezoh/agent-roost/tui/glyphs"
@@ -152,6 +151,7 @@ func runPalette(args []string) error { //nolint:funlen
 	defer client.Close()
 
 	var toolName string
+	var scopeProject bool
 	prefill := make(map[string]string)
 	for _, a := range args {
 		if strings.HasPrefix(a, "--tool=") {
@@ -161,6 +161,8 @@ func runPalette(args []string) error { //nolint:funlen
 			if parts := strings.SplitN(kv, "=", 2); len(parts) == 2 {
 				prefill[parts[0]] = parts[1]
 			}
+		} else if a == "--scope=project" {
+			scopeProject = true
 		}
 	}
 
@@ -169,26 +171,38 @@ func runPalette(args []string) error { //nolint:funlen
 		slog.Warn("palette: ListSessions failed", "err", err)
 	}
 
+	if scopeProject && activeID == "" {
+		slog.Info("palette: project scope falling back to standard (no active session)")
+		scopeProject = false
+	}
+
 	mainHasDriver := activeID != "" && activeOccupant == proto.OccupantFrame
-
 	mainHasForkable := false
-
 	var activeProject string
+
 	if activeID != "" {
 		for _, s := range sessions {
 			if s.ID == activeID {
-				activeProject = tools.ProjectDisplayName(s.Project)
-				if mainHasDriver {
-					drv := state.GetDriver(s.RootDriver)
-					_, mainHasForkable = drv.(state.Forkable)
+				if scopeProject {
+					activeProject = tools.ProjectDisplayName(s.Project)
+					prefill["project"] = s.Project
+				}
+				if mainHasDriver && scopeProject {
+					mainHasForkable = s.RootDriverForkable
 				}
 				break
 			}
 		}
 	}
 
+	scope := tools.ScopeStandard
+	if scopeProject {
+		scope = tools.ScopeProject
+	}
+
 	feats := features.FromConfig(cfg.Features.Enabled, features.All())
 	reg := tools.DefaultRegistry(feats, tools.PaletteContext{
+		Scope:                 scope,
 		MainHasDriverFrame:    mainHasDriver,
 		MainHasForkableDriver: mainHasForkable,
 	})

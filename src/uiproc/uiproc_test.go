@@ -45,7 +45,7 @@ func TestConstructorFields(t *testing.T) {
 }
 
 func TestPaletteNoTool(t *testing.T) {
-	p := Palette("", nil)
+	p := Palette("", nil, "")
 	if p.Name != "palette" || p.Subcommand != "palette" {
 		t.Errorf("Palette fields unexpected: %+v", p)
 	}
@@ -55,14 +55,14 @@ func TestPaletteNoTool(t *testing.T) {
 }
 
 func TestPaletteWithTool(t *testing.T) {
-	p := Palette("shutdown", nil)
+	p := Palette("shutdown", nil, "")
 	if len(p.ExtraArgs) != 1 || p.ExtraArgs[0] != "--tool='shutdown'" {
 		t.Errorf("unexpected ExtraArgs: %v", p.ExtraArgs)
 	}
 }
 
 func TestPaletteWithArgs(t *testing.T) {
-	p := Palette("push-driver", map[string]string{"session_id": "abc123"})
+	p := Palette("push-driver", map[string]string{"session_id": "abc123"}, "")
 	want := []string{"--tool='push-driver'", "--arg='session_id=abc123'"}
 	if !reflect.DeepEqual(p.ExtraArgs, want) {
 		t.Errorf("ExtraArgs = %v, want %v", p.ExtraArgs, want)
@@ -70,7 +70,7 @@ func TestPaletteWithArgs(t *testing.T) {
 }
 
 func TestPaletteArgsSkipsEmptyValues(t *testing.T) {
-	p := Palette("x", map[string]string{"k": ""})
+	p := Palette("x", map[string]string{"k": ""}, "")
 	// Empty value must be skipped; only --tool= arg present.
 	if len(p.ExtraArgs) != 1 {
 		t.Errorf("expected 1 extra arg (--tool=), got %v", p.ExtraArgs)
@@ -78,10 +78,28 @@ func TestPaletteArgsSkipsEmptyValues(t *testing.T) {
 }
 
 func TestPaletteArgsSorted(t *testing.T) {
-	p := Palette("", map[string]string{"z": "1", "a": "2", "m": "3"})
+	p := Palette("", map[string]string{"z": "1", "a": "2", "m": "3"}, "")
 	want := []string{"--arg='a=2'", "--arg='m=3'", "--arg='z=1'"}
 	if !reflect.DeepEqual(p.ExtraArgs, want) {
 		t.Errorf("ExtraArgs = %v, want %v", p.ExtraArgs, want)
+	}
+}
+
+func TestPaletteScopeProjectAppendsFlag(t *testing.T) {
+	p := Palette("", nil, "project")
+	if len(p.ExtraArgs) != 1 || p.ExtraArgs[0] != "--scope='project'" {
+		t.Errorf("ExtraArgs = %v, want [--scope='project']", p.ExtraArgs)
+	}
+}
+
+func TestPaletteScopeStandardOmitsFlag(t *testing.T) {
+	for _, scope := range []string{"", "standard"} {
+		p := Palette("", nil, scope)
+		for _, a := range p.ExtraArgs {
+			if a == "--scope='project'" {
+				t.Errorf("scope=%q: unexpected --scope flag in ExtraArgs", scope)
+			}
+		}
 	}
 }
 
@@ -132,7 +150,7 @@ func TestCommandMain(t *testing.T) {
 }
 
 func TestCommandWithExtraArgs(t *testing.T) {
-	p := Palette("shutdown", nil)
+	p := Palette("shutdown", nil, "")
 	got := p.Command("/usr/bin/roost")
 	want := "'/usr/bin/roost' --tui palette --tool='shutdown'"
 	if got != want {

@@ -13,9 +13,22 @@ import (
 	"github.com/takezoh/agent-roost/state"
 )
 
+// PaletteScope controls which tool set DefaultRegistry registers.
+type PaletteScope int
+
+const (
+	// ScopeStandard registers project-independent tools (new-session,
+	// create-project, stop-session, detach, shutdown, send-to-session).
+	ScopeStandard PaletteScope = iota
+	// ScopeProject registers project-dependent tools (new-session,
+	// push-driver, fork-session) for operating within an active session.
+	ScopeProject
+)
+
 // PaletteContext holds per-invocation state for gating tool visibility.
 // Evaluated fresh each time the palette opens, unlike static feature flags.
 type PaletteContext struct {
+	Scope PaletteScope
 	// ActiveOccupant=="frame" and an active session exists.
 	MainHasDriverFrame bool
 	// Root driver of the active session supports fork (e.g. claude).
@@ -27,6 +40,11 @@ type PaletteContext struct {
 // pctx gates per-invocation context-sensitive tools; zero value omits them.
 func DefaultRegistry(feats features.Set, pctx ...PaletteContext) *Registry { //nolint:funlen
 	r := NewRegistry()
+	var pc PaletteContext
+	if len(pctx) > 0 {
+		pc = pctx[0]
+	}
+
 	r.Register(Tool{
 		Name:        "new-session",
 		Description: "Create session",
@@ -46,74 +64,77 @@ func DefaultRegistry(feats features.Set, pctx ...PaletteContext) *Registry { //n
 			return nil, err
 		},
 	})
-	r.Register(Tool{
-		Name:        "create-project",
-		Description: "Create new project dir and start session",
-		Params: []Param{
-			{Name: "root", Options: func(ctx *ToolContext) []string { return ctx.Config.ProjectRoots }},
-			{Name: "name", Options: func(ctx *ToolContext) []string { return nil }},
-		},
-		Run: runCreateProject,
-	})
-	r.Register(Tool{
-		Name:        "stop-session",
-		Description: "Stop session",
-		Params: []Param{
-			{Name: "session_id", Options: func(ctx *ToolContext) []string { return nil }},
-		},
-		Run: func(ctx *ToolContext, args map[string]string) (*ToolInvocation, error) {
-			return nil, ctx.Client.StopSession(args["session_id"])
-		},
-	})
-	r.Register(Tool{
-		Name:        "detach",
-		Description: "Detach (keep session)",
-		Run: func(ctx *ToolContext, args map[string]string) (*ToolInvocation, error) {
-			return nil, ctx.Client.Detach()
-		},
-	})
-	r.Register(Tool{
-		Name:        "shutdown",
-		Description: "Shutdown (discard sessions)",
-		Run: func(ctx *ToolContext, args map[string]string) (*ToolInvocation, error) {
-			return nil, ctx.Client.Shutdown()
-		},
-	})
-	var pc PaletteContext
-	if len(pctx) > 0 {
-		pc = pctx[0]
-	}
-	if pc.MainHasDriverFrame {
+
+	if pc.Scope == ScopeStandard {
 		r.Register(Tool{
-			Name:        "push-driver",
-			Description: "Push driver onto active session",
+			Name:        "create-project",
+			Description: "Create new project dir and start session",
 			Params: []Param{
-				{Name: "command", Options: func(ctx *ToolContext) []string { return ctx.Config.PushCommands }},
+				{Name: "root", Options: func(ctx *ToolContext) []string { return ctx.Config.ProjectRoots }},
+				{Name: "name", Options: func(ctx *ToolContext) []string { return nil }},
+			},
+			Run: runCreateProject,
+		})
+		r.Register(Tool{
+			Name:        "stop-session",
+			Description: "Stop session",
+			Params: []Param{
+				{Name: "session_id", Options: func(ctx *ToolContext) []string { return nil }},
 			},
 			Run: func(ctx *ToolContext, args map[string]string) (*ToolInvocation, error) {
-				_, activeID, _, _, _, err := ctx.Client.ListSessions()
-				if err != nil || activeID == "" {
-					return nil, fmt.Errorf("no active session")
-				}
-				return nil, ctx.Client.PushDriver(activeID, args["command"], nil)
+				return nil, ctx.Client.StopSession(args["session_id"])
 			},
 		})
-	}
-	if pc.MainHasForkableDriver {
 		r.Register(Tool{
-			Name:        "fork-session",
-			Description: "Fork active session (new branch)",
-			Run: func(ctx *ToolContext, _ map[string]string) (*ToolInvocation, error) {
-				_, activeID, _, _, _, err := ctx.Client.ListSessions()
-				if err != nil || activeID == "" {
-					return nil, fmt.Errorf("no active session")
-				}
-				_, err = ctx.Client.ForkSession(activeID)
-				return nil, err
+			Name:        "detach",
+			Description: "Detach (keep session)",
+			Run: func(ctx *ToolContext, args map[string]string) (*ToolInvocation, error) {
+				return nil, ctx.Client.Detach()
+			},
+		})
+		r.Register(Tool{
+			Name:        "shutdown",
+			Description: "Shutdown (discard sessions)",
+			Run: func(ctx *ToolContext, args map[string]string) (*ToolInvocation, error) {
+				return nil, ctx.Client.Shutdown()
 			},
 		})
 	}
-	if feats.On(features.Peers) {
+
+	if pc.Scope == ScopeProject {
+		if pc.MainHasDriverFrame {
+			r.Register(Tool{
+				Name:        "push-driver",
+				Description: "Push driver onto active session",
+				Params: []Param{
+					{Name: "command", Options: func(ctx *ToolContext) []string { return ctx.Config.PushCommands }},
+				},
+				Run: func(ctx *ToolContext, args map[string]string) (*ToolInvocation, error) {
+					_, activeID, _, _, _, err := ctx.Client.ListSessions()
+					if err != nil || activeID == "" {
+						return nil, fmt.Errorf("no active session")
+					}
+					return nil, ctx.Client.PushDriver(activeID, args["command"], nil)
+				},
+			})
+		}
+		if pc.MainHasForkableDriver {
+			r.Register(Tool{
+				Name:        "fork-session",
+				Description: "Fork active session (new branch)",
+				Run: func(ctx *ToolContext, _ map[string]string) (*ToolInvocation, error) {
+					_, activeID, _, _, _, err := ctx.Client.ListSessions()
+					if err != nil || activeID == "" {
+						return nil, fmt.Errorf("no active session")
+					}
+					_, err = ctx.Client.ForkSession(activeID)
+					return nil, err
+				},
+			})
+		}
+	}
+
+	if pc.Scope == ScopeStandard && feats.On(features.Peers) {
 		r.Register(Tool{
 			Name:        "send-to-session",
 			Description: "Send message to a session (appears as [peer-msg from=palette])",
