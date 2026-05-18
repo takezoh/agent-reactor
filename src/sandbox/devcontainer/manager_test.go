@@ -259,6 +259,90 @@ func TestBuildLaunchCommand_MergesFrameCtxEnv(t *testing.T) {
 	}
 }
 
+// Regression guard for the shared-mode core bug: two frames from different
+// projects must produce two independent docker exec command strings even
+// though they share the same Instance / DevcontainerSpec. The spec carries
+// only the first project's path (ProjectPath/WorkspaceFolder), so a leak
+// would show up as both commands landing in the spec's project.
+func TestBuildLaunchCommand_SharedInstance_PerFrameIsolation(t *testing.T) {
+	// One shared container, spec pinned to "first project" (= whichever frame
+	// triggered the container creation).
+	spec := &DevcontainerSpec{
+		ProjectPath:     "/workspace/first-project",
+		Isolation:       IsolationShared,
+		WorkspaceFolder: "/workspace/first-project",
+		ContainerEnv:    map[string]string{},
+	}
+	inst := &sandbox.Instance[*ContainerState]{
+		ProjectPath: "/workspace/first-project",
+		Internal:    &ContainerState{containerID: "shared-ctr", spec: spec},
+	}
+	m := &Manager{}
+
+	// Frame A: /workspace/agent-roost
+	planA := state.LaunchPlan{Project: "/workspace/agent-roost", Command: "bash"}
+	ctxA := sandbox.FrameContext{
+		FrameID: "frame-a",
+		WorkDir: "/workspace/agent-roost",
+		Env: map[string]string{
+			"ROOST_FRAME_ID":     "frame-a",
+			"ROOST_SOCKET_TOKEN": "tok-aaa",
+		},
+	}
+	cmdA, _, err := m.BuildLaunchCommand(inst, planA, ctxA, nil)
+	if err != nil {
+		t.Fatalf("frame A: %v", err)
+	}
+
+	// Frame B: /workspace/credproxy (different project, same Instance)
+	planB := state.LaunchPlan{Project: "/workspace/credproxy", Command: "bash"}
+	ctxB := sandbox.FrameContext{
+		FrameID: "frame-b",
+		WorkDir: "/workspace/credproxy",
+		Env: map[string]string{
+			"ROOST_FRAME_ID":     "frame-b",
+			"ROOST_SOCKET_TOKEN": "tok-bbb",
+		},
+	}
+	cmdB, _, err := m.BuildLaunchCommand(inst, planB, ctxB, nil)
+	if err != nil {
+		t.Fatalf("frame B: %v", err)
+	}
+
+	// -w must reflect each frame's project, NOT the spec's first-project path.
+	if !strings.Contains(cmdA, "-w '/workspace/agent-roost'") {
+		t.Errorf("frame A: -w must point to /workspace/agent-roost; got: %s", cmdA)
+	}
+	if strings.Contains(cmdA, "-w '/workspace/first-project'") {
+		t.Errorf("frame A: spec project leaked into -w; got: %s", cmdA)
+	}
+	if !strings.Contains(cmdB, "-w '/workspace/credproxy'") {
+		t.Errorf("frame B: -w must point to /workspace/credproxy; got: %s", cmdB)
+	}
+	if strings.Contains(cmdB, "-w '/workspace/first-project'") {
+		t.Errorf("frame B: spec project leaked into -w; got: %s", cmdB)
+	}
+
+	// Per-frame env must not cross-contaminate.
+	if !strings.Contains(cmdA, "ROOST_FRAME_ID=frame-a") || strings.Contains(cmdA, "frame-b") {
+		t.Errorf("frame A env leak; got: %s", cmdA)
+	}
+	if !strings.Contains(cmdA, "ROOST_SOCKET_TOKEN=tok-aaa") || strings.Contains(cmdA, "tok-bbb") {
+		t.Errorf("frame A token leak; got: %s", cmdA)
+	}
+	if !strings.Contains(cmdB, "ROOST_FRAME_ID=frame-b") || strings.Contains(cmdB, "frame-a") {
+		t.Errorf("frame B env leak; got: %s", cmdB)
+	}
+	if !strings.Contains(cmdB, "ROOST_SOCKET_TOKEN=tok-bbb") || strings.Contains(cmdB, "tok-aaa") {
+		t.Errorf("frame B token leak; got: %s", cmdB)
+	}
+
+	// Both must docker exec into the SAME container id (sanity: shared mode).
+	if !strings.Contains(cmdA, "shared-ctr") || !strings.Contains(cmdB, "shared-ctr") {
+		t.Errorf("both frames must target same container; A=%s B=%s", cmdA, cmdB)
+	}
+}
+
 func TestBuildLaunchCommand_FrameCtxEnvWinsOnConflict(t *testing.T) {
 	// docker exec applies the last `-e KEY=VAL` so the order we emit is what
 	// determines who wins. spec → frameCtx → env; later entries override.
