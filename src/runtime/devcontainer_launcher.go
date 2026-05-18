@@ -11,6 +11,7 @@ import (
 
 	"github.com/takezoh/agent-roost/config"
 	"github.com/takezoh/agent-roost/lib/pathmap"
+	cstream "github.com/takezoh/agent-roost/runtime/subsystem/stream"
 	"github.com/takezoh/agent-roost/sandbox"
 	sandboxdc "github.com/takezoh/agent-roost/sandbox/devcontainer"
 	"github.com/takezoh/agent-roost/state"
@@ -198,7 +199,7 @@ func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, proxy *C
 
 		// codex backend's sockbridge is registered alongside provider
 		// bridges so postCreate starts them all in one place.
-		bridges := append(proxySpec.BridgeSpecs, codexContainerBridgeSpec())
+		bridges := append(proxySpec.BridgeSpecs, cstream.ContainerBridgeSpec(ContainerRunDir))
 		postCreate := buildPostCreate(binPath, postCreateSubcmds, bridges)
 
 		return sandboxdc.SpecOverlay{

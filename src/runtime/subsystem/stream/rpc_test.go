@@ -1,4 +1,4 @@
-package runtime
+package stream
 
 import (
 	"context"
@@ -13,9 +13,7 @@ import (
 )
 
 // TestDialWebSocketUDS verifies the daemon performs the HTTP Upgrade
-// handshake when connecting to a unix-socket WebSocket server. This is the
-// protocol codex app-server's `--listen unix://PATH` actually speaks; raw
-// JSON-RPC writes would hang forever waiting for the Upgrade request.
+// handshake when connecting to a unix-socket WebSocket server.
 func TestDialWebSocketUDS(t *testing.T) {
 	sockPath := filepath.Join(t.TempDir(), "test.sock")
 	ln, err := net.Listen("unix", sockPath)
@@ -35,7 +33,6 @@ func TestDialWebSocketUDS(t *testing.T) {
 			if err != nil {
 				return
 			}
-			// Echo back so the test can verify framing round-trips.
 			_ = c.Write(r.Context(), websocket.MessageText, data)
 		}),
 	}
@@ -64,8 +61,6 @@ func TestDialWebSocketUDS(t *testing.T) {
 	}
 }
 
-// TestDialWebSocketUDS_timeout verifies a missing socket returns an error
-// within the configured timeout rather than hanging.
 func TestDialWebSocketUDS_timeout(t *testing.T) {
 	sockPath := filepath.Join(t.TempDir(), "missing.sock")
 	start := time.Now()
@@ -77,7 +72,6 @@ func TestDialWebSocketUDS_timeout(t *testing.T) {
 		t.Fatalf("dial took %v, want < 2s", elapsed)
 	}
 	if !errors.Is(err, context.DeadlineExceeded) && !isUnixDialErr(err) {
-		// Either context timeout or accumulated dial errors are acceptable.
 		t.Logf("err: %v", err)
 	}
 }

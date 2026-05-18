@@ -1,4 +1,4 @@
-package runtime
+package stream
 
 import (
 	"encoding/json"
@@ -280,6 +280,22 @@ func approvalFromParams(method string, raw json.RawMessage, auto bool) state.Sub
 		Reason:      nestedString(raw, "reason"),
 		AutoApprove: auto,
 	}
+}
+
+func appendHistory(history *[]state.SubsystemTurn, role, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	*history = append(*history, state.SubsystemTurn{Role: role, Text: text})
+	if len(*history) > 6 {
+		*history = (*history)[len(*history)-6:]
+	}
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 func firstNonEmpty(values ...string) string {

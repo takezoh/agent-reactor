@@ -37,6 +37,12 @@ type Tag struct {
 	Background string `json:"bg,omitempty"`
 }
 
+// HostTag returns a tag indicating a session was launched on the host instead
+// of its configured sandbox. Sandbox-override sessions expose this in the card.
+func HostTag() Tag {
+	return Tag{Text: "host", Background: "#7C5CBF", Foreground: "#FFFFFF"}
+}
+
 // LogTab declares an additional log tab the driver wants the TUI to display.
 type LogTab struct {
 	Label       string          `json:"label"`

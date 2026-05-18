@@ -6,7 +6,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/takezoh/agent-roost/driver"
 	"github.com/takezoh/agent-roost/proto"
 	"github.com/takezoh/agent-roost/state"
 )
@@ -301,7 +300,7 @@ func (r *Runtime) buildOneSessionInfo(sess state.Session) (proto.SessionInfo, bo
 		}
 	}
 	if sess.Sandbox == state.SandboxOverrideHost {
-		view.Card.Tags = append(view.Card.Tags, driver.HostTag())
+		view.Card.Tags = append(view.Card.Tags, state.HostTag())
 	}
 	if len(frame.PeerInbox) > 0 && view.Card.BorderBadge == "" {
 		view.Card.BorderBadge = fmt.Sprintf("💬 %d", len(frame.PeerInbox))

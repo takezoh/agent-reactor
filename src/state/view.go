@@ -14,3 +14,6 @@ type TabKind = v.TabKind
 type InfoLine = v.InfoLine
 
 const TabKindText = v.TabKindText
+
+// HostTag re-exports view.HostTag for callers that only import state.
+var HostTag = v.HostTag

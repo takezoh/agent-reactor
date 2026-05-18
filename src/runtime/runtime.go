@@ -131,7 +131,10 @@ type Runtime struct {
 	// frames that run inside a devcontainer. Access via sync.Map because
 	// spawnTmuxWindowAsync runs in goroutines.
 	containerSubsystems sync.Map // string (project path) → *SubsystemRegistry
-	codexBackends       sync.Map // state.SubsystemID → *codexBackend
+	// streamBackends holds one *stream.Backend per subsystem ID
+	// (project×sandbox). Access via sync.Map because spawnTmuxWindowAsync
+	// runs in goroutines.
+	streamBackends sync.Map // state.SubsystemID → *stream.Backend
 }
 
 // New constructs a Runtime ready for Run. Backends must be set on the
