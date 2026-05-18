@@ -190,6 +190,11 @@ func (m *Manager) ensureContainer(ctx context.Context, instanceKey, projectPath 
 	}
 	if opts.SharedMode {
 		spec.Isolation = IsolationShared
+		for _, m := range opts.ExtraMounts {
+			if src, tgt, ok := parseMountSpec(m); ok {
+				spec.ExtraWorkspaces = append(spec.ExtraWorkspaces, BindMount{Source: src, Target: tgt})
+			}
+		}
 	}
 	slog.Info("devcontainer: stage", "name", "load_spec", "image", spec.Image, "elapsed", time.Since(t), "project", projectPath)
 

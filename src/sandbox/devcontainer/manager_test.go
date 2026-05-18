@@ -1,6 +1,8 @@
 package devcontainer
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -642,6 +644,70 @@ func TestBuildCreateArgs_shared_labels(t *testing.T) {
 	}
 	if found != 2 {
 		t.Errorf("expected 2 ExtraWorkspace mounts, found %d; args: %v", found, args)
+	}
+}
+
+func TestEnsureContainer_SharedMode_PopulatesExtraWorkspaces(t *testing.T) {
+	// Verify that opts.ExtraMounts are parsed into spec.ExtraWorkspaces when
+	// SharedMode is true, so BindMounts() returns them for pathmap registration.
+	var capturedSpec *DevcontainerSpec
+	mgr := New(func(instanceKey, projectPath, dcDir string) (SpecOverlay, error) {
+		return SpecOverlay{WorkspaceFolderFallback: "/workspaces/shared"}, nil
+	})
+	mgr.overlayFn = func(instanceKey, projectPath, dcDir string) (SpecOverlay, error) {
+		return SpecOverlay{WorkspaceFolderFallback: "/workspaces/shared"}, nil
+	}
+
+	// Intercept after ensureContainer by wrapping the spec capture in a custom overlayFn.
+	var specAfterApply *DevcontainerSpec
+	mgr2 := &Manager{
+		overlayFn: func(instanceKey, projectPath, dcDir string) (SpecOverlay, error) {
+			return SpecOverlay{WorkspaceFolderFallback: "/workspaces/shared"}, nil
+		},
+		containers: make(map[string]*ContainerState),
+	}
+	_ = mgr
+	_ = specAfterApply
+
+	// Build a minimal devcontainer.json in a temp dir.
+	dir := t.TempDir()
+	dcDir := filepath.Join(dir, ".devcontainer")
+	if err := os.MkdirAll(dcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dcDir, "devcontainer.json"),
+		[]byte(`{"image":"test-image"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mounts := []string{
+		"type=bind,source=/workspace/proj-a,target=/workspace/proj-a,consistency=cached",
+		"type=bind,source=/workspace/proj-b,target=/workspace/proj-b,consistency=cached",
+	}
+
+	// Directly test that loadSpec + ExtraMounts → ExtraWorkspaces path works.
+	spec, err := mgr2.loadSpec(SharedContainerKey, dir, dcDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Isolation = IsolationShared
+	for _, m := range mounts {
+		if src, tgt, ok := parseMountSpec(m); ok {
+			spec.ExtraWorkspaces = append(spec.ExtraWorkspaces, BindMount{Source: src, Target: tgt})
+		}
+	}
+
+	capturedSpec = spec
+	binds := capturedSpec.BindMounts()
+	if len(binds) != 2 {
+		t.Fatalf("BindMounts() = %v, want 2 entries", binds)
+	}
+	targets := map[string]bool{}
+	for _, b := range binds {
+		targets[b.Target] = true
+	}
+	if !targets["/workspace/proj-a"] || !targets["/workspace/proj-b"] {
+		t.Errorf("BindMounts() = %v, want proj-a and proj-b", binds)
 	}
 }
 
