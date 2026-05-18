@@ -64,9 +64,15 @@ type SpecOverlay struct {
 	WorkspaceFolderFallback string      // fallback container workspace path when devcontainer.json omits workspaceFolder/workspaceMount
 }
 
-func projectHash(projectPath string) string {
-	h := sha256.Sum256([]byte(projectPath))
+// hashShort returns the first 12 hex characters of sha256(s),
+// used for short stable identifiers in container names and labels.
+func hashShort(s string) string {
+	h := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("%x", h[:6])
+}
+
+func projectHash(projectPath string) string {
+	return hashShort(projectPath)
 }
 
 // ExtraWorkspacesHash returns a deterministic short hash of ExtraWorkspaces,
@@ -81,8 +87,7 @@ func (s *DevcontainerSpec) ExtraWorkspacesHash() string {
 		entries[i] = w.Source + "\t" + w.Target
 	}
 	sort.Strings(entries)
-	h := sha256.Sum256([]byte(strings.Join(entries, "\n")))
-	return fmt.Sprintf("%x", h[:6])
+	return hashShort(strings.Join(entries, "\n"))
 }
 
 // LoadSpec reads devcontainer.json from dcDir for projectPath.
