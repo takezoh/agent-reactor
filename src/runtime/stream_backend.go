@@ -79,6 +79,12 @@ func (r *Runtime) ensureStreamBackend(subsystemID state.SubsystemID, project str
 	return backend, nil
 }
 
+// HelperBinaryPath implements stream.RuntimeHook: delegates to the canonical
+// runtime/rundir.go resolver (exe-adjacent + ~/.local/lib/roost/ libexec).
+func (r *Runtime) HelperBinaryPath(name string) (string, error) {
+	return findHelperBinary(name)
+}
+
 // ContainerExecConfig implements stream.RuntimeHook: returns docker exec
 // parameters for the project's devcontainer, or nil for host projects.
 func (r *Runtime) ContainerExecConfig(ctx context.Context, project string) (*cstream.ContainerExecConfig, error) {
