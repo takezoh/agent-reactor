@@ -409,3 +409,25 @@ GOOGLE_APPLICATION_CREDENTIALS = "~/.config/gcloud/application_default_credentia
 		t.Errorf("Env GOOGLE_APPLICATION_CREDENTIALS missing or empty")
 	}
 }
+
+func TestSandboxConfig_Validate_Isolation(t *testing.T) {
+	cases := []struct {
+		isolation string
+		wantErr   bool
+	}{
+		{"", false},
+		{"project", false},
+		{"shared", false},
+		{"cluster", true},
+	}
+	for _, tc := range cases {
+		s := SandboxConfig{Isolation: tc.isolation}
+		err := s.Validate()
+		if tc.wantErr && err == nil {
+			t.Errorf("isolation=%q: expected error, got nil", tc.isolation)
+		}
+		if !tc.wantErr && err != nil {
+			t.Errorf("isolation=%q: unexpected error: %v", tc.isolation, err)
+		}
+	}
+}

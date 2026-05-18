@@ -557,6 +557,94 @@ func TestResolveContainerEnvPlaceholders_DeduplicatesPath(t *testing.T) {
 	}
 }
 
+func TestContainerName_project(t *testing.T) {
+	s := &DevcontainerSpec{ProjectPath: "/workspace/myapp", Isolation: IsolationProject}
+	name := s.ContainerName()
+	if name == "roost-shared" {
+		t.Errorf("ContainerName for project isolation must not be roost-shared")
+	}
+	if name[:6] != "roost-" {
+		t.Errorf("ContainerName = %q, want roost-<hash>", name)
+	}
+}
+
+func TestContainerName_shared(t *testing.T) {
+	s := &DevcontainerSpec{ProjectPath: "/workspace/myapp", Isolation: IsolationShared}
+	if got := s.ContainerName(); got != "roost-shared" {
+		t.Errorf("ContainerName = %q, want roost-shared", got)
+	}
+}
+
+func TestIsShared(t *testing.T) {
+	t.Run("shared", func(t *testing.T) {
+		cs := &ContainerState{spec: &DevcontainerSpec{Isolation: IsolationShared}}
+		if !cs.IsShared() {
+			t.Error("expected IsShared() true")
+		}
+	})
+	t.Run("project", func(t *testing.T) {
+		cs := &ContainerState{spec: &DevcontainerSpec{Isolation: IsolationProject}}
+		if cs.IsShared() {
+			t.Error("expected IsShared() false")
+		}
+	})
+	t.Run("nil", func(t *testing.T) {
+		var cs *ContainerState
+		if cs.IsShared() {
+			t.Error("expected IsShared() false for nil")
+		}
+	})
+}
+
+func TestBuildCreateArgs_shared_labels(t *testing.T) {
+	spec := &DevcontainerSpec{
+		ProjectPath:  "/workspace/myapp",
+		Isolation:    IsolationShared,
+		ContainerEnv: map[string]string{},
+		ExtraWorkspaces: []BindMount{
+			{Source: "/workspace/myapp", Target: "/workspace/myapp"},
+			{Source: "/workspace/other", Target: "/workspace/other"},
+		},
+	}
+	args := spec.BuildCreateArgs("shared-image:latest")
+
+	mustContain := func(needle string) {
+		t.Helper()
+		for _, a := range args {
+			if a == needle {
+				return
+			}
+		}
+		t.Errorf("args missing %q: %v", needle, args)
+	}
+	mustNotContain := func(needle string) {
+		t.Helper()
+		for _, a := range args {
+			if a == needle {
+				t.Errorf("args must not contain %q: %v", needle, args)
+				return
+			}
+		}
+	}
+
+	mustContain("roost-shared")
+	mustContain("roost-managed=1")
+	mustContain("roost-isolation=shared")
+	mustNotContain("roost-project=/workspace/myapp")
+
+	// ExtraWorkspaces should appear as --mount args.
+	found := 0
+	for _, a := range args {
+		if a == "type=bind,source=/workspace/myapp,target=/workspace/myapp,consistency=cached" ||
+			a == "type=bind,source=/workspace/other,target=/workspace/other,consistency=cached" {
+			found++
+		}
+	}
+	if found != 2 {
+		t.Errorf("expected 2 ExtraWorkspace mounts, found %d; args: %v", found, args)
+	}
+}
+
 func TestDevcontainerSpec_effectiveUser(t *testing.T) {
 	cases := []struct {
 		name      string

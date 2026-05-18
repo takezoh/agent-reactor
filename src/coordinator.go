@@ -99,7 +99,7 @@ func buildRuntime(ctx context.Context, cfg *config.Config, client *tmux.Client, 
 
 	featureSet := features.FromConfig(cfg.Features.Enabled, features.All())
 	sbResolver := config.NewSandboxResolver(cfg.Sandbox)
-	agentLauncher, err := newAgentLauncher(ctx, cfg.Sandbox, sbResolver, dataDir, sockPath)
+	agentLauncher, err := newAgentLauncher(ctx, cfg.Sandbox, sbResolver, cfg.Projects, dataDir, sockPath)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -251,7 +251,7 @@ func shouldKeepRuntimeAliveAfterAttach(err error, sessionExists bool) bool {
 // newAgentLauncher returns the AgentLauncher for the configured sandbox mode.
 // Returns a SandboxDispatcher that routes each launch to direct or devcontainer
 // based on the effective config for that project (user scope + optional project scope).
-func newAgentLauncher(ctx context.Context, sb config.SandboxConfig, resolver *config.SandboxResolver, dataDir, sockPath string) (runtime.AgentLauncher, error) {
+func newAgentLauncher(ctx context.Context, sb config.SandboxConfig, resolver *config.SandboxResolver, projects config.ProjectsConfig, dataDir, sockPath string) (runtime.AgentLauncher, error) {
 	d := &runtime.SandboxDispatcher{
 		Resolver: resolver,
 		Direct:   runtime.DirectLauncher{SockPath: sockPath},
@@ -281,9 +281,13 @@ func newAgentLauncher(ctx context.Context, sb config.SandboxConfig, resolver *co
 			return resolver.Resolve(project)
 		}, runner, dataDir, statedriver.SetupSubcmds())
 		mgr := sandboxdc.New(overlayFn)
-		d.Devcontainer = runtime.NewDevcontainerLauncher(mgr, func(project string) config.SandboxConfig {
-			return resolver.Resolve(project)
-		}, runner, dataDir)
+		d.Devcontainer = runtime.NewDevcontainerLauncher(mgr,
+			func(project string) config.SandboxConfig { return resolver.Resolve(project) },
+			func(project string) *config.SandboxConfig { return resolver.ResolveProjectScope(project) },
+			projects,
+			runner,
+			dataDir,
+		)
 		slog.Info("sandbox: devcontainer backend enabled")
 	}
 	return d, nil

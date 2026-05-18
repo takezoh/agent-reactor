@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -21,25 +22,33 @@ import (
 // DevcontainerLauncher wraps launches inside per-project devcontainers.
 // It implements AgentLauncher by delegating to a sandbox.Manager[*devcontainer.ContainerState].
 type DevcontainerLauncher struct {
-	mgr            sandbox.Manager[*sandboxdc.ContainerState]
-	resolveSandbox func(projectPath string) config.SandboxConfig
-	proxy          *CredProxyRunner // nil when proxy disabled
-	dataDir        string
+	mgr                 sandbox.Manager[*sandboxdc.ContainerState]
+	resolveSandbox      func(projectPath string) config.SandboxConfig
+	resolveProjectScope func(projectPath string) *config.SandboxConfig
+	projectsConfig      config.ProjectsConfig
+	proxy               *CredProxyRunner // nil when proxy disabled
+	dataDir             string
 }
 
 // NewDevcontainerLauncher creates an AgentLauncher that runs agents inside devcontainers.
 // dataDir is the daemon's data directory (e.g. ~/.roost); it contains the run/ subtree.
+// resolveProjectScope returns the raw project-scope SandboxConfig (nil if absent).
+// projectsConfig is used to enumerate workspace dirs for shared-mode containers.
 func NewDevcontainerLauncher(
 	mgr sandbox.Manager[*sandboxdc.ContainerState],
 	resolveSandbox func(string) config.SandboxConfig,
+	resolveProjectScope func(string) *config.SandboxConfig,
+	projectsConfig config.ProjectsConfig,
 	proxy *CredProxyRunner,
 	dataDir string,
 ) *DevcontainerLauncher {
 	return &DevcontainerLauncher{
-		mgr:            mgr,
-		resolveSandbox: resolveSandbox,
-		proxy:          proxy,
-		dataDir:        dataDir,
+		mgr:                 mgr,
+		resolveSandbox:      resolveSandbox,
+		resolveProjectScope: resolveProjectScope,
+		projectsConfig:      projectsConfig,
+		proxy:               proxy,
+		dataDir:             dataDir,
 	}
 }
 
@@ -56,7 +65,8 @@ func (l *DevcontainerLauncher) WrapLaunch(frameID state.FrameID, plan state.Laun
 	ctx, cancel := context.WithTimeout(context.Background(), containerEnsureTimeout)
 	defer cancel()
 
-	inst, err := l.mgr.EnsureInstance(ctx, plan.Project, "", sandbox.StartOptions{})
+	opts := l.resolveStartOptions(plan.Project)
+	inst, err := l.mgr.EnsureInstance(ctx, plan.Project, "", opts)
 	if err != nil {
 		return WrappedLaunch{}, fmt.Errorf("devcontainer launcher: ensure instance: %w", err)
 	}
@@ -66,15 +76,19 @@ func (l *DevcontainerLauncher) WrapLaunch(frameID state.FrameID, plan state.Laun
 		return WrappedLaunch{}, fmt.Errorf("devcontainer launcher: build command: %w", err)
 	}
 
-	runDir, err := EnsureProjectRunDir(filepath.Join(l.dataDir, "run"), plan.Project)
+	runDir, err := EnsureProjectRunDir(filepath.Join(l.dataDir, "run"), l.runDirKey(plan.Project, opts))
 	if err != nil {
 		return WrappedLaunch{}, fmt.Errorf("devcontainer launcher: ensure run dir: %w", err)
 	}
 
 	l.mgr.AcquireFrame(inst)
-	slog.Debug("devcontainer launcher: frame acquired", "frame", frameID, "project", plan.Project)
+	slog.Debug("devcontainer launcher: frame acquired", "frame", frameID, "project", plan.Project, "shared", opts.SharedMode)
 
-	mounts := buildMounts(plan.Project, inst.Internal.WorkspaceTarget(), runDir, inst.Internal.BindMounts())
+	wsHost, wsContainer := plan.Project, inst.Internal.WorkspaceTarget()
+	if inst.Internal.IsShared() {
+		wsHost, wsContainer = "", ""
+	}
+	mounts := buildMounts(wsHost, wsContainer, runDir, inst.Internal.BindMounts())
 
 	startDir := plan.StartDir
 	if containerPath, ok := mounts.ToContainer(startDir); ok {
@@ -91,6 +105,76 @@ func (l *DevcontainerLauncher) WrapLaunch(frameID state.FrameID, plan state.Laun
 		ContainerSockDir: runDir,
 		Mounts:           mounts,
 	}, nil
+}
+
+// runDirKey returns the key to use for the per-container run directory.
+func (l *DevcontainerLauncher) runDirKey(projectPath string, opts sandbox.StartOptions) string {
+	if opts.SharedMode {
+		return sandboxdc.SharedContainerKey
+	}
+	return projectPath
+}
+
+// resolveStartOptions determines whether to use shared or project isolation for
+// projectPath, and builds the corresponding sandbox.StartOptions.
+func (l *DevcontainerLauncher) resolveStartOptions(projectPath string) sandbox.StartOptions {
+	// Project has its own .devcontainer — always project isolation (cheap check first).
+	if _, err := sandboxdc.ProjectBaseDC(projectPath); err == nil {
+		return sandbox.StartOptions{}
+	}
+
+	projScope := l.resolveProjectScope(projectPath)
+	// Project opts out of shared mode or specifies its own devcontainer path.
+	if projScope != nil && (projScope.Isolation == "project" || projScope.Devcontainer.Path != "") {
+		return sandbox.StartOptions{DevcontainerDir: config.ExpandPath(projScope.Devcontainer.Path)}
+	}
+
+	userSandbox := l.resolveSandbox("")
+	if userSandbox.Isolation != "shared" {
+		return sandbox.StartOptions{}
+	}
+
+	dcDir := config.ExpandPath(userSandbox.Devcontainer.Path)
+	prefix := userSandbox.Devcontainer.HostPathMountPrefix
+	return sandbox.StartOptions{
+		SharedMode:      true,
+		DevcontainerDir: dcDir,
+		ExtraMounts:     l.sharedWorkspaceMounts(prefix),
+	}
+}
+
+// sharedWorkspaceMounts builds "type=bind,source=X,target=Y" mount specs for all
+// configured project roots and paths. prefix is HostPathMountPrefix (may be "").
+func (l *DevcontainerLauncher) sharedWorkspaceMounts(prefix string) []string {
+	seen := map[string]struct{}{}
+	var mounts []string
+	add := func(hostPath string) {
+		if _, dup := seen[hostPath]; dup {
+			return
+		}
+		seen[hostPath] = struct{}{}
+		containerPath := resolveWorkspaceFallback(hostPath, prefix)
+		mounts = append(mounts, fmt.Sprintf("type=bind,source=%s,target=%s,consistency=cached", hostPath, containerPath))
+	}
+	for _, root := range l.projectsConfig.ProjectRoots {
+		root = config.ExpandPath(root)
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+				add(filepath.Join(root, e.Name()))
+			}
+		}
+	}
+	for _, p := range l.projectsConfig.ProjectPaths {
+		p = config.ExpandPath(p)
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			add(p)
+		}
+	}
+	return mounts
 }
 
 // buildMounts constructs the pathmap.Mounts for a devcontainer instance.
@@ -122,10 +206,12 @@ func buildMounts(hostProject, containerWS, hostRunDir string, userBinds []sandbo
 
 func (l *DevcontainerLauncher) IsContainer(_ string) bool { return true }
 
+// EnsureProject ensures the devcontainer for projectPath is running.
 func (l *DevcontainerLauncher) EnsureProject(ctx context.Context, projectPath string) error {
 	ctx, cancel := context.WithTimeout(ctx, containerEnsureTimeout)
 	defer cancel()
-	_, err := l.mgr.EnsureInstance(ctx, projectPath, "", sandbox.StartOptions{})
+	opts := l.resolveStartOptions(projectPath)
+	_, err := l.mgr.EnsureInstance(ctx, projectPath, "", opts)
 	if err != nil {
 		return fmt.Errorf("devcontainer launcher: ensure project %s: %w", projectPath, err)
 	}
@@ -137,15 +223,20 @@ func (l *DevcontainerLauncher) AdoptFrame(ctx context.Context, frameID state.Fra
 	if projectPath == "" {
 		return nil, nil, nil
 	}
-	inst, err := l.mgr.EnsureInstance(ctx, projectPath, "", sandbox.StartOptions{})
+	opts := l.resolveStartOptions(projectPath)
+	inst, err := l.mgr.EnsureInstance(ctx, projectPath, "", opts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("devcontainer launcher: adopt frame %s: %w", frameID, err)
 	}
 	l.mgr.AcquireFrame(inst)
-	slog.Debug("devcontainer launcher: frame adopted (warm start)", "frame", frameID, "project", projectPath)
+	slog.Debug("devcontainer launcher: frame adopted (warm start)", "frame", frameID, "project", projectPath, "shared", opts.SharedMode)
 
-	runDir := ProjectRunDir(filepath.Join(l.dataDir, "run"), projectPath)
-	mounts := buildMounts(projectPath, inst.Internal.WorkspaceTarget(), runDir, inst.Internal.BindMounts())
+	runDir := ProjectRunDir(filepath.Join(l.dataDir, "run"), l.runDirKey(projectPath, opts))
+	wsHost, wsContainer := projectPath, inst.Internal.WorkspaceTarget()
+	if inst.Internal.IsShared() {
+		wsHost, wsContainer = "", ""
+	}
+	mounts := buildMounts(wsHost, wsContainer, runDir, inst.Internal.BindMounts())
 	return l.makeCleanup(frameID, inst), mounts, nil
 }
 
@@ -170,8 +261,13 @@ func (l *DevcontainerLauncher) makeCleanup(frameID state.FrameID, inst *sandbox.
 // The returned function is called per-EnsureInstance to compute the roost-specific
 // env/mounts overlay without triggering any image build.
 func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, proxy *CredProxyRunner, dataDir string, postCreateSubcmds []string) sandboxdc.OverlayFunc {
-	return func(projectPath, dcDir string) (sandboxdc.SpecOverlay, error) {
-		sb := resolveSandbox(projectPath)
+	return func(instanceKey, projectPath, dcDir string) (sandboxdc.SpecOverlay, error) {
+		// For shared containers use user-scope config only (no project-scope settings).
+		configKey := projectPath
+		if instanceKey == sandboxdc.SharedContainerKey {
+			configKey = ""
+		}
+		sb := resolveSandbox(configKey)
 		dc := sb.Devcontainer
 
 		proxySpec, scriptEnv, err := resolveOverlaySpecs(proxy, projectPath, dc)
@@ -179,7 +275,8 @@ func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, proxy *C
 			return sandboxdc.SpecOverlay{}, err
 		}
 
-		runDir, err := EnsureProjectRunDir(filepath.Join(dataDir, "run"), projectPath)
+		// Use instanceKey for run dir so all projects in shared mode share one run dir.
+		runDir, err := EnsureProjectRunDir(filepath.Join(dataDir, "run"), instanceKey)
 		if err != nil {
 			return sandboxdc.SpecOverlay{}, fmt.Errorf("devcontainer: ensure run dir: %w", err)
 		}

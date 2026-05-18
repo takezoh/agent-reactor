@@ -14,6 +14,16 @@ import (
 // ErrMissingImage is returned when devcontainer.json has neither image nor build.name.
 var ErrMissingImage = errors.New("devcontainer.json: image or build.name is required (roost does not build images)")
 
+// Isolation controls container sharing behaviour for a DevcontainerSpec.
+type Isolation int
+
+const (
+	// IsolationProject gives each project its own container (default).
+	IsolationProject Isolation = iota
+	// IsolationShared uses a single shared container for all projects.
+	IsolationShared
+)
+
 var localEnvRe = regexp.MustCompile(`\$\{localEnv:([A-Za-z_][A-Za-z0-9_]*)\}`)
 
 // envVarRe matches $VAR, ${VAR}, and ${containerEnv:VAR} for env layered expansion.
@@ -25,9 +35,11 @@ var envVarRe = regexp.MustCompile(`\$(?:\{containerEnv:([A-Za-z_][A-Za-z0-9_]*)\
 type DevcontainerSpec struct {
 	ProjectPath             string
 	Image                   string // resolved from devcontainer.json image: or build.name
+	Isolation               Isolation
 	ContainerEnv            map[string]string
 	RemoteEnv               map[string]string // applied via docker exec -e (like VS Code remote processes)
 	Mounts                  []string          // docker --mount or -v format
+	ExtraWorkspaces         []BindMount       // shared-mode: additional workspace bind-mounts
 	WorkspaceMount          string            // custom workspace mount (empty = default)
 	WorkspaceFolder         string            // container-side workspace path
 	WorkspaceFolderFallback string            // overlay-supplied fallback when WorkspaceFolder is unset
@@ -44,10 +56,11 @@ type DevcontainerSpec struct {
 type SpecOverlay struct {
 	Env                     map[string]string
 	Mounts                  []string
-	ExtraCreateArgs         []string // docker create options; injected before image name
-	PreExec                 string   // fallback preExecCommand if not set in devcontainer.json
-	PostCreate              []string // extra postCreateCommand argv; run after devcontainer.json's postCreateCommand
-	WorkspaceFolderFallback string   // fallback container workspace path when devcontainer.json omits workspaceFolder/workspaceMount
+	ExtraWorkspaces         []BindMount // shared-mode: additional workspace bind-mounts
+	ExtraCreateArgs         []string    // docker create options; injected before image name
+	PreExec                 string      // fallback preExecCommand if not set in devcontainer.json
+	PostCreate              []string    // extra postCreateCommand argv; run after devcontainer.json's postCreateCommand
+	WorkspaceFolderFallback string      // fallback container workspace path when devcontainer.json omits workspaceFolder/workspaceMount
 }
 
 func projectHash(projectPath string) string {
@@ -114,6 +127,7 @@ func (s *DevcontainerSpec) Apply(overlay SpecOverlay) {
 		s.RemoteEnv[k] = prependEnvVal(v, s.RemoteEnv[k])
 	}
 	s.Mounts = append(s.Mounts, overlay.Mounts...)
+	s.ExtraWorkspaces = append(s.ExtraWorkspaces, overlay.ExtraWorkspaces...)
 	s.ExtraCreateArgs = append(s.ExtraCreateArgs, overlay.ExtraCreateArgs...)
 	if s.PreExec == "" {
 		s.PreExec = overlay.PreExec
@@ -168,9 +182,9 @@ type BindMount struct {
 // BindMounts returns every bind mount this spec materialises at `docker create`
 // time. Used by the runtime to register host↔container path mappings with
 // pathmap so hook payload translation covers user-declared mounts. Sources
-// scanned: WorkspaceMount (with default fallback), Mounts (devcontainer.json),
-// RunArgs, ExtraCreateArgs. Non-bind mounts are skipped; the read-only flag
-// is ignored.
+// scanned: WorkspaceMount (with default fallback), ExtraWorkspaces (shared mode),
+// Mounts (devcontainer.json), RunArgs, ExtraCreateArgs. Non-bind mounts are
+// skipped; the read-only flag is ignored.
 func (s *DevcontainerSpec) BindMounts() []BindMount {
 	var out []BindMount
 	add := func(src, tgt string) {
@@ -179,10 +193,15 @@ func (s *DevcontainerSpec) BindMounts() []BindMount {
 		}
 	}
 
-	if s.WorkspaceMount == "" {
-		add(s.ProjectPath, s.WorkspaceTarget())
-	} else if src, tgt, ok := parseMountSpec(s.WorkspaceMount); ok {
-		add(src, tgt)
+	if s.Isolation != IsolationShared {
+		if s.WorkspaceMount == "" {
+			add(s.ProjectPath, s.WorkspaceTarget())
+		} else if src, tgt, ok := parseMountSpec(s.WorkspaceMount); ok {
+			add(src, tgt)
+		}
+	}
+	for _, ws := range s.ExtraWorkspaces {
+		add(ws.Source, ws.Target)
 	}
 	for _, m := range s.Mounts {
 		if src, tgt, ok := parseMountSpec(m); ok {
@@ -260,8 +279,12 @@ func (s *DevcontainerSpec) EffectiveUser() string {
 	return s.ContainerUser
 }
 
-// ContainerName returns the stable docker container name for this project.
+// ContainerName returns the stable docker container name.
+// In shared mode returns the fixed name "roost-shared"; otherwise a per-project hash.
 func (s *DevcontainerSpec) ContainerName() string {
+	if s.Isolation == IsolationShared {
+		return "roost-shared"
+	}
 	return "roost-" + projectHash(s.ProjectPath)
 }
 
@@ -271,7 +294,11 @@ func (s *DevcontainerSpec) BuildCreateArgs(image string) []string {
 	args := []string{
 		"--name", s.ContainerName(),
 		"--label", "roost-managed=1",
-		"--label", "roost-project=" + s.ProjectPath,
+	}
+	if s.Isolation == IsolationShared {
+		args = append(args, "--label", "roost-isolation=shared")
+	} else {
+		args = append(args, "--label", "roost-project="+s.ProjectPath)
 	}
 	if s.ContainerUser != "" {
 		args = append(args, "-u", s.ContainerUser)
@@ -280,11 +307,16 @@ func (s *DevcontainerSpec) BuildCreateArgs(image string) []string {
 	for k, v := range s.ContainerEnv {
 		args = append(args, "-e", k+"="+v)
 	}
-	wsMount := s.WorkspaceMount
-	if wsMount == "" {
-		wsMount = fmt.Sprintf("type=bind,source=%s,target=%s,consistency=cached", s.ProjectPath, s.WorkspaceTarget())
+	if s.Isolation != IsolationShared {
+		wsMount := s.WorkspaceMount
+		if wsMount == "" {
+			wsMount = fmt.Sprintf("type=bind,source=%s,target=%s,consistency=cached", s.ProjectPath, s.WorkspaceTarget())
+		}
+		args = append(args, "--mount", wsMount)
 	}
-	args = append(args, "--mount", wsMount)
+	for _, ws := range s.ExtraWorkspaces {
+		args = append(args, "--mount", fmt.Sprintf("type=bind,source=%s,target=%s,consistency=cached", ws.Source, ws.Target))
+	}
 	for _, m := range s.Mounts {
 		// devcontainer.json `mounts` values use --mount syntax (key=value pairs joined by ",").
 		// Short "host:container[:ro]" form has no "=" — route those to -v.

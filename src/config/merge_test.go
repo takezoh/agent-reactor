@@ -181,6 +181,42 @@ func TestMergeSandbox_HostExecOverlay_NilProject(t *testing.T) {
 	}
 }
 
+func TestMergeSandbox_IsolationOverride(t *testing.T) {
+	user := SandboxConfig{Isolation: "shared"}
+	project := &SandboxConfig{Isolation: "project"}
+	got := MergeSandbox(user, project)
+	if got.Isolation != "project" {
+		t.Errorf("Isolation = %q, want project (project wins)", got.Isolation)
+	}
+}
+
+func TestMergeSandbox_IsolationEmpty_UserWins(t *testing.T) {
+	user := SandboxConfig{Isolation: "shared"}
+	project := &SandboxConfig{}
+	got := MergeSandbox(user, project)
+	if got.Isolation != "shared" {
+		t.Errorf("Isolation = %q, want shared (project empty, user wins)", got.Isolation)
+	}
+}
+
+func TestMergeSandbox_DevcontainerPath_ProjectOverrides(t *testing.T) {
+	user := SandboxConfig{Devcontainer: DevcontainerConfig{Path: "/user/dc"}}
+	project := &SandboxConfig{Devcontainer: DevcontainerConfig{Path: "/project/dc"}}
+	got := MergeSandbox(user, project)
+	if got.Devcontainer.Path != "/project/dc" {
+		t.Errorf("Path = %q, want /project/dc (project wins)", got.Devcontainer.Path)
+	}
+}
+
+func TestMergeSandbox_DevcontainerPath_ProjectEmpty_UserWins(t *testing.T) {
+	user := SandboxConfig{Devcontainer: DevcontainerConfig{Path: "/user/dc"}}
+	project := &SandboxConfig{}
+	got := MergeSandbox(user, project)
+	if got.Devcontainer.Path != "/user/dc" {
+		t.Errorf("Path = %q, want /user/dc (project empty, user wins)", got.Devcontainer.Path)
+	}
+}
+
 func TestMergeMCPServers_nilProject(t *testing.T) {
 	user := map[string]MCPProxyServer{"obs": {Command: "obs-mcp"}}
 	got := mergeMCPServerMap(user, nil)

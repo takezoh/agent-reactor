@@ -30,6 +30,24 @@ func NewSandboxResolver(user SandboxConfig) *SandboxResolver {
 	}
 }
 
+// ResolveProjectScope returns the raw project-scope SandboxConfig for projectPath
+// without merging with user config. Returns nil when no project settings are found
+// or the file has no [sandbox] table.
+func (r *SandboxResolver) ResolveProjectScope(projectPath string) *SandboxConfig {
+	if projectPath == "" {
+		return nil
+	}
+	settingsPath := findProjectSettings(projectPath)
+	if settingsPath == "" {
+		return nil
+	}
+	proj, err := LoadProjectFrom(settingsPath)
+	if err != nil || proj == nil {
+		return nil
+	}
+	return proj.Sandbox
+}
+
 // Resolve returns the effective SandboxConfig for projectPath, merging user
 // and project scopes. An empty projectPath or absent settings file returns the
 // user config unchanged. Parse errors fall back to user config with a warning.

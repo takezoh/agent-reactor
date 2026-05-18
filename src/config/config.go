@@ -27,8 +27,11 @@ type Config struct {
 // SandboxConfig controls how agent processes are isolated.
 // mode = "direct" runs agents with no extra sandboxing (default).
 // mode = "devcontainer" runs each project via @devcontainers/cli.
+// isolation = "project" (default) gives each project its own container.
+// isolation = "shared" mounts all configured project roots and paths into one shared container.
 type SandboxConfig struct {
 	Mode         string             `toml:"mode"`
+	Isolation    string             `toml:"isolation"`
 	Devcontainer DevcontainerConfig `toml:"devcontainer"`
 	Proxy        ProxyConfig        `toml:"proxy"`
 }
@@ -39,18 +42,30 @@ func (s SandboxConfig) IsSandboxed() bool {
 	return s.Mode != "" && s.Mode != "direct"
 }
 
-// Validate rejects unknown sandbox modes and deprecated proxy config at startup.
+// Validate rejects unknown sandbox modes/isolation values and deprecated proxy config at startup.
 func (s SandboxConfig) Validate() error {
 	switch s.Mode {
 	case "", "direct", "devcontainer":
 	default:
 		return fmt.Errorf("sandbox.mode=%q is unknown; valid values: direct, devcontainer", s.Mode)
 	}
+	switch s.Isolation {
+	case "", "project", "shared":
+	default:
+		return fmt.Errorf("sandbox.isolation=%q is unknown; valid values: project, shared", s.Isolation)
+	}
 	return s.Proxy.GCP.Validate()
 }
 
 // DevcontainerConfig holds settings for the devcontainer sandbox mode.
 type DevcontainerConfig struct {
+	// Path, when non-empty, is the devcontainer.json directory to use instead of
+	// auto-discovery (<project>/.devcontainer → ~/.devcontainer). ~ is expanded.
+	// At user scope this is the shared container's devcontainer directory.
+	// At project scope this overrides the project's devcontainer path and implies
+	// project-level isolation even when the user has set isolation=shared.
+	Path string `toml:"path"`
+
 	// ExtraCreateArgs are appended verbatim to "docker create".
 	ExtraCreateArgs []string `toml:"extra_create_args"`
 

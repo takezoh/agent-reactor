@@ -17,6 +17,27 @@ type ContainerInfo struct {
 	State string // "running", "exited", "created", etc.
 }
 
+// FindSharedContainer returns the roost-shared container, or nil if not found.
+func FindSharedContainer(ctx context.Context) (*ContainerInfo, error) {
+	out, err := exec.CommandContext(ctx, "docker", "ps", "-a",
+		"--filter", "label=roost-managed=1",
+		"--filter", "label=roost-isolation=shared",
+		"--format", "{{.ID}}\t{{.State}}",
+	).Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker ps (shared): %w", err)
+	}
+	line := strings.TrimSpace(string(out))
+	if line == "" {
+		return nil, nil
+	}
+	parts := strings.SplitN(strings.SplitN(line, "\n", 2)[0], "\t", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("docker ps (shared): unexpected output %q", line)
+	}
+	return &ContainerInfo{ID: parts[0], State: parts[1]}, nil
+}
+
 // FindContainer returns the first roost-managed container for projectPath, or nil.
 func FindContainer(ctx context.Context, projectPath string) (*ContainerInfo, error) {
 	out, err := exec.CommandContext(ctx, "docker", "ps", "-a",

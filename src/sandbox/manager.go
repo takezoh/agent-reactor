@@ -24,9 +24,11 @@ type Instance[I any] struct {
 // instance. Options are only applied when the instance is freshly created; a
 // cached (running) instance ignores them.
 type StartOptions struct {
-	ExtraMounts []string          // additional bind-mount specs, "host:guest[:mode]"
-	Env         map[string]string // fixed env vars to set in the container
-	ForwardEnv  []string          // host env var names to pass through if set on the host
+	ExtraMounts     []string          // additional bind-mount specs, "type=bind,source=X,target=Y" or "host:guest[:mode]"
+	Env             map[string]string // fixed env vars to set in the container
+	ForwardEnv      []string          // host env var names to pass through if set on the host
+	DevcontainerDir string            // devcontainer.json directory override; empty = auto-discover
+	SharedMode      bool              // use shared container (isolation=shared) instead of per-project
 }
 
 // Manager is the backend-neutral lifecycle controller for project sandboxes.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,10 @@ import (
 	"github.com/takezoh/agent-roost/sandbox"
 	"github.com/takezoh/agent-roost/state"
 )
+
+// SharedContainerKey is the containers map key used for shared-mode instances.
+// Overlay functions compare against this to detect shared vs project context.
+const SharedContainerKey = "__shared__"
 
 // ContainerState holds runtime data for one project's devcontainer.
 type ContainerState struct {
@@ -48,6 +53,11 @@ func (cs *ContainerState) BindMounts() []BindMount {
 		return nil
 	}
 	return cs.spec.BindMounts()
+}
+
+// IsShared reports whether this container state belongs to the shared container.
+func (cs *ContainerState) IsShared() bool {
+	return cs != nil && cs.spec != nil && cs.spec.Isolation == IsolationShared
 }
 
 func (cs *ContainerState) ContainerID() string {
@@ -99,17 +109,22 @@ func New(overlayFn OverlayFunc) *Manager {
 }
 
 // EnsureInstance ensures the devcontainer for projectPath is running.
+// When opts.SharedMode is true, a single shared container is used across projects.
 // Returns an error if the image declared in devcontainer.json does not exist locally.
-func (m *Manager) EnsureInstance(ctx context.Context, projectPath, _ string, _ sandbox.StartOptions) (*sandbox.Instance[*ContainerState], error) {
-	_, err, _ := m.inflight.Do(projectPath, func() (any, error) {
-		return nil, m.ensureContainer(ctx, projectPath)
+func (m *Manager) EnsureInstance(ctx context.Context, projectPath, _ string, opts sandbox.StartOptions) (*sandbox.Instance[*ContainerState], error) {
+	instanceKey := projectPath
+	if opts.SharedMode {
+		instanceKey = SharedContainerKey
+	}
+	_, err, _ := m.inflight.Do(instanceKey, func() (any, error) {
+		return nil, m.ensureContainer(ctx, instanceKey, projectPath, opts)
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	m.mu.Lock()
-	cs := m.containers[projectPath]
+	cs := m.containers[instanceKey]
 	m.mu.Unlock()
 
 	image := ""
@@ -123,32 +138,58 @@ func (m *Manager) EnsureInstance(ctx context.Context, projectPath, _ string, _ s
 	}, nil
 }
 
-func (m *Manager) ensureContainer(ctx context.Context, projectPath string) error {
+func (m *Manager) ensureContainer(ctx context.Context, instanceKey, projectPath string, opts sandbox.StartOptions) error {
 	m.mu.Lock()
-	_, exists := m.containers[projectPath]
+	_, exists := m.containers[instanceKey]
 	m.mu.Unlock()
 	if exists {
 		return nil
 	}
 
+	var ctr *ContainerInfo
+	var dcPath string
+	var err error
+
 	t := time.Now()
 	findCtx, findCancel := context.WithTimeout(ctx, 5*time.Second)
-	ctr, err := FindContainer(findCtx, projectPath)
+	if opts.SharedMode {
+		ctr, err = FindSharedContainer(findCtx)
+	} else {
+		ctr, err = FindContainer(findCtx, projectPath)
+	}
 	findCancel()
-	slog.Info("devcontainer: stage", "name", "find", "elapsed", time.Since(t), "project", projectPath)
+	slog.Info("devcontainer: stage", "name", "find", "elapsed", time.Since(t), "project", projectPath, "shared", opts.SharedMode)
 	if err != nil {
 		return fmt.Errorf("devcontainer: find container: %w", err)
 	}
 
-	dcPath, err := FindDevcontainerPath(projectPath)
-	if err != nil {
-		return fmt.Errorf("devcontainer: %w", err)
+	if opts.SharedMode {
+		if opts.DevcontainerDir != "" {
+			p := filepath.Join(opts.DevcontainerDir, "devcontainer.json")
+			if _, statErr := os.Stat(p); statErr != nil {
+				return fmt.Errorf("devcontainer: shared devcontainer path %q: devcontainer.json not found", opts.DevcontainerDir)
+			}
+			dcPath = p
+		} else {
+			dcPath, err = UserBaseDC()
+			if err != nil {
+				return fmt.Errorf("devcontainer: %w", err)
+			}
+		}
+	} else {
+		dcPath, err = FindDevcontainerPath(projectPath, opts.DevcontainerDir)
+		if err != nil {
+			return fmt.Errorf("devcontainer: %w", err)
+		}
 	}
 
 	t = time.Now()
-	spec, err := m.loadSpec(projectPath, filepath.Dir(dcPath))
+	spec, err := m.loadSpec(instanceKey, projectPath, filepath.Dir(dcPath))
 	if err != nil {
 		return err
+	}
+	if opts.SharedMode {
+		spec.Isolation = IsolationShared
 	}
 	slog.Info("devcontainer: stage", "name", "load_spec", "image", spec.Image, "elapsed", time.Since(t), "project", projectPath)
 
@@ -162,19 +203,19 @@ func (m *Manager) ensureContainer(ctx context.Context, projectPath string) error
 	spec.ResolveContainerEnvPlaceholders(imgEnv)
 
 	if ctr != nil {
-		return m.reuseContainer(ctx, projectPath, ctr, spec)
+		return m.reuseContainer(ctx, instanceKey, ctr, spec)
 	}
-	return m.createContainer(ctx, projectPath, image, spec)
+	return m.createContainer(ctx, instanceKey, image, spec)
 }
 
-func (m *Manager) loadSpec(projectPath, dcDir string) (*DevcontainerSpec, error) {
+func (m *Manager) loadSpec(instanceKey, projectPath, dcDir string) (*DevcontainerSpec, error) {
 	spec, err := LoadSpec(projectPath, dcDir)
 	if err != nil {
 		return nil, fmt.Errorf("devcontainer: load spec: %w", err)
 	}
 
 	if m.overlayFn != nil {
-		overlay, err := m.overlayFn(projectPath, dcDir)
+		overlay, err := m.overlayFn(instanceKey, projectPath, dcDir)
 		if err != nil {
 			return nil, fmt.Errorf("devcontainer: overlay: %w", err)
 		}
@@ -183,60 +224,60 @@ func (m *Manager) loadSpec(projectPath, dcDir string) (*DevcontainerSpec, error)
 	return spec, nil
 }
 
-func (m *Manager) reuseContainer(ctx context.Context, projectPath string, ctr *ContainerInfo, spec *DevcontainerSpec) error {
+func (m *Manager) reuseContainer(ctx context.Context, instanceKey string, ctr *ContainerInfo, spec *DevcontainerSpec) error {
 	if ctr.State != "running" {
-		slog.Info("devcontainer: starting existing container", "id", shortID(ctr.ID), "state", ctr.State, "project", projectPath)
+		slog.Info("devcontainer: starting existing container", "id", shortID(ctr.ID), "state", ctr.State, "key", instanceKey)
 		t := time.Now()
 		startCtx, startCancel := context.WithTimeout(ctx, 30*time.Second)
 		err := StartContainer(startCtx, ctr.ID)
 		startCancel()
-		slog.Info("devcontainer: stage", "name", "start_existing", "elapsed", time.Since(t), "project", projectPath)
+		slog.Info("devcontainer: stage", "name", "start_existing", "elapsed", time.Since(t), "key", instanceKey)
 		if err != nil {
 			return fmt.Errorf("devcontainer: %w", err)
 		}
 	} else {
-		slog.Info("devcontainer: reusing running container", "id", shortID(ctr.ID), "project", projectPath)
+		slog.Info("devcontainer: reusing running container", "id", shortID(ctr.ID), "key", instanceKey)
 	}
 
 	m.mu.Lock()
-	m.containers[projectPath] = &ContainerState{containerID: ctr.ID, spec: spec}
+	m.containers[instanceKey] = &ContainerState{containerID: ctr.ID, spec: spec}
 	m.mu.Unlock()
 	return nil
 }
 
-func (m *Manager) createContainer(ctx context.Context, projectPath, image string, spec *DevcontainerSpec) error {
-	containerID, err := m.createAndStart(ctx, projectPath, image, spec)
+func (m *Manager) createContainer(ctx context.Context, instanceKey, image string, spec *DevcontainerSpec) error {
+	containerID, err := m.createAndStart(ctx, instanceKey, image, spec)
 	if err != nil {
 		return err
 	}
 
 	m.mu.Lock()
-	m.containers[projectPath] = &ContainerState{containerID: containerID, spec: spec}
+	m.containers[instanceKey] = &ContainerState{containerID: containerID, spec: spec}
 	m.mu.Unlock()
 
 	m.runPostCreate(containerID, spec)
-	slog.Info("devcontainer: container ready", "id", shortID(containerID), "project", projectPath)
+	slog.Info("devcontainer: container ready", "id", shortID(containerID), "key", instanceKey)
 	return nil
 }
 
-func (m *Manager) createAndStart(ctx context.Context, projectPath, image string, spec *DevcontainerSpec) (string, error) {
+func (m *Manager) createAndStart(ctx context.Context, instanceKey, image string, spec *DevcontainerSpec) (string, error) {
 	createArgs := spec.BuildCreateArgs(image)
-	slog.Info("devcontainer: creating container", "image", image, "project", projectPath)
+	slog.Info("devcontainer: creating container", "image", image, "key", instanceKey)
 	t := time.Now()
 	createCtx, createCancel := context.WithTimeout(ctx, 30*time.Second)
 	containerID, err := CreateContainer(createCtx, createArgs)
 	createCancel()
-	slog.Info("devcontainer: stage", "name", "create", "elapsed", time.Since(t), "project", projectPath)
+	slog.Info("devcontainer: stage", "name", "create", "elapsed", time.Since(t), "key", instanceKey)
 	if err != nil {
 		return "", fmt.Errorf("devcontainer: %w", err)
 	}
 
-	slog.Info("devcontainer: starting container", "id", shortID(containerID), "project", projectPath)
+	slog.Info("devcontainer: starting container", "id", shortID(containerID), "key", instanceKey)
 	t = time.Now()
 	startCtx, startCancel := context.WithTimeout(ctx, 30*time.Second)
 	err = StartContainer(startCtx, containerID)
 	startCancel()
-	slog.Info("devcontainer: stage", "name", "start_new", "elapsed", time.Since(t), "project", projectPath)
+	slog.Info("devcontainer: stage", "name", "start_new", "elapsed", time.Since(t), "key", instanceKey)
 	if err != nil {
 		return "", fmt.Errorf("devcontainer: %w", err)
 	}
@@ -328,12 +369,25 @@ func (m *Manager) ReleaseFrame(inst *sandbox.Instance[*ContainerState]) bool {
 }
 
 // DestroyInstance stops and removes the container.
+// For shared containers only the in-memory entry is cleared; the docker container
+// persists so it can be reused by the next frame or roost restart.
 // Image layers are kept by Docker so the next "docker create" reuses the cache.
 func (m *Manager) DestroyInstance(ctx context.Context, inst *sandbox.Instance[*ContainerState]) error {
 	cs := inst.Internal
+
+	instanceKey := inst.ProjectPath
+	if cs.IsShared() {
+		instanceKey = SharedContainerKey
+	}
+
 	m.mu.Lock()
-	delete(m.containers, inst.ProjectPath)
+	delete(m.containers, instanceKey)
 	m.mu.Unlock()
+
+	if cs.IsShared() {
+		slog.Debug("devcontainer: shared container released (container kept alive)")
+		return nil
+	}
 
 	cs.mu.Lock()
 	id := cs.containerID

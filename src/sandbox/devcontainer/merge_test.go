@@ -43,6 +43,39 @@ func TestProjectBaseDC_notFound(t *testing.T) {
 	}
 }
 
+// ── FindDevcontainerPath with override ────────────────────────────────────────
+
+func TestFindDevcontainerPath_override_found(t *testing.T) {
+	override := setupProjectDC(t, `{"image":"ubuntu"}`)
+	got, err := FindDevcontainerPath("/some/project", filepath.Join(override, ".devcontainer"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(override, ".devcontainer", "devcontainer.json")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFindDevcontainerPath_override_notFound(t *testing.T) {
+	_, err := FindDevcontainerPath("/some/project", "/nonexistent/path")
+	if err == nil {
+		t.Error("expected error for nonexistent override path, got nil")
+	}
+}
+
+func TestFindDevcontainerPath_no_override_falls_through(t *testing.T) {
+	project := setupProjectDC(t, `{"image":"ubuntu"}`)
+	got, err := FindDevcontainerPath(project, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(project, ".devcontainer", "devcontainer.json")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 // ── TranslateWorkDir ──────────────────────────────────────────────────────────
 
 func TestTranslateWorkDir(t *testing.T) {
