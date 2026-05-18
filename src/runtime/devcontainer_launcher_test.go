@@ -305,6 +305,29 @@ func TestResolveFrameContext_SharedMode_DropsProject(t *testing.T) {
 	}
 }
 
+// Regression guard: in project mode, ResolveFrameContext must pass the actual
+// project (not "") to env-script and credproxy so per-project credentials
+// resolve correctly. Project mode keeps the legacy behavior where every frame
+// shares the same project, so this is straight-forward — but if shared-mode
+// logic ever bled into project mode it would show up here.
+func TestResolveFrameContext_ProjectMode_PassesProjectPath(t *testing.T) {
+	var lastKey string
+	l := &DevcontainerLauncher{
+		resolveSandbox: func(p string) config.SandboxConfig {
+			lastKey = p
+			return config.SandboxConfig{}
+		},
+		resolveProjectScope: func(string) *config.SandboxConfig { return nil },
+	}
+	_, err := l.ResolveFrameContext(context.Background(), "/workspace/myapp", "frame-1")
+	if err != nil {
+		t.Fatalf("ResolveFrameContext: %v", err)
+	}
+	if lastKey != "/workspace/myapp" {
+		t.Errorf("project mode: resolveSandbox called with %q, want /workspace/myapp", lastKey)
+	}
+}
+
 func TestResolveFrameContext_EmptyProjectPath(t *testing.T) {
 	// Host launches that accidentally hit the devcontainer launcher must not panic.
 	l := &DevcontainerLauncher{
