@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -32,9 +33,6 @@ type RuntimeHook interface {
 	// ContainerExecConfig returns docker exec parameters for the project's devcontainer,
 	// or nil if the project runs directly on the host.
 	ContainerExecConfig(ctx context.Context, project string) (*ContainerExecConfig, error)
-	// HelperBinaryPath resolves a helper binary (e.g. "sockbridge") using the
-	// canonical exe-adjacent + libexec search implemented in runtime/rundir.go.
-	HelperBinaryPath(name string) (string, error)
 }
 
 // ContainerExecConfig carries the docker exec parameters needed to run a
@@ -184,7 +182,7 @@ func (b *Backend) isContainerProject() (bool, error) {
 }
 
 func (b *Backend) startHostBridge() error {
-	bin, err := b.runtime.HelperBinaryPath("sockbridge")
+	bin, err := findHelperBin("sockbridge")
 	if err != nil {
 		return err
 	}
@@ -307,4 +305,19 @@ func (b *Backend) emit(frameID state.FrameID, kind state.SubsystemEventKind, pay
 	})
 }
 
+// findHelperBin locates a helper binary by checking the directory of the current
+// executable first, then PATH.
+func findHelperBin(name string) (string, error) {
+	if selfPath, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(selfPath), name)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", fmt.Errorf("stream backend: %s binary not found in PATH or alongside roost", name)
+	}
+	return path, nil
+}
 
