@@ -68,7 +68,7 @@ func reduceCreateSession(s State, connID ConnID, reqID string, p CreateSessionPa
 		return s, []Effect{errResp(connID, reqID, ErrCodeUnsupported, "no driver registered for command "+command)}
 	}
 
-	driverState, setupJob, err := prepareSessionDriver(s, drv, sessID, p.Project, command, p.Options)
+	driverState, createLaunch, err := prepareSessionDriver(s, drv, sessID, p.Project, command, p.Options)
 	if err != nil {
 		return s, []Effect{errResp(connID, reqID, ErrCodeInvalidArgument, err.Error())}
 	}
@@ -93,24 +93,8 @@ func reduceCreateSession(s State, connID ConnID, reqID string, p CreateSessionPa
 			Driver:      driverState,
 		}},
 	}
-	if setupJob != nil {
-		s.NextJobID++
-		jobID := s.NextJobID
-		s.Jobs = cloneJobs(s.Jobs)
-		s.Jobs[jobID] = JobMeta{SessionID: sessID, FrameID: rootFrameID, StartedAt: s.Now}
-		s.PendingCreates = clonePendingCreates(s.PendingCreates)
-		s.PendingCreates[jobID] = PendingCreate{
-			Session:    session,
-			FrameID:    rootFrameID,
-			ReplyConn:  connID,
-			ReplyReqID: reqID,
-		}
-		return s, []Effect{
-			EffStartJob{JobID: jobID, Input: setupJob},
-		}
-	}
 
-	launch, err := drv.PrepareLaunch(driverState, LaunchModeCreate, p.Project, command, p.Options, isSandboxed(s, p.Project, p.Sandbox))
+	launch, err := drv.PrepareLaunch(driverState, LaunchModeCreate, p.Project, createLaunch.Command, createLaunch.Options, isSandboxed(s, p.Project, p.Sandbox))
 	if err != nil {
 		return s, []Effect{errResp(connID, reqID, ErrCodeInvalidArgument, err.Error())}
 	}
@@ -137,19 +121,17 @@ func resolveCreateCommand(s State, command string) string {
 	return command
 }
 
-func prepareSessionDriver(s State, drv Driver, sessID SessionID, project, command string, options LaunchOptions) (DriverState, JobInput, error) {
+func prepareSessionDriver(s State, drv Driver, sessID SessionID, project, command string, options LaunchOptions) (DriverState, CreateLaunch, error) {
 	driverState := drv.NewState(s.Now)
-	var setupJob JobInput
+	launch := CreateLaunch{Command: command, StartDir: project, Options: options}
 	if planner, ok := drv.(CreateSessionPlanner); ok {
-		var plan CreatePlan
 		var err error
-		driverState, plan, err = planner.PrepareCreate(driverState, sessID, project, command, options)
+		driverState, launch, err = planner.PrepareCreate(driverState, sessID, project, command, options)
 		if err != nil {
-			return nil, nil, err
+			return nil, CreateLaunch{}, err
 		}
-		setupJob = plan.SetupJob
 	}
-	return driverState, setupJob, nil
+	return driverState, launch, nil
 }
 
 func reducePushDriver(s State, connID ConnID, reqID string, p PushDriverParams) (State, []Effect) {
@@ -185,7 +167,7 @@ func pushDriverInternal(s State, sid SessionID, project, rawCommand string, opti
 		return s, nil, fmt.Errorf("no driver registered for command %s", command)
 	}
 
-	driverState, setupJob, err := prepareSessionDriver(s, drv, sid, project, command, options)
+	driverState, createLaunch, err := prepareSessionDriver(s, drv, sid, project, command, options)
 	if err != nil {
 		return s, nil, err
 	}
@@ -217,17 +199,7 @@ func pushDriverInternal(s State, sid SessionID, project, rawCommand string, opti
 	s.Sessions = cloneSessions(s.Sessions)
 	s.Sessions[sid] = sess
 
-	if setupJob != nil {
-		s.NextJobID++
-		jobID := s.NextJobID
-		s.Jobs = cloneJobs(s.Jobs)
-		s.Jobs[jobID] = JobMeta{SessionID: sid, FrameID: frame.ID, StartedAt: s.Now}
-		s.PendingCreates = clonePendingCreates(s.PendingCreates)
-		s.PendingCreates[jobID] = PendingCreate{Session: sess, FrameID: frame.ID, ReplyConn: connID, ReplyReqID: reqID}
-		return s, []Effect{EffStartJob{JobID: jobID, Input: setupJob}}, nil
-	}
-
-	launch, err := drv.PrepareLaunch(driverState, LaunchModeCreate, project, command, options, isSandboxed(s, project, sess.Sandbox))
+	launch, err := drv.PrepareLaunch(driverState, LaunchModeCreate, project, createLaunch.Command, createLaunch.Options, isSandboxed(s, project, sess.Sandbox))
 	if err != nil {
 		return s, nil, err
 	}
@@ -291,11 +263,11 @@ func resolveForkDrv(s State, connID ConnID, reqID string, rootF SessionFrame) (D
 	return rootDrv, forkDrv, forkCommand, true, nil
 }
 
-// buildForkSession constructs and enqueues (or directly spawns) the forked session.
+// buildForkSession constructs and spawns the forked session.
 // Worktree creation is deliberately skipped: the fork shares the original's working directory.
 func buildForkSession(s State, connID ConnID, reqID string, sess Session, sid SessionID, rootF SessionFrame, rootDrv, forkDrv Driver, forkCommand string) (State, []Effect) {
 	opts := LaunchOptions{Worktree: WorktreeOption{Enabled: false}}
-	driverState, setupJob, err := prepareSessionDriver(s, forkDrv, sid, sess.Project, forkCommand, opts)
+	driverState, _, err := prepareSessionDriver(s, forkDrv, sid, sess.Project, forkCommand, opts)
 	if err != nil {
 		return s, []Effect{errResp(connID, reqID, ErrCodeInvalidArgument, err.Error())}
 	}
@@ -307,24 +279,13 @@ func buildForkSession(s State, connID ConnID, reqID string, sess Session, sid Se
 		}
 	}
 
-	return spawnForkSession(s, connID, reqID, sess, forkDrv, driverState, forkCommand, opts, setupJob)
+	return spawnForkSession(s, connID, reqID, sess, forkDrv, driverState, forkCommand, opts)
 }
 
-func spawnForkSession(s State, connID ConnID, reqID string, sess Session, forkDrv Driver, driverState DriverState, forkCommand string, opts LaunchOptions, setupJob JobInput) (State, []Effect) {
+func spawnForkSession(s State, connID ConnID, reqID string, sess Session, forkDrv Driver, driverState DriverState, forkCommand string, opts LaunchOptions) (State, []Effect) {
 	newSessID := allocSessionID()
 	rootFrameID := allocFrameID()
 	newSess := makeForkSession(s, sess, newSessID, rootFrameID, forkCommand, opts, driverState)
-	if setupJob != nil {
-		s.NextJobID++
-		jobID := s.NextJobID
-		s.Jobs = cloneJobs(s.Jobs)
-		s.Jobs[jobID] = JobMeta{SessionID: newSessID, FrameID: rootFrameID, StartedAt: s.Now}
-		s.PendingCreates = clonePendingCreates(s.PendingCreates)
-		s.PendingCreates[jobID] = PendingCreate{Session: newSess, FrameID: rootFrameID, ReplyConn: connID, ReplyReqID: reqID}
-		s.Sessions = cloneSessions(s.Sessions)
-		s.Sessions[newSessID] = newSess
-		return s, []Effect{EffStartJob{JobID: jobID, Input: setupJob}}
-	}
 	launch, err := forkDrv.PrepareLaunch(driverState, LaunchModeCreate, sess.Project, forkCommand, opts, isSandboxed(s, sess.Project, sess.Sandbox))
 	if err != nil {
 		return s, []Effect{errResp(connID, reqID, ErrCodeInvalidArgument, err.Error())}
@@ -359,26 +320,6 @@ func makeForkSession(s State, src Session, newSessID SessionID, rootFrameID Fram
 	}
 }
 
-// worktreePathReferenced reports whether any session other than exceptSession
-// has a frame whose ManagedWorktreePath matches path. Used by reduceStopSession
-// to avoid deleting a worktree that is still referenced by another session.
-func worktreePathReferenced(s State, path string, exceptSession SessionID) bool {
-	for sid, sess := range s.Sessions {
-		if sid == exceptSession {
-			continue
-		}
-		for _, f := range sess.Frames {
-			drv := GetDriver(f.Command)
-			if provider, ok := drv.(ManagedWorktreeProvider); ok {
-				if provider.ManagedWorktreePath(f.Driver) == path {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 func reduceStopSession(s State, connID ConnID, reqID string, p StopSessionParams) (State, []Effect) {
 	sid := SessionID(p.SessionID)
 	sess, ok := s.Sessions[sid]
@@ -406,23 +347,6 @@ func reduceStopSession(s State, connID ConnID, reqID string, p StopSessionParams
 			EffUnwatchFile{FrameID: frame.ID},
 		)
 	}
-	if path := sessionManagedWorktreePath(removed); path != "" {
-		if !worktreePathReferenced(s, path, sid) {
-			effs = append(effs, EffRemoveManagedWorktree{Path: path})
-		}
-	}
 	effs = append(effs, okResp(connID, reqID, nil), EffPersistSnapshot{})
 	return s, effs
-}
-
-func sessionManagedWorktreePath(frames []SessionFrame) string {
-	for _, frame := range frames {
-		drv := GetDriver(frame.Command)
-		if provider, ok := drv.(ManagedWorktreeProvider); ok {
-			if path := provider.ManagedWorktreePath(frame.Driver); path != "" {
-				return path
-			}
-		}
-	}
-	return ""
 }

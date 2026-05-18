@@ -233,6 +233,18 @@ type DEvStatusLineClick struct {
 
 func (DEvStatusLineClick) isDriverEvent() {}
 
+// DEvWorktreeResolved is delivered to the driver after the subsystem's
+// BindFrame has created a managed worktree for this frame. StartDir is
+// the worktree directory; Name is the petname used for the worktree.
+// Drivers update their persisted StartDir/WorktreeName so cold-start
+// PrepareLaunch can reconstruct the same directory without re-creating.
+type DEvWorktreeResolved struct {
+	StartDir string
+	Name     string
+}
+
+func (DEvWorktreeResolved) isDriverEvent() {}
+
 // ViewProvider is an optional capability for drivers that provide a
 // custom TUI view.
 type ViewProvider interface {
@@ -363,26 +375,13 @@ type CreateLaunch struct {
 	Options  LaunchOptions
 }
 
-// CreatePlan is the driver-owned create-session plan. Drivers that do
-// not need any setup simply return Launch with SetupJob nil.
-type CreatePlan struct {
-	Launch   CreateLaunch
-	SetupJob JobInput
-}
-
 // CreateSessionPlanner is an optional driver extension for commands
 // that need to transform or prepare their start environment during
-// create-session before tmux spawn happens.
+// create-session before tmux spawn happens. The subsystem resolves any
+// deferred setup (e.g. worktree creation) during BindFrame; drivers
+// only strip tool-specific flags and set LaunchOptions.
 type CreateSessionPlanner interface {
-	PrepareCreate(s DriverState, sessionID SessionID, project, command string, options LaunchOptions) (DriverState, CreatePlan, error)
-	CompleteCreate(s DriverState, command string, options LaunchOptions, result any, err error) (DriverState, CreateLaunch, error)
-}
-
-// ManagedWorktreeProvider is an optional driver extension for exposing
-// a roost-managed worktree path that should be cleaned up on launch
-// failure.
-type ManagedWorktreeProvider interface {
-	ManagedWorktreePath(s DriverState) string
+	PrepareCreate(s DriverState, sessionID SessionID, project, command string, options LaunchOptions) (DriverState, CreateLaunch, error)
 }
 
 // Forkable is an optional driver extension for drivers whose CLI supports

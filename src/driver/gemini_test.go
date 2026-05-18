@@ -24,97 +24,46 @@ func newGemini(t *testing.T) (GeminiDriver, GeminiState, time.Time) {
 
 func TestGeminiPrepareCreateWithoutWorktree(t *testing.T) {
 	d, gs, _ := newGemini(t)
-	next, plan, err := d.PrepareCreate(gs, "sess-1", "/repo", "gemini --model flash", state.LaunchOptions{})
+	_, plan, err := d.PrepareCreate(gs, "sess-1", "/repo", "gemini --model flash", state.LaunchOptions{})
 	if err != nil {
 		t.Fatalf("PrepareCreate error: %v", err)
 	}
-	got := next.(GeminiState)
-	if got.WorktreeName != "" {
-		t.Fatalf("unexpected worktree state: %+v", next)
+	if plan.Command != "gemini --model flash" || plan.StartDir != "/repo" {
+		t.Fatalf("launch = %+v", plan)
 	}
-	if got.StartDir != "/repo" {
-		t.Fatalf("StartDir = %q, want /repo", got.StartDir)
-	}
-	if plan.SetupJob != nil {
-		t.Fatal("expected no setup job")
-	}
-	if plan.Launch.Command != "gemini --model flash" || plan.Launch.StartDir != "/repo" {
-		t.Fatalf("launch = %+v", plan.Launch)
+	if plan.Options.Worktree.Enabled {
+		t.Fatal("expected worktree disabled")
 	}
 }
 
 func TestGeminiPrepareCreateWithWorktree(t *testing.T) {
 	d, gs, _ := newGemini(t)
-	next, plan, err := d.PrepareCreate(gs, "sess-1", "/repo", "gemini --worktree feature", state.LaunchOptions{})
+	_, plan, err := d.PrepareCreate(gs, "sess-1", "/repo", "gemini --worktree feature", state.LaunchOptions{})
 	if err != nil {
 		t.Fatalf("PrepareCreate error: %v", err)
 	}
-	got := next.(GeminiState)
-	if got.WorktreeName != "feature" {
-		t.Fatalf("WorktreeName = %q", got.WorktreeName)
+	if plan.Command != "gemini" {
+		t.Fatalf("launch command = %q, want worktree flag stripped", plan.Command)
 	}
-	if plan.Launch.Command != "gemini" {
-		t.Fatalf("launch command = %q", plan.Launch.Command)
-	}
-	in, ok := plan.SetupJob.(WorktreeSetupInput)
-	if !ok {
-		t.Fatalf("SetupJob = %T, want WorktreeSetupInput", plan.SetupJob)
-	}
-	if in.RepoDir != "/repo" || len(in.CandidateNames) != 1 || in.CandidateNames[0] != "feature" {
-		t.Fatalf("setup input = %+v", in)
+	if !plan.Options.Worktree.Enabled {
+		t.Fatal("expected worktree enabled")
 	}
 }
 
 func TestGeminiPrepareCreateWithWorkspaceAlias(t *testing.T) {
 	d, gs, _ := newGemini(t)
-	next, plan, err := d.PrepareCreate(gs, "sess-1", "/repo", "gemini --workspace feature", state.LaunchOptions{})
+	_, plan, err := d.PrepareCreate(gs, "sess-1", "/repo", "gemini --workspace feature", state.LaunchOptions{})
 	if err != nil {
 		t.Fatalf("PrepareCreate error: %v", err)
 	}
-	got := next.(GeminiState)
-	if got.WorktreeName != "feature" {
-		t.Fatalf("WorktreeName = %q", got.WorktreeName)
-	}
-	if _, ok := plan.SetupJob.(WorktreeSetupInput); !ok {
-		t.Fatalf("SetupJob = %T, want WorktreeSetupInput", plan.SetupJob)
-	}
-}
-
-func TestGeminiCompleteCreateWithWorktree(t *testing.T) {
-	d, gs, _ := newGemini(t)
-	gs.WorktreeName = "feature"
-	next, launch, err := d.CompleteCreate(gs, "gemini --worktree feature", state.LaunchOptions{}, WorktreeSetupResult{
-		StartDir: "/repo/.roost/worktrees/feature",
-		Name:     "feature",
-	}, nil)
-	if err != nil {
-		t.Fatalf("CompleteCreate error: %v", err)
-	}
-	got := next.(GeminiState)
-	if got.ManagedWorkingDir != "/repo/.roost/worktrees/feature" || got.StartDir != "/repo/.roost/worktrees/feature" {
-		t.Fatalf("working dir fields = %+v", got)
-	}
-	if launch.StartDir != "/repo/.roost/worktrees/feature" {
-		t.Fatalf("launch = %+v", launch)
-	}
-}
-
-func TestGeminiManagedWorktreePath(t *testing.T) {
-	d, gs, _ := newGemini(t)
-	gs.ManagedWorkingDir = "/repo/.roost/worktrees/feature"
-	if got := d.ManagedWorktreePath(gs); got != "/repo/.roost/worktrees/feature" {
-		t.Fatalf("ManagedWorktreePath = %q", got)
-	}
-	gs.ManagedWorkingDir = "/repo/feature"
-	if got := d.ManagedWorktreePath(gs); got != "" {
-		t.Fatalf("ManagedWorktreePath = %q, want empty", got)
+	if !plan.Options.Worktree.Enabled {
+		t.Fatal("expected worktree enabled via --workspace alias")
 	}
 }
 
 func TestGeminiPrepareLaunchManagedWorktreeSkipsFlag(t *testing.T) {
 	d, gs, _ := newGemini(t)
 	gs.StartDir = "/repo/.roost/worktrees/feature"
-	gs.ManagedWorkingDir = "/repo/.roost/worktrees/feature"
 	plan, err := d.PrepareLaunch(gs, state.LaunchModeCreate, "/repo", "gemini", state.LaunchOptions{
 		Worktree: state.WorktreeOption{Enabled: true},
 	}, false)
@@ -122,7 +71,7 @@ func TestGeminiPrepareLaunchManagedWorktreeSkipsFlag(t *testing.T) {
 		t.Fatalf("PrepareLaunch error: %v", err)
 	}
 	if plan.Command != "gemini" {
-		t.Errorf("PrepareLaunch.Command = %q, want %q (no --worktree when managed)", plan.Command, "gemini")
+		t.Errorf("PrepareLaunch.Command = %q, want %q", plan.Command, "gemini")
 	}
 	if plan.StartDir != "/repo/.roost/worktrees/feature" {
 		t.Errorf("StartDir = %q", plan.StartDir)
@@ -135,12 +84,15 @@ func TestGeminiPrepareLaunchWorktreeFromCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareLaunch error: %v", err)
 	}
-	if plan.Command != "gemini --worktree" {
-		t.Errorf("PrepareLaunch.Command = %q, want %q", plan.Command, "gemini --worktree")
+	if plan.Command != "gemini" {
+		t.Errorf("PrepareLaunch.Command = %q, want worktree flag stripped", plan.Command)
+	}
+	if !plan.Options.Worktree.Enabled {
+		t.Fatal("expected Options.Worktree.Enabled = true")
 	}
 }
 
-func TestGeminiPrepareLaunchAddsWorktreeFlagFromOptions(t *testing.T) {
+func TestGeminiPrepareLaunchWorktreeEnabledFromOptions(t *testing.T) {
 	d, gs, _ := newGemini(t)
 	plan, err := d.PrepareLaunch(gs, state.LaunchModeCreate, "/repo", "gemini", state.LaunchOptions{
 		Worktree: state.WorktreeOption{Enabled: true},
@@ -148,11 +100,11 @@ func TestGeminiPrepareLaunchAddsWorktreeFlagFromOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareLaunch error: %v", err)
 	}
-	if got := plan.Command; got != "gemini --worktree" {
-		t.Fatalf("PrepareLaunch.Command = %q, want %q", got, "gemini --worktree")
+	if plan.Command != "gemini" {
+		t.Fatalf("PrepareLaunch.Command = %q, want %q", plan.Command, "gemini")
 	}
-	if plan.Options.Worktree.Enabled {
-		t.Fatal("PrepareLaunch.Options.Worktree.Enabled should be false")
+	if !plan.Options.Worktree.Enabled {
+		t.Fatal("expected Options.Worktree.Enabled = true")
 	}
 }
 
@@ -480,16 +432,16 @@ func TestGeminiEmptySessionIDDropped(t *testing.T) {
 	}
 }
 
-func TestGeminiPersistRestoreManagedWorktree(t *testing.T) {
+func TestGeminiPersistRestoreWorktreeName(t *testing.T) {
 	d, gs, now := newGemini(t)
 	gs.GeminiSessionID = "sess-1"
-	gs.ManagedWorkingDir = "/repo/.roost/worktrees/gemini-1234"
+	gs.WorktreeName = "gemini-1234"
 
 	bag := d.Persist(gs)
 	restored := d.Restore(bag, now).(GeminiState)
 
-	if restored.ManagedWorkingDir != gs.ManagedWorkingDir {
-		t.Fatalf("ManagedWorkingDir = %q, want %q", restored.ManagedWorkingDir, gs.ManagedWorkingDir)
+	if restored.WorktreeName != gs.WorktreeName {
+		t.Fatalf("WorktreeName = %q, want %q", restored.WorktreeName, gs.WorktreeName)
 	}
 }
 

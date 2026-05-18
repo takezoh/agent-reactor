@@ -11,15 +11,13 @@ import (
 const (
 	GeminiDriverName = "gemini"
 
-	geminiKeyGeminiSessionID   = "gemini_session_id"
-	geminiKeyManagedWorkingDir = "managed_working_dir"
+	geminiKeyGeminiSessionID = "gemini_session_id"
 )
 
 type GeminiState struct {
 	CommonState
 
 	GeminiSessionID    string
-	ManagedWorkingDir  string
 	CurrentTool        string
 	TranscriptInFlight bool
 	WatchedFile        string
@@ -91,32 +89,27 @@ func (d GeminiDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, 
 	if gs.StartDir != "" {
 		startDir = gs.StartDir
 	}
-	req, stripped := resolveWorktreeRequest(baseCommand, options, "--worktree", "--workspace")
-	command := stripped
-	if gs.ManagedWorkingDir == "" {
-		command = appendFlag(stripped, "--worktree", req.Enabled)
-	}
+	req, command := resolveWorktreeRequest(baseCommand, options, "--worktree", "--workspace")
+	command = strings.TrimSpace(command)
 	if sandboxed && !hasFlagToken(command, "--yolo") {
 		command = appendFlag(command, "--yolo", true)
 	}
 	if mode != state.LaunchModeColdStart || gs.GeminiSessionID == "" || !isAlphanumHyphen(gs.GeminiSessionID) {
-		return state.LaunchPlan{Command: command, StartDir: startDir, Stdin: options.InitialInput}, nil
+		return state.LaunchPlan{
+			Command:  command,
+			StartDir: startDir,
+			Stdin:    options.InitialInput,
+			Options:  state.LaunchOptions{Worktree: state.WorktreeOption{Enabled: req.Enabled}},
+		}, nil
 	}
-	command = strings.TrimSpace(stripGeminiWorktreeFlag(command))
 	if strings.Contains(command, "--resume") || strings.Contains(command, " -r") {
 		return state.LaunchPlan{Command: command, StartDir: startDir, Stdin: options.InitialInput}, nil
 	}
 	return state.LaunchPlan{
 		Command:  command + " --resume " + gs.GeminiSessionID,
 		StartDir: startDir,
-		Options:  state.LaunchOptions{},
 		Stdin:    options.InitialInput,
 	}, nil
-}
-
-func stripGeminiWorktreeFlag(command string) string {
-	_, stripped := parseWorktreeFlags(command, "--worktree", "--workspace")
-	return stripped
 }
 
 func (d GeminiDriver) Step(prev state.DriverState, ctx state.FrameContext, ev state.DriverEvent) (state.DriverState, []state.Effect, state.View) {
@@ -147,6 +140,10 @@ func (d GeminiDriver) Step(prev state.DriverState, ctx state.FrameContext, ev st
 		next := d.handleJobResult(gs, e)
 		return next, nil, d.view(next)
 	case state.DEvStatusLineClick:
+		return gs, nil, d.view(gs)
+
+	case state.DEvWorktreeResolved:
+		gs.ApplyWorktreeResolved(e)
 		return gs, nil, d.view(gs)
 	}
 	return gs, nil, d.view(gs)

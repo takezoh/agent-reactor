@@ -18,6 +18,18 @@ func reduceTmuxPaneSpawned(s State, e EvTmuxPaneSpawned) (State, []Effect) {
 	if frameIdx < 0 {
 		return s, nil
 	}
+
+	// When the subsystem created a managed worktree during BindFrame, propagate
+	// the resolved path to the driver so it is persisted for cold-start reconstruction.
+	if e.WorktreeStartDir != "" {
+		if next, _, ok := stepDriver(s, e.FrameID, DEvWorktreeResolved{
+			StartDir: e.WorktreeStartDir,
+			Name:     e.WorktreeName,
+		}); ok {
+			s = next
+		}
+	}
+
 	var bootstrapEffs []Effect
 	if frameIdx == 0 {
 		s, bootstrapEffs, _ = bootstrapDriverSessionStart(s, e.FrameID)
@@ -69,9 +81,6 @@ func reduceTmuxSpawnFailed(s State, e EvTmuxSpawnFailed) (State, []Effect) {
 							fmt.Sprintf("tmux spawn failed: %s", e.Err)),
 					)
 				}
-			}
-			if path := sessionManagedWorktreePath([]SessionFrame{frame}); path != "" {
-				effs = append(effs, EffRemoveManagedWorktree{Path: path})
 			}
 			sess, _ = truncateFrames(sess, idx)
 			s.Sessions = cloneSessions(s.Sessions)

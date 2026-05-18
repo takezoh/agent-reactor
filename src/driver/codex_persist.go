@@ -25,9 +25,6 @@ func (CodexDriver) Persist(s state.DriverState) map[string]string {
 	if cs.ResumePhase != "" {
 		out[codexKeyResumePhase] = cs.ResumePhase
 	}
-	if cs.ManagedWorkingDir != "" {
-		out[codexKeyManagedWorkingDir] = cs.ManagedWorkingDir
-	}
 	return out
 }
 
@@ -46,6 +43,5 @@ func (d CodexDriver) Restore(bag map[string]string, now time.Time) state.DriverS
 	cs.RequestedThreadID = bag[codexKeyRequestedThreadID]
 	cs.ObservedThreadID = bag[codexKeyObservedThreadID]
 	cs.ResumePhase = bag[codexKeyResumePhase]
-	cs.ManagedWorkingDir = bag[codexKeyManagedWorkingDir]
 	return cs
 }

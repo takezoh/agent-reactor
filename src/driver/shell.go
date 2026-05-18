@@ -1,7 +1,6 @@
 package driver
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -169,6 +168,10 @@ func (d ShellDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 		ss = applyShellPromptEvent(ss, e)
 		return ss, nil, d.view(ss)
 
+	case state.DEvWorktreeResolved:
+		ss.ApplyWorktreeResolved(e)
+		return ss, nil, d.view(ss)
+
 	case state.DEvHook:
 		return ss, nil, d.view(ss)
 	}
@@ -215,48 +218,11 @@ func (d ShellDriver) applyJobResult(ss ShellState, e state.DEvJobResult) ShellSt
 	return ss
 }
 
-func (d ShellDriver) PrepareCreate(s state.DriverState, _ state.SessionID, project, command string, options state.LaunchOptions) (state.DriverState, state.CreatePlan, error) {
+func (d ShellDriver) PrepareCreate(s state.DriverState, _ state.SessionID, project, command string, options state.LaunchOptions) (state.DriverState, state.CreateLaunch, error) {
 	ss, ok := s.(ShellState)
 	if !ok {
 		ss = ShellState{}
 	}
-	plan, name, err := managedWorktreePlan(project, command, options, "--worktree")
-	if err != nil {
-		return ss, state.CreatePlan{}, err
-	}
-	if name != "" {
-		ss.WorktreeName = name
-	}
-	return ss, plan, nil
-}
-
-func (d ShellDriver) CompleteCreate(s state.DriverState, command string, options state.LaunchOptions, result any, err error) (state.DriverState, state.CreateLaunch, error) {
-	ss, ok := s.(ShellState)
-	if !ok {
-		ss = ShellState{}
-	}
-	if err != nil {
-		return ss, state.CreateLaunch{}, err
-	}
-	r, ok := result.(WorktreeSetupResult)
-	if !ok || r.StartDir == "" {
-		return ss, state.CreateLaunch{}, errors.New("worktree setup did not return a working directory")
-	}
-	ss.StartDir = r.StartDir
-	if r.Name != "" {
-		ss.WorktreeName = r.Name
-	}
-	return ss, state.CreateLaunch{
-		Command:  strings.TrimSpace(command),
-		StartDir: r.StartDir,
-		Options:  state.LaunchOptions{Worktree: state.WorktreeOption{Enabled: true}},
-	}, nil
-}
-
-func (d ShellDriver) ManagedWorktreePath(s state.DriverState) string {
-	ss, ok := s.(ShellState)
-	if !ok {
-		return ""
-	}
-	return managedWorktreePath(ss.StartDir)
+	launch, err := CommonPrepareCreate(&ss.CommonState, project, command, options, "--worktree")
+	return ss, launch, err
 }

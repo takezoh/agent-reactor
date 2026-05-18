@@ -5,10 +5,6 @@ package state
 // driver, and clears the job from the in-flight map.
 
 func reduceJobResult(s State, e EvJobResult) (State, []Effect) {
-	if pending, ok := s.PendingCreates[e.JobID]; ok {
-		return handlePendingCreate(s, pending, e)
-	}
-
 	meta, ok := s.Jobs[e.JobID]
 	if !ok {
 		// Stale result (session was stopped before the job finished).
@@ -48,56 +44,6 @@ func reduceJobResult(s State, e EvJobResult) (State, []Effect) {
 
 	effs = append(effs, EffPersistSnapshot{}, EffBroadcastSessionsChanged{})
 	return s, effs
-}
-
-func handlePendingCreate(s State, pending PendingCreate, e EvJobResult) (State, []Effect) {
-	s.PendingCreates = clonePendingCreates(s.PendingCreates)
-	delete(s.PendingCreates, e.JobID)
-	s.Jobs = cloneJobs(s.Jobs)
-	delete(s.Jobs, e.JobID)
-
-	var frameIdx int
-	var frame SessionFrame
-	for i, f := range pending.Session.Frames {
-		if f.ID == pending.FrameID {
-			frameIdx = i
-			frame = f
-			break
-		}
-	}
-	drv := GetDriver(frame.Command)
-	if drv == nil {
-		return s, []Effect{errResp(pending.ReplyConn, pending.ReplyReqID, ErrCodeUnsupported, "no driver registered for command "+frame.Command)}
-	}
-	planner, ok := drv.(CreateSessionPlanner)
-	if !ok {
-		return s, []Effect{errResp(pending.ReplyConn, pending.ReplyReqID, ErrCodeInternal, "driver missing create-session planner")}
-	}
-
-	initialInput := frame.LaunchOptions.InitialInput
-	nextDS, createLaunch, err := planner.CompleteCreate(
-		frame.Driver,
-		frame.Command,
-		frame.LaunchOptions,
-		e.Result,
-		e.Err,
-	)
-	if err != nil {
-		return s, []Effect{errResp(pending.ReplyConn, pending.ReplyReqID, ErrCodeInvalidArgument, err.Error())}
-	}
-	plan, err := drv.PrepareLaunch(nextDS, LaunchModeCreate, frame.Project, createLaunch.Command, createLaunch.Options, isSandboxed(s, frame.Project, pending.Session.Sandbox))
-	if err != nil {
-		return s, []Effect{errResp(pending.ReplyConn, pending.ReplyReqID, ErrCodeInvalidArgument, err.Error())}
-	}
-	plan.Project = frame.Project
-	plan.Sandbox = pending.Session.Sandbox
-	plan.Stdin = initialInput
-	pending.Session.Frames = append([]SessionFrame(nil), pending.Session.Frames...)
-	pending.Session.Frames[frameIdx].Driver = nextDS
-	pending.Session.Frames[frameIdx].LaunchOptions = plan.Options
-	s.Sessions = cloneSessions(s.Sessions)
-	s.Sessions[pending.Session.ID] = pending.Session
-	return s, []Effect{spawnEffect(pending.Session.ID, pending.FrameID, pending.Session.Frames[frameIdx].SubsystemID, plan, pending.ReplyConn, pending.ReplyReqID)}
 }
 
 // reduceFileChanged routes a fsnotify event to the matching

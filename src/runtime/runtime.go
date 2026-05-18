@@ -20,6 +20,7 @@ import (
 	"github.com/takezoh/agent-roost/config"
 	"github.com/takezoh/agent-roost/features"
 	"github.com/takezoh/agent-roost/lib/pathmap"
+	clisubsystem "github.com/takezoh/agent-roost/runtime/subsystem/cli"
 	"github.com/takezoh/agent-roost/runtime/worker"
 	"github.com/takezoh/agent-roost/state"
 )
@@ -105,11 +106,11 @@ type Runtime struct {
 	// project directory, with mtime-based caching of .roost/settings.toml.
 	workspaceResolver *config.WorkspaceResolver
 
-	// frameCleanups holds WrappedLaunch.Cleanup callbacks keyed by FrameID.
-	// Protected by frameCleanupsMu because storeFrameCleanup is called from
+	// sandboxCleanups holds WrappedLaunch.Cleanup callbacks keyed by FrameID.
+	// Protected by sandboxCleanupsMu because storeFrameCleanup is called from
 	// goroutines (spawnTmuxWindowAsync) while invoke/drain run in the event loop.
-	frameCleanupsMu sync.Mutex
-	frameCleanups   map[state.FrameID]func() error
+	sandboxCleanupsMu sync.Mutex
+	sandboxCleanups   map[state.FrameID]func() error
 
 	// containerTokens holds per-frame bearer tokens for the container endpoint.
 	containerTokens tokenStore
@@ -125,16 +126,16 @@ type Runtime struct {
 	// <dataDir>/warm/ so they survive daemon warm restarts.
 	warmFrames *warmFrameStore
 
-	// hostSubsystems is the SubsystemRegistry for host-launched frames.
-	hostSubsystems *SubsystemRegistry
-	// containerSubsystems holds one *SubsystemRegistry per project path for
-	// frames that run inside a devcontainer. Access via sync.Map because
-	// spawnTmuxWindowAsync runs in goroutines.
-	containerSubsystems sync.Map // string (project path) → *SubsystemRegistry
+	// cliBackends holds one *cli.Backend per project path.
+	// Access via sync.Map because spawnTmuxWindowAsync runs in goroutines.
+	cliBackends sync.Map // string (project path) → *cli.Backend
 	// streamBackends holds one *stream.Backend per subsystem ID
 	// (project×sandbox). Access via sync.Map because spawnTmuxWindowAsync
 	// runs in goroutines.
 	streamBackends sync.Map // state.SubsystemID → *stream.Backend
+	// frameSubsystems tracks which subsystem owns each live frame,
+	// keyed by FrameID → subsystem.Subsystem. Used to route ReleaseFrame.
+	frameSubsystems sync.Map // state.FrameID → subsystem.Subsystem
 }
 
 // New constructs a Runtime ready for Run. Backends must be set on the
@@ -188,7 +189,7 @@ func New(cfg Config) *Runtime {
 		conns:             map[state.ConnID]*ipcConn{},
 		done:              make(chan struct{}),
 		workspaceResolver: config.NewWorkspaceResolver(),
-		frameCleanups:     map[state.FrameID]func() error{},
+		sandboxCleanups:   map[state.FrameID]func() error{},
 	}
 	if cfg.Pool != nil {
 		r.workers = cfg.Pool
@@ -201,9 +202,6 @@ func New(cfg Config) *Runtime {
 		} else {
 			r.warmFrames = wf
 		}
-		r.hostSubsystems = newSubsystemRegistry()
-	} else {
-		r.hostSubsystems = newSubsystemRegistry()
 	}
 	return r
 }
@@ -211,15 +209,15 @@ func New(cfg Config) *Runtime {
 // Done signals when Run has fully exited.
 func (r *Runtime) Done() <-chan struct{} { return r.done }
 
-// getSubsystemRegistry returns the SubsystemRegistry for the environment that
-// hosts the given project. Host frames share one registry; each devcontainer
-// project gets its own so endpoint files remain in env-local directories.
-func (r *Runtime) getSubsystemRegistry(project string) *SubsystemRegistry {
-	if !launcher(r.cfg).IsContainer(project) {
-		return r.hostSubsystems
+// ensureCLIBackend returns the CLI backend for the given project, creating
+// one on first access.
+func (r *Runtime) ensureCLIBackend(project string) *clisubsystem.Backend {
+	if v, ok := r.cliBackends.Load(project); ok {
+		return v.(*clisubsystem.Backend)
 	}
-	v, _ := r.containerSubsystems.LoadOrStore(project, newSubsystemRegistry())
-	return v.(*SubsystemRegistry)
+	b := clisubsystem.New(project)
+	actual, _ := r.cliBackends.LoadOrStore(project, b)
+	return actual.(*clisubsystem.Backend)
 }
 
 func (r *Runtime) ResetWarmState() error {
@@ -227,6 +225,15 @@ func (r *Runtime) ResetWarmState() error {
 		return nil
 	}
 	return r.warmFrames.Reset()
+}
+
+// CleanupSubsystems removes untracked managed worktrees for all known CLI
+// backends. Called at coordinator startup to prune orphans from previous runs.
+func (r *Runtime) CleanupSubsystems(ctx context.Context) {
+	r.cliBackends.Range(func(_, v any) bool {
+		v.(*clisubsystem.Backend).CleanupUntracked(ctx)
+		return true
+	})
 }
 
 // KnownProjects returns the canonical project paths for all sessions currently
@@ -421,4 +428,10 @@ func (r *Runtime) sessionPaneForSession(sid state.SessionID) string {
 
 func (r *Runtime) subsystemPaneForFrame(frame state.SessionFrame) string {
 	return r.sessionPanes[frame.ID]
+}
+
+// HelperBinaryPath resolves a helper binary (e.g. "sockbridge") using the
+// canonical exe-adjacent + libexec search implemented in runtime/rundir.go.
+func (r *Runtime) HelperBinaryPath(name string) (string, error) {
+	return findHelperBinary(name)
 }

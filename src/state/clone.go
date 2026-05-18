@@ -19,10 +19,6 @@ func cloneSessions(in map[SessionID]Session) map[SessionID]Session {
 	return cloneMap(in)
 }
 
-func clonePendingCreates(in map[JobID]PendingCreate) map[JobID]PendingCreate {
-	return cloneMap(in)
-}
-
 func cloneSubscribers(in map[ConnID]Subscriber) map[ConnID]Subscriber {
 	return cloneMap(in)
 }

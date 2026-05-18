@@ -164,13 +164,18 @@ type EvTmuxWindowVanished struct {
 
 // EvTmuxPaneSpawned is the async result of a tmux new-window call
 // initiated by EffSpawnTmuxWindow. PaneTarget is the pane id the runtime
-// uses to route activate/capture effects.
+// uses to route activate/capture effects. WorktreeStartDir is non-empty
+// when the subsystem created a managed worktree during BindFrame; the
+// reducer routes DEvWorktreeResolved to the frame's driver so the path
+// is persisted for cold-start reconstruction.
 type EvTmuxPaneSpawned struct {
-	SessionID  SessionID
-	FrameID    FrameID
-	PaneTarget string
-	ReplyConn  ConnID
-	ReplyReqID string
+	SessionID        SessionID
+	FrameID          FrameID
+	PaneTarget       string
+	WorktreeStartDir string
+	WorktreeName     string
+	ReplyConn        ConnID
+	ReplyReqID       string
 }
 
 // EvTmuxSpawnFailed is the async failure of a tmux new-window call.

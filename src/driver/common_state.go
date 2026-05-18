@@ -54,6 +54,14 @@ const (
 	commonBranchRefreshInterval = 30 * time.Second
 )
 
+// ApplyWorktreeResolved updates StartDir and WorktreeName from a DEvWorktreeResolved event.
+func (c *CommonState) ApplyWorktreeResolved(e state.DEvWorktreeResolved) {
+	c.StartDir = e.StartDir
+	if e.Name != "" {
+		c.WorktreeName = e.Name
+	}
+}
+
 // HandleTick common implementation for drivers. Completes StartDir,
 // skips heavy work for Idle/Stopped sessions, and refreshes branch info
 // when active.

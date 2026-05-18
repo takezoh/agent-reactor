@@ -1,7 +1,6 @@
 package driver
 
 import (
-	"errors"
 	"strings"
 	"time"
 
@@ -187,53 +186,20 @@ func (d GenericDriver) Step(prev state.DriverState, ctx state.FrameContext, ev s
 	case state.DEvHook:
 		// generic drivers don't consume hooks
 		return gs, nil, d.view(gs)
+
+	case state.DEvWorktreeResolved:
+		gs.ApplyWorktreeResolved(e)
+		return gs, nil, d.view(gs)
 	}
 
 	return gs, nil, d.view(gs)
 }
 
-func (d GenericDriver) PrepareCreate(s state.DriverState, _ state.SessionID, project, command string, options state.LaunchOptions) (state.DriverState, state.CreatePlan, error) {
+func (d GenericDriver) PrepareCreate(s state.DriverState, _ state.SessionID, project, command string, options state.LaunchOptions) (state.DriverState, state.CreateLaunch, error) {
 	gs, ok := s.(GenericState)
 	if !ok {
 		gs = GenericState{}
 	}
-	plan, name, err := managedWorktreePlan(project, command, options, "--worktree")
-	if err != nil {
-		return gs, state.CreatePlan{}, err
-	}
-	if name != "" {
-		gs.WorktreeName = name
-	}
-	return gs, plan, nil
-}
-
-func (d GenericDriver) CompleteCreate(s state.DriverState, command string, options state.LaunchOptions, result any, err error) (state.DriverState, state.CreateLaunch, error) {
-	gs, ok := s.(GenericState)
-	if !ok {
-		gs = GenericState{}
-	}
-	if err != nil {
-		return gs, state.CreateLaunch{}, err
-	}
-	r, ok := result.(WorktreeSetupResult)
-	if !ok || r.StartDir == "" {
-		return gs, state.CreateLaunch{}, errors.New("worktree setup did not return a working directory")
-	}
-	gs.StartDir = r.StartDir
-	if r.Name != "" {
-		gs.WorktreeName = r.Name
-	}
-	return gs, state.CreateLaunch{
-		Command:  strings.TrimSpace(command),
-		StartDir: r.StartDir,
-		Options:  state.LaunchOptions{Worktree: state.WorktreeOption{Enabled: true}},
-	}, nil
-}
-
-func (d GenericDriver) ManagedWorktreePath(s state.DriverState) string {
-	gs, ok := s.(GenericState)
-	if !ok {
-		return ""
-	}
-	return managedWorktreePath(gs.StartDir)
+	launch, err := CommonPrepareCreate(&gs.CommonState, project, command, options, "--worktree")
+	return gs, launch, err
 }

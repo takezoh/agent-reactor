@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/takezoh/agent-roost/runtime/subsystem"
 	"github.com/takezoh/agent-roost/state"
 )
 
@@ -117,15 +118,18 @@ func New(
 	}
 }
 
+// Kind implements subsystem.Subsystem.
+func (b *Backend) Kind() state.LaunchSubsystem { return state.LaunchSubsystemStream }
+
 // BridgePort returns the loopback TCP port for the sockbridge TUI relay.
 func (b *Backend) BridgePort() int { return b.bridgePort }
 
 // Start launches the app-server process, dials the WebSocket, and begins
 // the read loop. On failure the caller must not call Start again — create
 // a new Backend instead.
-func (b *Backend) Start() error {
+func (b *Backend) Start(ctx context.Context) error {
 	_ = os.Remove(b.sockPath)
-	cmd, err := b.buildServerCommand()
+	cmd, err := b.buildServerCommand(ctx)
 	if err != nil {
 		return err
 	}
@@ -157,7 +161,7 @@ func (b *Backend) Start() error {
 	}
 	// Container mode: sockbridge is part of devcontainer postCreate
 	// (registered via ContainerBridgeSpec). Host mode: spawn here.
-	isContainer, err := b.isContainerProject()
+	isContainer, err := b.isContainerProject(ctx)
 	if err != nil {
 		_ = wsConn.Close(websocket.StatusInternalError, "container check failed")
 		_ = cmd.Process.Kill()
@@ -174,9 +178,62 @@ func (b *Backend) Start() error {
 	return nil
 }
 
-func (b *Backend) isContainerProject() (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+// BindFrame implements subsystem.Subsystem. It resolves worktree (if requested),
+// binds or resumes an app-server thread, and rewrites Plan.Command to the
+// remote-attach command.
+func (b *Backend) BindFrame(ctx context.Context, req subsystem.BindRequest) (subsystem.BindResult, error) {
+	result := subsystem.BindResult{Plan: req.Plan}
+	startDir := req.Plan.StartDir
+
+	// Worktree resolution: same logic as CLI backend.
+	switch {
+	case subsystem.IsManagedWorktreePath(startDir):
+		result.WorktreeStartDir = startDir
+	case req.Plan.Options.Worktree.Enabled:
+		names := subsystem.GenerateWorktreeNames(subsystem.WorktreeNameAttempts)
+		wt, err := subsystem.CreateWorktree(ctx, subsystem.WorktreeInput{
+			RepoDir:        startDir,
+			CandidateNames: names,
+		})
+		if err != nil {
+			return subsystem.BindResult{}, err
+		}
+		startDir = wt.StartDir
+		result.Plan.StartDir = startDir
+		result.WorktreeStartDir = wt.StartDir
+		result.WorktreeName = wt.Name
+	}
+
+	// Thread binding.
+	threadID, err := b.bindThread(req.FrameID, startDir, req.Plan.Stream, req.Stdin)
+	if err != nil {
+		return subsystem.BindResult{}, err
+	}
+	result.Plan.Command = BuildRemoteCommand(b.bridgePort, threadID, startDir)
+	result.Plan.Stdin = nil
+	result.Plan.Stream.ResumeThreadID = threadID
+	return result, nil
+}
+
+// ReleaseFrame removes the frame from the registry and its thread mapping.
+func (b *Backend) ReleaseFrame(frameID state.FrameID) {
+	b.mu.Lock()
+	binding := b.frames[frameID]
+	delete(b.frames, frameID)
+	if binding != nil && binding.threadID != "" {
+		delete(b.threads, binding.threadID)
+	}
+	b.mu.Unlock()
+}
+
+// Stop kills the app-server process. The waitProcess goroutine handles cleanup.
+func (b *Backend) Stop(_ context.Context) {
+	if b.cmd != nil && b.cmd.Process != nil {
+		_ = b.cmd.Process.Kill()
+	}
+}
+
+func (b *Backend) isContainerProject(ctx context.Context) (bool, error) {
 	cfg, err := b.runtime.ContainerExecConfig(ctx, b.project)
 	return cfg != nil, err
 }
@@ -197,11 +254,11 @@ func (b *Backend) startHostBridge() error {
 	return nil
 }
 
-func (b *Backend) buildServerCommand() (*exec.Cmd, error) {
+func (b *Backend) buildServerCommand(ctx context.Context) (*exec.Cmd, error) {
 	args := buildServerArgs(b.serverArgs, b.sandboxed, b.sockPath)
-	ctx, cancel := context.WithTimeout(context.Background(), containerEnsureLimit)
+	containerCtx, cancel := context.WithTimeout(ctx, containerEnsureLimit)
 	defer cancel()
-	containerCfg, err := b.runtime.ContainerExecConfig(ctx, b.project)
+	containerCfg, err := b.runtime.ContainerExecConfig(containerCtx, b.project)
 	if err != nil {
 		return nil, err
 	}
@@ -227,9 +284,9 @@ func (b *Backend) buildServerCommand() (*exec.Cmd, error) {
 	return exec.Command("docker", execArgs...), nil
 }
 
-// BindFrame associates a new frame with a thread in the app-server and
+// bindThread associates a new frame with a thread in the app-server and
 // returns the thread ID bound (either resumed or empty if a new thread).
-func (b *Backend) BindFrame(frameID state.FrameID, startDir string, opts state.StreamLaunchOptions, stdin []byte) (string, error) {
+func (b *Backend) bindThread(frameID state.FrameID, startDir string, opts state.StreamLaunchOptions, stdin []byte) (string, error) {
 	b.mu.Lock()
 	b.frames[frameID] = &frameBinding{
 		frameID:  frameID,

@@ -46,8 +46,6 @@ type pendingTool struct {
 type ClaudeState struct {
 	CommonState
 
-	ManagedWorkingDir string // set when roost pre-created the git worktree
-
 	// Identity (set via Restore or DEvHook session-start payload).
 	ClaudeSessionID string // distinct from roost session id; the *Claude* conversation id
 
@@ -156,19 +154,20 @@ func (d ClaudeDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, 
 	if cs.StartDir != "" {
 		startDir = cs.StartDir
 	}
-	req, stripped := resolveWorktreeRequest(baseCommand, options, "--worktree")
-	command := stripped
-	if cs.ManagedWorkingDir == "" {
-		command = appendFlag(stripped, "--worktree", req.Enabled)
-	}
+	req, command := resolveWorktreeRequest(baseCommand, options, "--worktree")
+	command = strings.TrimSpace(command)
 	command = ensureClaudeSandboxFlag(command, sandboxed)
 	if mode != state.LaunchModeColdStart || cs.ClaudeSessionID == "" {
 		if mode == state.LaunchModeColdStart {
 			slog.Debug("claude: coldstart without resume", "project", project, "reason", "no_session_id")
 		}
-		return state.LaunchPlan{Command: command, StartDir: startDir, Stdin: options.InitialInput}, nil
+		return state.LaunchPlan{
+			Command:  command,
+			StartDir: startDir,
+			Stdin:    options.InitialInput,
+			Options:  state.LaunchOptions{Worktree: state.WorktreeOption{Enabled: req.Enabled}},
+		}, nil
 	}
-	command = strings.TrimSpace(stripWorktreeFlag(command))
 	if strings.Contains(command, "--resume") {
 		slog.Debug("claude: coldstart without resume", "project", project, "session", cs.ClaudeSessionID, "reason", "already_has_resume")
 		return state.LaunchPlan{Command: command, StartDir: startDir, Stdin: options.InitialInput}, nil
@@ -201,15 +200,6 @@ func (d ClaudeDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, 
 		Options:  state.LaunchOptions{},
 		Stdin:    options.InitialInput,
 	}, nil
-}
-
-// stripWorktreeFlag removes --worktree (and its optional name
-// argument) from a command string. Mirrors the logic in
-// lib/claude/cli.StripWorktreeFlag but duplicated here so
-// state/driver stays a leaf package.
-func stripWorktreeFlag(command string) string {
-	_, stripped := parseWorktreeFlags(command, "--worktree")
-	return stripped
 }
 
 const (
@@ -277,6 +267,10 @@ func (d ClaudeDriver) Step(prev state.DriverState, ctx state.FrameContext, ev st
 	case state.DEvStatusLineClick:
 		next, effs := d.handleStatusLineClick(cs, e)
 		return next, effs, d.view(next)
+
+	case state.DEvWorktreeResolved:
+		cs.ApplyWorktreeResolved(e)
+		return cs, nil, d.view(cs)
 	}
 
 	return cs, nil, d.view(cs)

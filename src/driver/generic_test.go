@@ -85,28 +85,15 @@ func TestGenericPersistRoundTrip(t *testing.T) {
 
 func TestGenericPrepareCreateWithWorktree(t *testing.T) {
 	d, s, _ := newGenericState(t, 0)
-	next, plan, err := d.PrepareCreate(s, "sess-1", "/repo", "bash --worktree", state.LaunchOptions{})
+	_, plan, err := d.PrepareCreate(s, "sess-1", "/repo", "bash --worktree", state.LaunchOptions{})
 	if err != nil {
 		t.Fatalf("PrepareCreate error: %v", err)
 	}
-	gs := next.(GenericState)
-	if gs.WorktreeName == "" {
-		t.Fatal("expected generated worktree name")
+	if plan.Command != "bash" {
+		t.Fatalf("command = %q, want worktree flag stripped", plan.Command)
 	}
-	in, ok := plan.SetupJob.(WorktreeSetupInput)
-	if !ok {
-		t.Fatalf("SetupJob = %T", plan.SetupJob)
-	}
-	if len(in.CandidateNames) != worktreeNameAttempts {
-		t.Fatalf("candidate names = %d, want %d", len(in.CandidateNames), worktreeNameAttempts)
-	}
-}
-
-func TestGenericManagedWorktreePath(t *testing.T) {
-	d, s, _ := newGenericState(t, 0)
-	s.StartDir = "/repo/.roost/worktrees/alpha-beta"
-	if got := d.ManagedWorktreePath(s); got == "" {
-		t.Fatal("expected managed worktree path")
+	if !plan.Options.Worktree.Enabled {
+		t.Fatal("expected worktree enabled")
 	}
 }
 

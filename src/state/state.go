@@ -41,7 +41,6 @@ const (
 // callers must not mutate a State they did not produce.
 type State struct {
 	Sessions         map[SessionID]Session
-	PendingCreates   map[JobID]PendingCreate
 	Subscribers      map[ConnID]Subscriber
 	Jobs             map[JobID]JobMeta
 	NextJobID        JobID
@@ -105,15 +104,6 @@ type SessionFrame struct {
 	PeerSummary   string        // short description of what this agent is doing
 }
 
-// PendingCreate tracks a session creation that is blocked on an async
-// setup job such as creating a managed worktree.
-type PendingCreate struct {
-	Session    Session
-	FrameID    FrameID
-	ReplyConn  ConnID
-	ReplyReqID string
-}
-
 // Subscriber tracks a connected IPC client that has opted into broadcasts.
 // Filters is the set of event names the client wants to receive; an empty
 // list means "all events".
@@ -137,7 +127,6 @@ type JobMeta struct {
 func New() State {
 	return State{
 		Sessions:       map[SessionID]Session{},
-		PendingCreates: map[JobID]PendingCreate{},
 		Subscribers:    map[ConnID]Subscriber{},
 		Jobs:           map[JobID]JobMeta{},
 		Connectors:     map[string]ConnectorState{},

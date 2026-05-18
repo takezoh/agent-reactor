@@ -28,7 +28,6 @@ const (
 	codexKeyRequestedThreadID = "requested_thread_id"
 	codexKeyObservedThreadID  = "observed_thread_id"
 	codexKeyResumePhase       = "resume_phase"
-	codexKeyManagedWorkingDir = "managed_working_dir"
 )
 
 type CodexState struct {
@@ -39,7 +38,6 @@ type CodexState struct {
 	ObservedThreadID   string
 	ResumePhase        string
 	FailureReason      string
-	ManagedWorkingDir  string
 	CurrentTool        string
 	PendingApproval    bool
 	TranscriptInFlight bool
@@ -138,10 +136,7 @@ func (d CodexDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, p
 	if len(fields) == 0 || fields[0] != CodexDriverName {
 		return state.LaunchPlan{Command: strings.TrimSpace(baseCommand), StartDir: startDir, Options: options, Stdin: options.InitialInput}, nil
 	}
-	base := strings.TrimSpace(baseCommand)
-	if mode == state.LaunchModeCreate || req.Enabled || cs.ManagedWorkingDir != "" {
-		base = stripped
-	}
+	base := strings.TrimSpace(stripped)
 	stream := state.StreamLaunchOptions{}
 	if sandboxed {
 		stream.SandboxPolicy = state.StreamSandboxPolicyExternal
@@ -151,7 +146,7 @@ func (d CodexDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, p
 		return state.LaunchPlan{
 			Command:   base,
 			StartDir:  startDir,
-			Options:   state.LaunchOptions{Worktree: state.WorktreeOption{Enabled: req.Enabled || cs.ManagedWorkingDir != ""}},
+			Options:   state.LaunchOptions{Worktree: state.WorktreeOption{Enabled: req.Enabled}},
 			Subsystem: state.LaunchSubsystemStream,
 			Stream:    stream,
 			Stdin:     options.InitialInput,
@@ -159,9 +154,9 @@ func (d CodexDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, p
 	}
 	stream.ResumeThreadID = cs.ThreadID
 	return state.LaunchPlan{
-		Command:   strings.TrimSpace(base),
+		Command:   base,
 		StartDir:  startDir,
-		Options:   state.LaunchOptions{Worktree: state.WorktreeOption{Enabled: req.Enabled || cs.ManagedWorkingDir != ""}},
+		Options:   state.LaunchOptions{Worktree: state.WorktreeOption{Enabled: req.Enabled}},
 		Subsystem: state.LaunchSubsystemStream,
 		Stream:    stream,
 		Stdin:     options.InitialInput,
@@ -207,6 +202,10 @@ func (d CodexDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 		next := d.handleJobResult(cs, e)
 		return next, nil, d.view(next)
 	case state.DEvStatusLineClick:
+		return cs, nil, d.view(cs)
+
+	case state.DEvWorktreeResolved:
+		cs.ApplyWorktreeResolved(e)
 		return cs, nil, d.view(cs)
 	}
 	return cs, nil, d.view(cs)

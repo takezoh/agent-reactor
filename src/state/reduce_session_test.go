@@ -2,7 +2,6 @@ package state
 
 import (
 	"encoding/json"
-	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -48,20 +47,8 @@ func (plannerDriver) Name() string { return "planner" }
 func (plannerDriver) PrepareLaunch(s DriverState, mode LaunchMode, project, baseCommand string, options LaunchOptions, _ bool) (LaunchPlan, error) {
 	return LaunchPlan{Command: "planner --prepared", StartDir: "/prepared"}, nil
 }
-func (plannerDriver) PrepareCreate(s DriverState, sessionID SessionID, project, command string, options LaunchOptions) (DriverState, CreatePlan, error) {
-	return s, CreatePlan{
-		Launch:   CreateLaunch{Command: "planner --prepared", StartDir: project},
-		SetupJob: stubJobInput{},
-	}, nil
-}
-func (plannerDriver) CompleteCreate(s DriverState, command string, options LaunchOptions, result any, err error) (DriverState, CreateLaunch, error) {
-	if err != nil {
-		return s, CreateLaunch{}, err
-	}
-	return s, CreateLaunch{Command: "planner --prepared", StartDir: "/prepared"}, nil
-}
-func (plannerDriver) ManagedWorktreePath(s DriverState) string {
-	return "/repo/.roost/worktrees/planner"
+func (plannerDriver) PrepareCreate(s DriverState, sessionID SessionID, project, command string, options LaunchOptions) (DriverState, CreateLaunch, error) {
+	return s, CreateLaunch{Command: "planner --prepared", StartDir: project}, nil
 }
 
 type fallbackDriver struct{ stubDriver }
@@ -341,62 +328,25 @@ func TestCreateSessionUnknownCommandFallsBackToFallback(t *testing.T) {
 	}
 }
 
-func TestCreateSessionPlannerDefersSpawnUntilJobResult(t *testing.T) {
+func TestCreateSessionPlannerSpawnsImmediately(t *testing.T) {
 	s := New()
 	s.Now = time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
 	next, effs := Reduce(s, EvEvent{
 		ConnID: 1, ReqID: "r", Event: "create-session",
 		Payload: mustPayload(map[string]string{"project": "/foo", "command": "planner"}),
 	})
-	if len(next.Sessions) != 0 {
-		t.Fatalf("session count = %d, want 0 before setup result", len(next.Sessions))
-	}
-	if len(next.PendingCreates) != 1 {
-		t.Fatalf("pending creates = %d, want 1", len(next.PendingCreates))
-	}
-	job, ok := findEff[EffStartJob](effs)
-	if !ok {
-		t.Fatal("expected EffStartJob")
-	}
-	if _, ok := job.Input.(stubJobInput); !ok {
-		t.Fatalf("job input = %T, want stubJobInput", job.Input)
-	}
-
-	after, effs := Reduce(next, EvJobResult{JobID: job.JobID, Result: "ok"})
-	if len(after.PendingCreates) != 0 {
-		t.Fatalf("pending creates = %d, want 0 after completion", len(after.PendingCreates))
-	}
-	if len(after.Sessions) != 1 {
-		t.Fatalf("session count = %d, want 1 after completion", len(after.Sessions))
+	if len(next.Sessions) != 1 {
+		t.Fatalf("session count = %d, want 1 (spawn is immediate)", len(next.Sessions))
 	}
 	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow after setup completion")
+		t.Fatal("expected EffSpawnTmuxWindow")
 	}
 	if spawn.Mode != LaunchModeCreate {
 		t.Fatalf("spawn mode = %v", spawn.Mode)
 	}
-	if spawn.Command != "planner --prepared" || spawn.StartDir != "/prepared" {
-		t.Fatalf("spawn = %+v", spawn)
-	}
-}
-
-func TestCreateSessionPlannerFailureRepliesError(t *testing.T) {
-	s := New()
-	next, effs := Reduce(s, EvEvent{
-		ConnID: 1, ReqID: "r", Event: "create-session",
-		Payload: mustPayload(map[string]string{"project": "/foo", "command": "planner"}),
-	})
-	job, ok := findEff[EffStartJob](effs)
-	if !ok {
-		t.Fatal("expected EffStartJob")
-	}
-	after, effs := Reduce(next, EvJobResult{JobID: job.JobID, Err: errors.New("boom")})
-	if len(after.Sessions) != 0 {
-		t.Fatalf("session count = %d, want 0", len(after.Sessions))
-	}
-	if _, ok := findEff[EffSendError](effs); !ok {
-		t.Fatal("expected EffSendError")
+	if spawn.Command != "planner --prepared" {
+		t.Fatalf("spawn command = %q, want planner --prepared", spawn.Command)
 	}
 }
 
@@ -558,66 +508,19 @@ func TestTmuxSpawnFailedEvictsAndReplies(t *testing.T) {
 	}
 }
 
-func TestTmuxSpawnFailedRemovesManagedWorktree(t *testing.T) {
-	s := New()
-	id := SessionID("abc")
-	s.Sessions[id] = Session{ID: id, Command: "planner", Driver: stubDriverState{}, Frames: []SessionFrame{{ID: FrameID(id), Command: "planner", Driver: stubDriverState{}}}}
-	_, effs := Reduce(s, EvTmuxSpawnFailed{
-		SessionID: id, FrameID: FrameID(id), Err: "boom", ReplyConn: 1, ReplyReqID: "r",
-	})
-	if _, ok := findEff[EffRemoveManagedWorktree](effs); !ok {
-		t.Fatal("expected EffRemoveManagedWorktree")
-	}
-}
-
-func TestTmuxSpawnFailedNoManagedWorktreeForStub(t *testing.T) {
+func TestTmuxSpawnFailedEvictsSession(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id)
-	_, effs := Reduce(s, EvTmuxSpawnFailed{
+	next, _ := Reduce(s, EvTmuxSpawnFailed{
 		SessionID: id, FrameID: FrameID(id), Err: "boom", ReplyConn: 1, ReplyReqID: "r",
 	})
-	if _, ok := findEff[EffRemoveManagedWorktree](effs); ok {
-		t.Fatal("did not expect EffRemoveManagedWorktree")
+	if _, ok := next.Sessions[id]; ok {
+		t.Error("session should be evicted on spawn failure")
 	}
 }
 
 // === reduceStopSession ===
-
-func TestStopSessionRemovesManagedWorktree(t *testing.T) {
-	s := New()
-	id := SessionID("abc")
-	s.Sessions[id] = Session{
-		ID:      id,
-		Command: "planner",
-		Driver:  stubDriverState{},
-		Frames:  []SessionFrame{{ID: FrameID(id), Command: "planner", Driver: stubDriverState{}}},
-	}
-	_, effs := Reduce(s, EvEvent{
-		ConnID: 1, ReqID: "r", Event: "stop-session",
-		Payload: mustPayload(map[string]string{"session_id": string(id)}),
-	})
-	eff, ok := findEff[EffRemoveManagedWorktree](effs)
-	if !ok {
-		t.Fatal("expected EffRemoveManagedWorktree")
-	}
-	if eff.Path != "/repo/.roost/worktrees/planner" {
-		t.Errorf("unexpected worktree path: %q", eff.Path)
-	}
-}
-
-func TestStopSessionNoManagedWorktreeForStub(t *testing.T) {
-	s := New()
-	id := SessionID("abc")
-	s.Sessions[id] = stubSession(id)
-	_, effs := Reduce(s, EvEvent{
-		ConnID: 1, ReqID: "r", Event: "stop-session",
-		Payload: mustPayload(map[string]string{"session_id": string(id)}),
-	})
-	if _, ok := findEff[EffRemoveManagedWorktree](effs); ok {
-		t.Fatal("did not expect EffRemoveManagedWorktree")
-	}
-}
 
 func TestStopSessionEvictsImmediately(t *testing.T) {
 	s := New()
@@ -1924,62 +1827,6 @@ func TestForkSessionNoSessionIDErrors(t *testing.T) {
 	}
 	if errEff.Code != ErrCodeUnsupported {
 		t.Errorf("code = %q, want %q", errEff.Code, ErrCodeUnsupported)
-	}
-}
-
-// === worktreePathReferenced / stop-session shared worktree protection ===
-
-func TestWorktreePathReferencedByOtherSession(t *testing.T) {
-	s := New()
-	s.Sessions["s1"] = Session{
-		ID: "s1", Command: "planner", Driver: stubDriverState{},
-		Frames: []SessionFrame{{ID: "f1", Command: "planner", Driver: stubDriverState{}}},
-	}
-	s.Sessions["s2"] = Session{
-		ID: "s2", Command: "planner", Driver: stubDriverState{},
-		Frames: []SessionFrame{{ID: "f2", Command: "planner", Driver: stubDriverState{}}},
-	}
-	// planner.ManagedWorktreePath returns "/repo/.roost/worktrees/planner" for any state.
-	if !worktreePathReferenced(s, "/repo/.roost/worktrees/planner", "s1") {
-		t.Error("worktreePathReferenced should be true: s2 still references the path")
-	}
-	if worktreePathReferenced(s, "/other/path", "s1") {
-		t.Error("worktreePathReferenced should be false for a path no other session holds")
-	}
-}
-
-func TestStopSessionPreservesSharedWorktree(t *testing.T) {
-	s := New()
-	// Two sessions sharing the same managed worktree path via planner driver.
-	s1 := SessionID("sess-orig")
-	s2 := SessionID("sess-fork")
-	plannerFrame := func(id SessionID) Session {
-		return Session{
-			ID: id, Command: "planner", Driver: stubDriverState{},
-			Frames: []SessionFrame{{ID: FrameID(id), Command: "planner", Driver: stubDriverState{}}},
-		}
-	}
-	s.Sessions[s1] = plannerFrame(s1)
-	s.Sessions[s2] = plannerFrame(s2)
-
-	// Stop s1 — s2 still references the worktree, so no EffRemoveManagedWorktree.
-	next, effs := Reduce(s, EvEvent{
-		ConnID: 1, ReqID: "r", Event: "stop-session",
-		Payload: mustPayload(map[string]string{"session_id": string(s1)}),
-	})
-	mustOK(t, effs)
-	if _, ok := findEff[EffRemoveManagedWorktree](effs); ok {
-		t.Error("should NOT emit EffRemoveManagedWorktree while fork session still references the worktree")
-	}
-
-	// Now stop s2 — no more references, worktree should be removed.
-	_, effs2 := Reduce(next, EvEvent{
-		ConnID: 1, ReqID: "r2", Event: "stop-session",
-		Payload: mustPayload(map[string]string{"session_id": string(s2)}),
-	})
-	mustOK(t, effs2)
-	if _, ok := findEff[EffRemoveManagedWorktree](effs2); !ok {
-		t.Error("should emit EffRemoveManagedWorktree after last session referencing worktree is stopped")
 	}
 }
 

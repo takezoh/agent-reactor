@@ -944,62 +944,32 @@ func TestClaudePrepareLaunchNoSession(t *testing.T) {
 	}
 }
 
-func TestClaudePrepareLaunchStripsWorktree(t *testing.T) {
+func TestClaudePrepareLaunchWorktreeStripsFlag(t *testing.T) {
 	d := NewClaudeDriver(testHome, testEventLogDir, ClaudeOptions{}, "less")
-	cs := ClaudeState{ClaudeSessionID: "uuid-W"}
-	plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", "claude --worktree", state.LaunchOptions{}, false)
-	if err != nil {
-		t.Fatalf("PrepareLaunch error: %v", err)
+	tests := []struct {
+		name    string
+		command string
+		options state.LaunchOptions
+	}{
+		{"bare flag", "claude --worktree", state.LaunchOptions{}},
+		{"flag with name", "claude --worktree my-branch", state.LaunchOptions{}},
+		{"flag equals form", "claude --worktree=my-branch", state.LaunchOptions{}},
+		{"from options", "claude", state.LaunchOptions{Worktree: state.WorktreeOption{Enabled: true}}},
 	}
-	got := plan.Command
-	want := "claude --worktree"
-	if got != want {
-		t.Errorf("PrepareLaunch.Command = %q, want %q", got, want)
-	}
-}
-
-func TestClaudePrepareLaunchStripsWorktreeWithName(t *testing.T) {
-	d := NewClaudeDriver(testHome, testEventLogDir, ClaudeOptions{}, "less")
-	cs := ClaudeState{ClaudeSessionID: "uuid-W"}
-	plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", "claude --worktree my-branch", state.LaunchOptions{}, false)
-	if err != nil {
-		t.Fatalf("PrepareLaunch error: %v", err)
-	}
-	got := plan.Command
-	want := "claude --worktree"
-	if got != want {
-		t.Errorf("PrepareLaunch.Command = %q, want %q", got, want)
-	}
-}
-
-func TestClaudePrepareLaunchStripsWorktreeEquals(t *testing.T) {
-	d := NewClaudeDriver(testHome, testEventLogDir, ClaudeOptions{}, "less")
-	cs := ClaudeState{ClaudeSessionID: "uuid-W"}
-	plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", "claude --worktree=my-branch", state.LaunchOptions{}, false)
-	if err != nil {
-		t.Fatalf("PrepareLaunch error: %v", err)
-	}
-	got := plan.Command
-	want := "claude --worktree"
-	if got != want {
-		t.Errorf("PrepareLaunch.Command = %q, want %q", got, want)
-	}
-}
-
-func TestClaudePrepareLaunchAddsWorktreeFlagFromOptions(t *testing.T) {
-	d := NewClaudeDriver(testHome, testEventLogDir, ClaudeOptions{}, "less")
-	cs := ClaudeState{}
-	plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", "claude", state.LaunchOptions{
-		Worktree: state.WorktreeOption{Enabled: true},
-	}, false)
-	if err != nil {
-		t.Fatalf("PrepareLaunch error: %v", err)
-	}
-	if got := plan.Command; got != "claude --worktree" {
-		t.Fatalf("PrepareLaunch.Command = %q, want %q", got, "claude --worktree")
-	}
-	if plan.Options.Worktree.Enabled {
-		t.Fatal("PrepareLaunch.Options.Worktree.Enabled should be false")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs := ClaudeState{ClaudeSessionID: "uuid-W"}
+			plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", tt.command, tt.options, false)
+			if err != nil {
+				t.Fatalf("PrepareLaunch error: %v", err)
+			}
+			if plan.Command != "claude" {
+				t.Errorf("Command = %q, want worktree flag stripped", plan.Command)
+			}
+			if !plan.Options.Worktree.Enabled {
+				t.Error("expected Options.Worktree.Enabled = true")
+			}
+		})
 	}
 }
 
@@ -1051,78 +1021,35 @@ func TestClaudePrepareLaunchAlreadyHasResume(t *testing.T) {
 
 func TestClaudePrepareCreateWithoutWorktree(t *testing.T) {
 	d, cs, _ := newClaude(t)
-	next, plan, err := d.PrepareCreate(cs, "sess-1", "/repo", "claude --model sonnet", state.LaunchOptions{})
+	_, launch, err := d.PrepareCreate(cs, "sess-1", "/repo", "claude --model sonnet", state.LaunchOptions{})
 	if err != nil {
 		t.Fatalf("PrepareCreate error: %v", err)
 	}
-	if next.(ClaudeState).WorktreeName != "" {
-		t.Fatalf("unexpected worktree state: %+v", next)
+	if launch.Options.Worktree.Enabled {
+		t.Fatal("expected worktree not enabled")
 	}
-	if plan.SetupJob != nil {
-		t.Fatal("expected no setup job")
-	}
-	if plan.Launch.Command != "claude --model sonnet" || plan.Launch.StartDir != "/repo" {
-		t.Fatalf("launch = %+v", plan.Launch)
+	if launch.Command != "claude --model sonnet" || launch.StartDir != "/repo" {
+		t.Fatalf("launch = %+v", launch)
 	}
 }
 
 func TestClaudePrepareCreateWithWorktree(t *testing.T) {
 	d, cs, _ := newClaude(t)
-	next, plan, err := d.PrepareCreate(cs, "sess-1", "/repo", "claude --worktree feature", state.LaunchOptions{})
+	_, launch, err := d.PrepareCreate(cs, "sess-1", "/repo", "claude --worktree", state.LaunchOptions{})
 	if err != nil {
 		t.Fatalf("PrepareCreate error: %v", err)
 	}
-	got := next.(ClaudeState)
-	if got.WorktreeName != "feature" {
-		t.Fatalf("WorktreeName = %q", got.WorktreeName)
+	if !launch.Options.Worktree.Enabled {
+		t.Fatal("expected worktree enabled")
 	}
-	if plan.Launch.Command != "claude" {
-		t.Fatalf("launch command = %q", plan.Launch.Command)
-	}
-	in, ok := plan.SetupJob.(WorktreeSetupInput)
-	if !ok {
-		t.Fatalf("SetupJob = %T, want WorktreeSetupInput", plan.SetupJob)
-	}
-	if in.RepoDir != "/repo" || len(in.CandidateNames) != 1 || in.CandidateNames[0] != "feature" {
-		t.Fatalf("setup input = %+v", in)
-	}
-}
-
-func TestClaudeCompleteCreateWithWorktree(t *testing.T) {
-	d, cs, _ := newClaude(t)
-	cs.WorktreeName = "feature"
-	next, launch, err := d.CompleteCreate(cs, "claude --worktree feature", state.LaunchOptions{}, WorktreeSetupResult{
-		StartDir: "/repo/.roost/worktrees/feature",
-		Name:     "feature",
-	}, nil)
-	if err != nil {
-		t.Fatalf("CompleteCreate error: %v", err)
-	}
-	got := next.(ClaudeState)
-	if got.ManagedWorkingDir != "/repo/.roost/worktrees/feature" || got.StartDir != "/repo/.roost/worktrees/feature" {
-		t.Fatalf("working dir fields = %+v", got)
-	}
-	if launch.StartDir != "/repo/.roost/worktrees/feature" {
-		t.Fatalf("launch = %+v", launch)
-	}
-}
-
-func TestClaudeManagedWorktreePath(t *testing.T) {
-	d, cs, _ := newClaude(t)
-	cs.ManagedWorkingDir = "/repo/.roost/worktrees/feature"
-	if got := d.ManagedWorktreePath(cs); got != "/repo/.roost/worktrees/feature" {
-		t.Fatalf("ManagedWorktreePath = %q", got)
-	}
-	cs.ManagedWorkingDir = "/repo/feature"
-	if got := d.ManagedWorktreePath(cs); got != "" {
-		t.Fatalf("ManagedWorktreePath = %q, want empty", got)
+	if launch.Command != "claude" {
+		t.Fatalf("launch command = %q, want claude", launch.Command)
 	}
 }
 
 func TestClaudePrepareLaunchManagedWorktreeSkipsFlag(t *testing.T) {
 	d, cs, _ := newClaude(t)
 	cs.StartDir = "/repo/.roost/worktrees/feature"
-	cs.ManagedWorkingDir = "/repo/.roost/worktrees/feature"
 	plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", "claude", state.LaunchOptions{
 		Worktree: state.WorktreeOption{Enabled: true},
 	}, false)
@@ -1130,7 +1057,7 @@ func TestClaudePrepareLaunchManagedWorktreeSkipsFlag(t *testing.T) {
 		t.Fatalf("PrepareLaunch error: %v", err)
 	}
 	if plan.Command != "claude" {
-		t.Errorf("PrepareLaunch.Command = %q, want %q (no --worktree when managed)", plan.Command, "claude")
+		t.Errorf("PrepareLaunch.Command = %q, want %q", plan.Command, "claude")
 	}
 	if plan.StartDir != "/repo/.roost/worktrees/feature" {
 		t.Errorf("StartDir = %q", plan.StartDir)
@@ -1140,7 +1067,6 @@ func TestClaudePrepareLaunchManagedWorktreeSkipsFlag(t *testing.T) {
 func TestClaudeWorktreeLaunchAddsSandboxFlag(t *testing.T) {
 	d, cs, _ := newClaude(t)
 	cs.StartDir = "/repo/.roost/worktrees/feature"
-	cs.ManagedWorkingDir = "/repo/.roost/worktrees/feature"
 	plan, err := d.PrepareLaunch(cs, state.LaunchModeCreate, "/repo", "claude", state.LaunchOptions{}, true)
 	if err != nil {
 		t.Fatalf("PrepareLaunch error: %v", err)
@@ -1160,8 +1086,11 @@ func TestClaudePrepareLaunchWorktreeFromCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareLaunch error: %v", err)
 	}
-	if plan.Command != "claude --worktree" {
-		t.Errorf("PrepareLaunch.Command = %q, want %q", plan.Command, "claude --worktree")
+	if plan.Command != "claude" {
+		t.Errorf("PrepareLaunch.Command = %q, want worktree flag stripped", plan.Command)
+	}
+	if !plan.Options.Worktree.Enabled {
+		t.Error("expected Options.Worktree.Enabled = true")
 	}
 }
 

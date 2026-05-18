@@ -54,8 +54,7 @@ func runCoordinator() error {
 		return err
 	}
 
-	projects := cfg.ListProjects()
-	if err := startSession(ctx, rt, client, cfg, sessionName, exePath, idleThreshold, projects); err != nil {
+	if err := startSession(ctx, rt, client, cfg, sessionName, exePath, idleThreshold); err != nil {
 		return err
 	}
 
@@ -132,7 +131,7 @@ func buildRuntime(ctx context.Context, cfg *config.Config, client *tmux.Client, 
 
 // startSession performs warm or cold startup, registering the shell driver and
 // restoring (or creating) the tmux session and persisted frame stack.
-func startSession(ctx context.Context, rt *runtime.Runtime, client *tmux.Client, cfg *config.Config, sessionName, exePath string, idleThreshold time.Duration, projects []string) error {
+func startSession(ctx context.Context, rt *runtime.Runtime, client *tmux.Client, cfg *config.Config, sessionName, exePath string, idleThreshold time.Duration) error {
 	shellDriver := statedriver.NewShellDriver(statedriver.ShellDriverName, resolveShellDisplay(client), idleThreshold)
 	if client.SessionExists() {
 		return warmStart(rt, client, cfg, sessionName, exePath, shellDriver)
@@ -140,7 +139,7 @@ func startSession(ctx context.Context, rt *runtime.Runtime, client *tmux.Client,
 	if err := coldStart(ctx, rt, client, cfg, sessionName, exePath, shellDriver); err != nil {
 		return err
 	}
-	go rt.CleanupUntrackedWorktrees(ctx, projects)
+	go rt.CleanupSubsystems(ctx)
 	return nil
 }
 

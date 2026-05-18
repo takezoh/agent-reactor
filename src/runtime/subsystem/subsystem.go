@@ -1,0 +1,63 @@
+// Package subsystem defines the Subsystem interface that every runtime
+// execution backend (cli, stream) implements. Subsystems own goroutines,
+// I/O, and per-frame lifecycle — the runtime calls into them via this
+// interface only.
+package subsystem
+
+import (
+	"context"
+
+	"github.com/takezoh/agent-roost/state"
+)
+
+// BindRequest carries the frame-level launch context to Subsystem.BindFrame.
+type BindRequest struct {
+	FrameID state.FrameID
+	Plan    state.LaunchPlan // command/startDir/options/stream/...
+	Stdin   []byte
+	Project string
+}
+
+// BindResult is the resolved frame binding returned by BindFrame.
+type BindResult struct {
+	// Plan is the updated LaunchPlan; command/startDir may be rewritten
+	// (e.g. worktree path substituted, stream resume command built).
+	Plan state.LaunchPlan
+	// ExtraEnv is merged into the frame's environment before sandbox wrap.
+	ExtraEnv map[string]string
+	// WorktreeStartDir is non-empty when the subsystem created a managed
+	// worktree. The runtime enqueues DEvWorktreeResolved via EvTmuxPaneSpawned
+	// so the driver persists the path for cold-start reconstruction.
+	WorktreeStartDir string
+	// WorktreeName is the petname chosen for the managed worktree.
+	WorktreeName string
+}
+
+// Subsystem is the execution backend interface. Each subsystem kind
+// (cli, stream) provides one Backend per (project × sandbox) pair.
+// Implementations are in runtime/subsystem/cli and runtime/subsystem/stream.
+type Subsystem interface {
+	// Kind returns the subsystem kind name.
+	Kind() state.LaunchSubsystem
+
+	// Start prepares shared backend resources (e.g. stream subsystem starts
+	// the app-server and dials the WebSocket; cli subsystem is a no-op).
+	// Called once before the first BindFrame.
+	Start(ctx context.Context) error
+
+	// BindFrame is called synchronously inside spawnTmuxWindowAsync
+	// (already a goroutine) before the tmux spawn. It resolves the
+	// LaunchPlan (worktree creation, stream thread binding, command
+	// rewrite) and registers the frame for cleanup tracking.
+	// BindFrame must complete before tmux spawn happens.
+	BindFrame(ctx context.Context, req BindRequest) (BindResult, error)
+
+	// ReleaseFrame is called when a pane dies or a frame is explicitly
+	// stopped. The subsystem removes the frame from its registry and
+	// fires any frame-specific cleanup (worktree removal, thread teardown).
+	ReleaseFrame(frameID state.FrameID)
+
+	// Stop is called at daemon shutdown. It waits for all in-flight
+	// cleanup to finish and terminates backend processes (if any).
+	Stop(ctx context.Context)
+}

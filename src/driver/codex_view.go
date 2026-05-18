@@ -63,7 +63,6 @@ func codexInfoExtras(cs CodexState) []state.InfoLine {
 	add("Observed Thread", cs.ObservedThreadID)
 	add("Resume Phase", cs.ResumePhase)
 	add("Working Dir", cs.StartDir)
-	add("Managed Worktree", cs.ManagedWorkingDir)
 	add("Worktree Name", cs.WorktreeName)
 	add("Current Tool", cs.CurrentTool)
 	if cs.BranchIsWorktree {

@@ -6,6 +6,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	rsubsystem "github.com/takezoh/agent-roost/runtime/subsystem"
 	"github.com/takezoh/agent-roost/state"
 )
 
@@ -97,23 +98,29 @@ func (r *Runtime) spawnFrameWindow(id state.SessionID, sandbox state.SandboxOver
 	launch.Sandbox = sandbox
 	launch.Project = frame.Project
 
+	ctx := context.Background()
+	sub, err := r.ensureSubsystem(ctx, launch.Subsystem, frame.SubsystemID, frame.Project, launch)
+	if err != nil {
+		slog.Error("bootstrap: ensure subsystem failed", "id", id, "frame", frame.ID, "err", err)
+		return err
+	}
+	bindResult, err := sub.BindFrame(ctx, rsubsystem.BindRequest{
+		FrameID: frame.ID,
+		Plan:    launch,
+		Project: frame.Project,
+	})
+	if err != nil {
+		slog.Error("bootstrap: bind frame failed", "id", id, "frame", frame.ID, "err", err)
+		return err
+	}
+	r.frameSubsystems.Store(frame.ID, sub)
+	launch = bindResult.Plan
+
 	baseEnv := map[string]string{
 		"ROOST_SESSION_ID": string(id),
 		"ROOST_FRAME_ID":   string(frame.ID),
 	}
-	reg := r.getSubsystemRegistry(frame.Project)
-	launch, extraEnv, err := reg.Inject(launch.Subsystem, launch, nil)
-	if err != nil {
-		slog.Error("bootstrap: inject subsystem failed", "id", id, "frame", frame.ID, "err", err)
-		return err
-	}
-	launch, err = r.prepareStreamLaunch(frame.ID, frame.SubsystemID, launch)
-	if err != nil {
-		slog.Error("bootstrap: prepare stream launch failed", "id", id, "frame", frame.ID, "err", err)
-		return err
-	}
-	mergedEnv := mergeEnvMaps(baseEnv, extraEnv)
-	wrapped, err := r.wrapWithContainerToken(frame.ID, frame.Project, launch, mergedEnv)
+	wrapped, err := r.wrapWithContainerToken(frame.ID, frame.Project, launch, baseEnv)
 	if err != nil {
 		slog.Error("bootstrap: wrap launch failed", "id", id, "frame", frame.ID, "err", err)
 		return err

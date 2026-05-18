@@ -11,31 +11,9 @@ import (
 	"github.com/takezoh/agent-roost/state"
 )
 
-// prepareStreamLaunch resolves a stream-subsystem LaunchPlan into the pane
-// command that attaches the codex TUI to the shared app-server via sockbridge.
-func (r *Runtime) prepareStreamLaunch(frameID state.FrameID, subsystemID state.SubsystemID, plan state.LaunchPlan) (state.LaunchPlan, error) {
-	if plan.Subsystem != state.LaunchSubsystemStream {
-		return plan, nil
-	}
-	cfg, err := cstream.ParseCommand(plan.Command)
-	if err != nil {
-		return plan, err
-	}
-	backend, err := r.ensureStreamBackend(subsystemID, plan.Project, cfg, plan.Stream)
-	if err != nil {
-		return plan, err
-	}
-	threadID, err := backend.BindFrame(frameID, plan.StartDir, plan.Stream, plan.Stdin)
-	if err != nil {
-		return plan, err
-	}
-	plan.Command = cstream.BuildRemoteCommand(backend.BridgePort(), threadID, plan.StartDir)
-	plan.Stdin = nil
-	plan.Stream.ResumeThreadID = threadID
-	return plan, nil
-}
-
-func (r *Runtime) ensureStreamBackend(subsystemID state.SubsystemID, project string, cfg cstream.CommandConfig, opts state.StreamLaunchOptions) (*cstream.Backend, error) {
+// ensureStreamBackend returns the stream backend for the given subsystem ID,
+// creating and starting it on first access.
+func (r *Runtime) ensureStreamBackend(ctx context.Context, subsystemID state.SubsystemID, project string, cfg cstream.CommandConfig, opts state.StreamLaunchOptions) (*cstream.Backend, error) {
 	if existing, ok := r.streamBackends.Load(subsystemID); ok {
 		return existing.(*cstream.Backend), nil
 	}
@@ -72,7 +50,7 @@ func (r *Runtime) ensureStreamBackend(subsystemID state.SubsystemID, project str
 	if loaded {
 		return actual.(*cstream.Backend), nil
 	}
-	if err := backend.Start(); err != nil {
+	if err := backend.Start(ctx); err != nil {
 		r.streamBackends.Delete(subsystemID)
 		return nil, err
 	}

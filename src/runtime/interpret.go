@@ -8,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	roostgit "github.com/takezoh/agent-roost/lib/git"
+	rsubsystem "github.com/takezoh/agent-roost/runtime/subsystem"
+	cstream "github.com/takezoh/agent-roost/runtime/subsystem/stream"
 	"github.com/takezoh/agent-roost/runtime/worker"
 	"github.com/takezoh/agent-roost/state"
 	"github.com/takezoh/agent-roost/uiproc"
@@ -67,16 +68,6 @@ func (r *Runtime) executeMiscEffect(eff state.Effect) {
 				"namespace", e.Namespace, "project", e.Project, "err", err)
 		}
 
-	case state.EffRemoveManagedWorktree:
-		path := e.Path
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := roostgit.RemoveWorktree(ctx, path); err != nil {
-				slog.Warn("runtime: remove managed worktree failed", "path", path, "err", err)
-			}
-		}()
-
 	case state.EffStartJob:
 		r.submitJob(e)
 
@@ -87,10 +78,12 @@ func (r *Runtime) executeMiscEffect(eff state.Effect) {
 		r.executeRecordNotification(e)
 
 	case state.EffReleaseFrameSandboxes:
-		// Emitted by reduceShutdown (not reduceDetach) so containers are
-		// destroyed before the tmux session is killed. drainFrameCleanups runs
-		// all per-frame cleanup closures in parallel and blocks until every
-		// container/VM is released.
+		// Stop all stream backends (kills app-server processes).
+		r.streamBackends.Range(func(_, v any) bool {
+			v.(rsubsystem.Subsystem).Stop(context.Background())
+			return true
+		})
+		// Drain sandbox (container/VM) cleanup closures in parallel.
 		r.drainFrameCleanups()
 
 	default:
@@ -201,6 +194,10 @@ func (r *Runtime) executeKillSessionWindow(e state.EffKillSessionWindow) {
 			slog.Warn("runtime: warm frame delete failed", "frame", e.FrameID, "err", err)
 		}
 	}
+	// Release subsystem resources (worktree removal, thread cleanup).
+	if v, ok := r.frameSubsystems.LoadAndDelete(e.FrameID); ok {
+		v.(rsubsystem.Subsystem).ReleaseFrame(e.FrameID)
+	}
 	r.invokeFrameCleanup(e.FrameID)
 }
 
@@ -293,6 +290,7 @@ func (r *Runtime) enqueueSpawnFailed(e state.EffSpawnTmuxWindow, msg string) {
 }
 
 func (r *Runtime) spawnTmuxWindowAsync(e state.EffSpawnTmuxWindow) {
+	ctx := context.Background()
 	plan := state.LaunchPlan{
 		Command:   e.Command,
 		StartDir:  e.StartDir,
@@ -303,22 +301,28 @@ func (r *Runtime) spawnTmuxWindowAsync(e state.EffSpawnTmuxWindow) {
 		Stream:    e.Stream,
 		Stdin:     e.Stdin,
 	}
-	reg := r.getSubsystemRegistry(e.Project)
-	plan, extraEnv, err := reg.Inject(e.Subsystem, plan, e.Stdin)
-	if err != nil {
-		slog.Error("runtime: inject subsystem failed", "frame", e.FrameID, "err", err)
-		r.enqueueSpawnFailed(e, err.Error())
-		return
-	}
-	plan, err = r.prepareStreamLaunch(e.FrameID, e.SubsystemID, plan)
-	if err != nil {
-		slog.Error("runtime: prepare stream launch failed", "frame", e.FrameID, "err", err)
-		r.enqueueSpawnFailed(e, err.Error())
-		return
-	}
-	mergedEnv := mergeEnvMaps(e.Env, extraEnv)
 
-	wrapped, err := r.wrapWithContainerToken(e.FrameID, e.Project, plan, mergedEnv)
+	sub, err := r.ensureSubsystem(ctx, e.Subsystem, e.SubsystemID, e.Project, plan)
+	if err != nil {
+		slog.Error("runtime: ensure subsystem failed", "frame", e.FrameID, "err", err)
+		r.enqueueSpawnFailed(e, err.Error())
+		return
+	}
+	bindResult, err := sub.BindFrame(ctx, rsubsystem.BindRequest{
+		FrameID: e.FrameID,
+		Plan:    plan,
+		Stdin:   e.Stdin,
+		Project: e.Project,
+	})
+	if err != nil {
+		slog.Error("runtime: bind frame failed", "frame", e.FrameID, "err", err)
+		r.enqueueSpawnFailed(e, err.Error())
+		return
+	}
+	r.frameSubsystems.Store(e.FrameID, sub)
+	plan = bindResult.Plan
+
+	wrapped, err := r.wrapWithContainerToken(e.FrameID, e.Project, plan, e.Env)
 	if err != nil {
 		slog.Error("runtime: wrap launch failed", "frame", e.FrameID, "err", err)
 		r.enqueueSpawnFailed(e, err.Error())
@@ -338,9 +342,29 @@ func (r *Runtime) spawnTmuxWindowAsync(e state.EffSpawnTmuxWindow) {
 		r.storeFrameCleanup(e.FrameID, wrapped.Cleanup)
 	}
 	r.Enqueue(state.EvTmuxPaneSpawned{
-		SessionID: e.SessionID, FrameID: e.FrameID,
-		PaneTarget: paneID, ReplyConn: e.ReplyConn, ReplyReqID: e.ReplyReqID,
+		SessionID:        e.SessionID,
+		FrameID:          e.FrameID,
+		PaneTarget:       paneID,
+		WorktreeStartDir: bindResult.WorktreeStartDir,
+		WorktreeName:     bindResult.WorktreeName,
+		ReplyConn:        e.ReplyConn,
+		ReplyReqID:       e.ReplyReqID,
 	})
+}
+
+// ensureSubsystem returns the Subsystem for the given kind, creating and
+// registering a stream backend on demand.
+func (r *Runtime) ensureSubsystem(ctx context.Context, kind state.LaunchSubsystem, subsystemID state.SubsystemID, project string, plan state.LaunchPlan) (rsubsystem.Subsystem, error) {
+	switch kind {
+	case state.LaunchSubsystemStream:
+		cfg, err := cstream.ParseCommand(plan.Command)
+		if err != nil {
+			return nil, err
+		}
+		return r.ensureStreamBackend(ctx, subsystemID, project, cfg, plan.Stream)
+	default:
+		return r.ensureCLIBackend(project), nil
+	}
 }
 
 // buildSpawnCommand builds the tmux command string for a resolved wrapped.Command.
