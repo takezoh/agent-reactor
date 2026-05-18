@@ -164,15 +164,9 @@ func readTap(ctx context.Context, frameID state.FrameID, pane string, ch <-chan 
 	}
 }
 
-// feedSafe drives the VT emulator with one chunk while shielding the daemon
-// from upstream library panics. The pane-tap emulator is a 1x1 stand-in
-// used only to surface OSC notifications; certain ESC sequences (CSI M,
-// DECRC, etc.) drive vt/Screen.InsertLineArea past the buffer bounds and
-// panic with "index out of range" on small dimensions. That panic in this
-// goroutine takes the whole daemon down — every TUI pane sees socket EOF
-// and the user is left staring at a frozen tmux session with no clue why
-// — so we recover, log, and keep parsing. The emulator handler state is
-// still valid for the next byte.
+// feedSafe drives the VT emulator with one chunk and recovers any panic.
+// vt.New(1,1) panics on ESC M / CSI M / DECRC via InsertLineArea out-of-bounds;
+// emulator handler state remains valid after the panic so the next chunk is safe.
 func feedSafe(frameID state.FrameID, pane string, term *vt.Terminal, data []byte) {
 	defer func() {
 		if rec := recover(); rec != nil {

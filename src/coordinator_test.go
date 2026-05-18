@@ -161,7 +161,7 @@ func TestSuperviseRun_PanicSurfacesErrorAndCancels(t *testing.T) {
 	errCh := make(chan error, 1)
 	done := make(chan struct{})
 	go func() {
-		superviseRun(ctx, cancel, errCh, func() error {
+		superviseRun(cancel, errCh, func() error {
 			panic("synthetic reducer panic")
 		})
 		close(done)
@@ -196,7 +196,7 @@ func TestSuperviseRun_ErrorPropagatesWithoutCancel(t *testing.T) {
 	want := errors.New("ordinary runtime error")
 	done := make(chan struct{})
 	go func() {
-		superviseRun(ctx, cancel, errCh, func() error { return want })
+		superviseRun(cancel, errCh, func() error { return want })
 		close(done)
 	}()
 	select {
@@ -216,12 +216,12 @@ func TestSuperviseRun_ErrorPropagatesWithoutCancel(t *testing.T) {
 // context.Canceled is the cooperative shutdown signal and must never be
 // reported as an error.
 func TestSuperviseRun_ContextCanceledSwallowed(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	errCh := make(chan error, 1)
 	done := make(chan struct{})
 	go func() {
-		superviseRun(ctx, cancel, errCh, func() error { return context.Canceled })
+		superviseRun(cancel, errCh, func() error { return context.Canceled })
 		close(done)
 	}()
 	select {
