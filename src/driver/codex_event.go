@@ -71,7 +71,6 @@ func (d CodexDriver) handleSubsystem(cs CodexState, ctx state.FrameContext, e st
 			"prev_thread", prevThreadID)
 		return cs, nil
 	}
-
 	if p.TranscriptPath != "" {
 		cs.TranscriptPath = p.TranscriptPath
 	}
@@ -79,7 +78,22 @@ func (d CodexDriver) handleSubsystem(cs CodexState, ctx state.FrameContext, e st
 		cs.StatusLine = p.StatusLine
 	}
 	effs := watchCodexTranscript(&cs)
+	cs, effs = d.applySubsystemKind(cs, ctx, e, effs)
+	slog.Debug("codex: subsystem event applied",
+		"frame", ctx.ID,
+		"kind", e.Kind,
+		"source", e.Source,
+		"thread", cs.ThreadID,
+		"prev_thread", prevThreadID,
+		"status", cs.Status,
+		"prev_status", prevStatus,
+		"tool", cs.CurrentTool,
+		"pending_approval", cs.PendingApproval)
+	return cs, effs
+}
 
+func (d CodexDriver) applySubsystemKind(cs CodexState, ctx state.FrameContext, e state.DEvSubsystem, effs []state.Effect) (CodexState, []state.Effect) {
+	p := e.Payload
 	switch e.Kind {
 	case state.SubsystemSessionReady:
 		cs, effs = d.applySessionStart(cs, ctx, e.Timestamp, effs)
@@ -141,17 +155,6 @@ func (d CodexDriver) handleSubsystem(cs CodexState, ctx state.FrameContext, e st
 			cs.RecentTurns = subsystemTurnsToSummaryTurns(p.Message.RecentTurns)
 		}
 	}
-	slog.Debug("codex: subsystem event applied",
-		"frame", ctx.ID,
-		"kind", e.Kind,
-		"source", e.Source,
-		"thread", cs.ThreadID,
-		"prev_thread", prevThreadID,
-		"status", cs.Status,
-		"prev_status", prevStatus,
-		"tool", cs.CurrentTool,
-		"pending_approval", cs.PendingApproval)
-
 	return cs, effs
 }
 

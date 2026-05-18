@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // Container-side paths for files bind-mounted from the per-project run dir.
@@ -44,17 +43,6 @@ func EnsureProjectRunDir(runBase, projectPath string) (string, error) {
 // container at ContainerSockFilePath via the run-dir bind mount.
 func ContainerSockPath(runDir string) string {
 	return filepath.Join(runDir, ContainerSockFileName)
-}
-
-// sanitizeSockName replaces any character that is not [a-zA-Z0-9_-] with an
-// underscore, producing a filename-safe component from an arbitrary string.
-func sanitizeSockName(id string) string {
-	return strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
-			return r
-		}
-		return '_'
-	}, id)
 }
 
 // InstallBinaryInRunDir copies the roost-bridge binary into runDir as

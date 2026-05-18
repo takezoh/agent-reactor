@@ -198,7 +198,9 @@ func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, proxy *C
 
 		// codex backend's sockbridge is registered alongside provider
 		// bridges so postCreate starts them all in one place.
-		bridges := append(proxySpec.BridgeSpecs, codexContainerBridgeSpec())
+		bridges := make([]container.BridgeSpec, 0, len(proxySpec.BridgeSpecs)+1)
+		bridges = append(bridges, proxySpec.BridgeSpecs...)
+		bridges = append(bridges, codexContainerBridgeSpec())
 		postCreate := buildPostCreate(binPath, postCreateSubcmds, bridges)
 
 		return sandboxdc.SpecOverlay{

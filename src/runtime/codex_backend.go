@@ -23,28 +23,28 @@ import (
 )
 
 type codexBackend struct {
-	r            *Runtime
-	subsystemID  state.SubsystemID
-	project      string
-	serverBin    string
-	serverArgs   []string
-	model        string
-	sandboxed    bool
-	autoApprove  bool
-	cmd            *exec.Cmd
-	wsConn         *websocket.Conn // WebSocket-over-UDS connection to app-server
-	sockPath       string          // UDS path the daemon dials (host-side view)
-	containerSock  string          // UDS path the in-container app-server listens on
-	hostBridgeCmd  *exec.Cmd       // sockbridge subprocess for host mode (nil in container mode)
-	bridgePort     int             // loopback TCP port for TUI's ws:// URL
-	readDone       chan error
-	writeMu      sync.Mutex
-	mu           sync.Mutex
-	nextID       int64
-	pending      map[int64]chan rpcMessage
-	frames       map[state.FrameID]*codexFrameBinding
-	threads      map[string]state.FrameID
-	activeLookup func() state.FrameID
+	r             *Runtime
+	subsystemID   state.SubsystemID
+	project       string
+	serverBin     string
+	serverArgs    []string
+	model         string
+	sandboxed     bool
+	autoApprove   bool
+	cmd           *exec.Cmd
+	wsConn        *websocket.Conn // WebSocket-over-UDS connection to app-server
+	sockPath      string          // UDS path the daemon dials (host-side view)
+	containerSock string          // UDS path the in-container app-server listens on
+	hostBridgeCmd *exec.Cmd       // sockbridge subprocess for host mode (nil in container mode)
+	bridgePort    int             // loopback TCP port for TUI's ws:// URL
+	readDone      chan error
+	writeMu       sync.Mutex
+	mu            sync.Mutex
+	nextID        int64
+	pending       map[int64]chan rpcMessage
+	frames        map[state.FrameID]*codexFrameBinding
+	threads       map[string]state.FrameID
+	activeLookup  func() state.FrameID
 }
 
 type codexFrameBinding struct {
@@ -108,20 +108,20 @@ func (r *Runtime) ensureCodexBackend(subsystemID state.SubsystemID, project stri
 	}
 
 	backend := &codexBackend{
-		r:           r,
-		subsystemID: subsystemID,
-		project:     project,
-		serverBin:   cfg.serverBin,
-		serverArgs:  cfg.serverArgs,
-		model:       cfg.model,
-		sandboxed:   opts.SandboxPolicy == state.StreamSandboxPolicyExternal,
-		autoApprove: opts.ApprovalPolicy == state.StreamApprovalPolicyAutoApprove,
+		r:             r,
+		subsystemID:   subsystemID,
+		project:       project,
+		serverBin:     cfg.serverBin,
+		serverArgs:    cfg.serverArgs,
+		model:         cfg.model,
+		sandboxed:     opts.SandboxPolicy == state.StreamSandboxPolicyExternal,
+		autoApprove:   opts.ApprovalPolicy == state.StreamApprovalPolicyAutoApprove,
 		sockPath:      sockPath,
 		containerSock: containerSock,
 		bridgePort:    driver.CodexAppServerLoopbackPort,
-		pending:     map[int64]chan rpcMessage{},
-		frames:      map[state.FrameID]*codexFrameBinding{},
-		threads:     map[string]state.FrameID{},
+		pending:       map[int64]chan rpcMessage{},
+		frames:        map[state.FrameID]*codexFrameBinding{},
+		threads:       map[string]state.FrameID{},
 		activeLookup: func() state.FrameID {
 			return r.activeFrameID
 		},
