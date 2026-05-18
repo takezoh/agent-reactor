@@ -151,6 +151,87 @@ func TestReadTapCancelStops(t *testing.T) {
 	}
 }
 
+// Regression: the pane-tap VT emulator runs at 1x1 dimensions and the
+// upstream charmbracelet/x/vt library panics with "index out of range"
+// when certain ESC sequences (e.g. CSI M / DECRC / ESC M) drive
+// Screen.InsertLineArea past the buffer bounds. The panic was raised in
+// the per-frame readTap goroutine and, with no recovery, terminated the
+// whole daemon — closing every IPC socket and leaving every TUI pane
+// dead. feedSafe must absorb the panic, log it, and let the reader move
+// on to the next chunk so a single rogue codex frame can't take down
+// the daemon.
+func TestFeedSafe_RecoversFromVTPanic(t *testing.T) {
+	// Real reproduction: a 1x1 vt.Terminal fed with ESC M (reverseIndex)
+	// triggers ScrollDown → InsertLine → InsertLineArea index-out-of-range.
+	term := vt.New(1, 1)
+	defer func() {
+		if rec := recover(); rec != nil {
+			t.Fatalf("feedSafe must absorb the vt panic; bubbled: %v", rec)
+		}
+	}()
+	feedSafe(state.FrameID("f1"), "%1", term, []byte("\x1bM\x1bM\x1bM"))
+}
+
+// After a recovered panic on a previous chunk, subsequent chunks must
+// still be processed — otherwise the frame's OSC events go silent and
+// the daemon's view of the world diverges.
+func TestFeedSafe_ContinuesAfterPanic(t *testing.T) {
+	frameID := state.FrameID("f1")
+	var events []state.Event
+	enqueue := func(e state.Event) { events = append(events, e) }
+	term := newPaneTapTerminal(frameID, enqueue)
+	// Chunk 1: ESC sequences that crash the 1x1 emulator.
+	feedSafe(frameID, "%1", term, []byte("\x1bM\x1bM\x1bM"))
+	// Chunk 2: a well-formed OSC notification must still come through.
+	feedSafe(frameID, "%1", term, []byte("\x1b]9;ping\x07"))
+
+	var gotOSC bool
+	for _, ev := range events {
+		if o, ok := ev.(state.EvPaneOsc); ok && o.Cmd == 9 && o.Title == "ping" {
+			gotOSC = true
+		}
+	}
+	if !gotOSC {
+		t.Fatalf("expected OSC 9 event after recovery, got events=%+v", events)
+	}
+}
+
+// A panic in one frame's goroutine must not propagate beyond feedSafe
+// into the caller (readTap). This guards the for-loop that drains the
+// channel — without recovery, the goroutine dies and the daemon dies.
+func TestReadTap_SurvivesVTPanic(t *testing.T) {
+	frameID := state.FrameID("f1")
+	ch := make(chan []byte, 4)
+	// 1x1 emulator panics on these.
+	ch <- []byte("\x1bM\x1bM\x1bM")
+	// Followed by a legitimate OSC payload that must arrive.
+	ch <- []byte("\x1b]9;after-panic\x07")
+	close(ch)
+
+	var events []state.Event
+	enqueue := func(e state.Event) { events = append(events, e) }
+	done := make(chan struct{})
+	go func() {
+		readTap(context.Background(), frameID, "%1", ch, enqueue)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("readTap did not return after channel close (likely killed by panic instead of recovering)")
+	}
+
+	var gotOSC bool
+	for _, ev := range events {
+		if o, ok := ev.(state.EvPaneOsc); ok && o.Title == "after-panic" {
+			gotOSC = true
+		}
+	}
+	if !gotOSC {
+		t.Fatalf("expected post-panic OSC event, got %+v", events)
+	}
+}
+
 func TestStartRestoredTaps_StartsOnlyRootFrames(t *testing.T) {
 	tap := &fakePaneTap{}
 	r := New(Config{
