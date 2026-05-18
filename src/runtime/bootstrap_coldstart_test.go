@@ -11,34 +11,6 @@ import (
 	"github.com/takezoh/agent-roost/state"
 )
 
-// streamMinimalDriver is a test driver that declares a stream subsystem launch.
-type streamMinimalDriver struct{}
-
-func (streamMinimalDriver) Name() string        { return "stream-minimal-test" }
-func (streamMinimalDriver) DisplayName() string { return "stream-minimal-test" }
-func (streamMinimalDriver) Status(_ state.DriverState) state.Status {
-	return state.StatusIdle
-}
-func (streamMinimalDriver) NewState(_ time.Time) state.DriverState        { return state.DriverStateBase{} }
-func (streamMinimalDriver) Persist(_ state.DriverState) map[string]string { return nil }
-func (streamMinimalDriver) Restore(_ map[string]string, _ time.Time) state.DriverState {
-	return state.DriverStateBase{}
-}
-func (streamMinimalDriver) View(_ state.DriverState) state.View { return state.View{} }
-func (streamMinimalDriver) Step(prev state.DriverState, _ state.FrameContext, _ state.DriverEvent) (state.DriverState, []state.Effect, state.View) {
-	return prev, nil, state.View{}
-}
-func (streamMinimalDriver) PrepareLaunch(_ state.DriverState, _ state.LaunchMode, project, command string, _ state.LaunchOptions, _ bool) (state.LaunchPlan, error) {
-	return state.LaunchPlan{
-		Command:   command,
-		StartDir:  project,
-		Subsystem: state.LaunchSubsystemStream,
-		Stream:    state.StreamLaunchOptions{},
-	}, nil
-}
-func (streamMinimalDriver) StartDir(_ state.DriverState) string                          { return "" }
-func (streamMinimalDriver) WithStartDir(s state.DriverState, _ string) state.DriverState { return s }
-
 type trackingLauncher struct {
 	mu          sync.Mutex
 	calls       map[string]int

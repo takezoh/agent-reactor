@@ -16,11 +16,6 @@ import (
 	"github.com/takezoh/agent-roost/state"
 )
 
-// containerBinaryPath is the in-container path of the roost-bridge binary,
-// bind-mounted from the host run directory. Mirrors runtime.ContainerBinaryPath
-// without importing runtime (which would create a circular dependency).
-const containerBinaryPath = "/opt/roost/run/roost-bridge"
-
 // ContainerState holds runtime data for one project's devcontainer.
 type ContainerState struct {
 	mu          sync.Mutex

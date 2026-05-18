@@ -461,7 +461,7 @@ func TestCodexPrepareLaunchSkipsNonCodexBaseCommand(t *testing.T) {
 
 func TestCodexPrepareLaunchColdStartUsesPersistedStartDir(t *testing.T) {
 	d, cs, _ := newCodex(t)
-	cs.CommonState.StartDir = "/proj/.roost/worktrees/foo"
+	cs.StartDir = "/proj/.roost/worktrees/foo"
 	for _, mode := range []state.LaunchMode{state.LaunchModeCreate, state.LaunchModeColdStart} {
 		plan, err := d.PrepareLaunch(cs, mode, "/proj", "codex", state.LaunchOptions{}, false)
 		if err != nil {
