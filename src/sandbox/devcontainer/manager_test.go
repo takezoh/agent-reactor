@@ -1,6 +1,7 @@
 package devcontainer
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -786,6 +787,37 @@ func TestIsShared(t *testing.T) {
 			t.Error("expected IsShared() false for nil")
 		}
 	})
+}
+
+func TestIsStaleBindMountError(t *testing.T) {
+	staleSample := fmt.Errorf("docker start abc: exit status 1\nError response from daemon: " +
+		"failed to create task for container: failed to create shim task: " +
+		"OCI runtime create failed: runc create failed: " +
+		"unable to start container process: error during container init: " +
+		`error mounting "/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/Ubuntu-22.04/1f37ac35" ` +
+		`to rootfs at "/home/ubuntu/.claude.json": ` +
+		`mount src=..., dst=..., flags=MS_BIND|MS_REC: no such file or directory`)
+	if !isStaleBindMountError(staleSample) {
+		t.Errorf("expected stale-bind-mount detection on docker desktop OCI mount error")
+	}
+
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"unrelated", fmt.Errorf("docker start abc: permission denied"), false},
+		{"oci create no mounting", fmt.Errorf("OCI runtime create failed: some other failure"), false},
+		{"mounting but not OCI", fmt.Errorf("error mounting /foo: no such file or directory"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isStaleBindMountError(tc.err); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestExtraWorkspacesHash_Deterministic(t *testing.T) {

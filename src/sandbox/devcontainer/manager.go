@@ -219,9 +219,50 @@ func (m *Manager) ensureContainer(ctx context.Context, instanceKey, projectPath 
 	}
 
 	if ctr != nil {
-		return m.reuseContainer(ctx, instanceKey, ctr, spec)
+		err := m.reuseContainer(ctx, instanceKey, ctr, spec)
+		if err == nil {
+			return nil
+		}
+		// Docker Desktop's WSL bind-mount cache occasionally drops the
+		// "/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/.../<hash>"
+		// entry for file mounts (notably ~/.claude.json) once the container
+		// has been stopped. The container itself is healthy but `docker start`
+		// fails the OCI mount step with "no such file or directory". When we
+		// see that exact failure, removing and recreating the container is
+		// safe: image layers and the mount-hash label are preserved, and the
+		// only state we lose is what already lived in the now-broken container
+		// layer. Host bind-mounts (~/.claude/sessions, ~/.codex/sessions)
+		// are unaffected, so claude / codex session resume still works.
+		if !isStaleBindMountError(err) {
+			return err
+		}
+		slog.Warn("devcontainer: stale bind-mount cache, recreating container",
+			"id", shortID(ctr.ID), "key", instanceKey)
+		rmCtx, rmCancel := context.WithTimeout(ctx, 30*time.Second)
+		rmErr := RemoveContainer(rmCtx, ctr.ID)
+		rmCancel()
+		if rmErr != nil {
+			return fmt.Errorf("devcontainer: recover after stale bind-mount: %w (original: %v)", rmErr, err)
+		}
+		m.mu.Lock()
+		delete(m.containers, instanceKey)
+		m.mu.Unlock()
 	}
 	return m.createContainer(ctx, instanceKey, image, spec)
+}
+
+// isStaleBindMountError detects the specific Docker Desktop failure mode where
+// the WSL bind-mount cache has lost a file mount's source path. We only retry
+// on this exact pattern so unrelated start failures (image missing, permission
+// problems, network) still surface to the user untouched.
+func isStaleBindMountError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "OCI runtime create failed") &&
+		strings.Contains(msg, "error mounting") &&
+		strings.Contains(msg, "no such file or directory")
 }
 
 func (m *Manager) loadSpec(instanceKey, projectPath, dcDir string) (*DevcontainerSpec, error) {
