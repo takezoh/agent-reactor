@@ -20,14 +20,16 @@ type rpcMessage struct {
 	Error  json.RawMessage `json:"error,omitempty"`
 }
 
-// initialize sends the session/open handshake to the app-server.
+// initialize performs the JSON-RPC handshake with the codex app-server:
+// `initialize` request followed by an `initialized` notification.
 func (b *Backend) initialize() error {
-	params := map[string]any{"version": 1}
-	if b.model != "" {
-		params["model"] = b.model
+	if _, err := b.request("initialize", map[string]any{
+		"clientInfo":   map[string]any{"name": "roost", "version": "0"},
+		"capabilities": map[string]any{"experimentalApi": true},
+	}); err != nil {
+		return err
 	}
-	_, err := b.request("session/open", params)
-	return err
+	return b.notify("initialized", map[string]any{})
 }
 
 func (b *Backend) resumeThread(threadID, startDir string) (json.RawMessage, error) {
