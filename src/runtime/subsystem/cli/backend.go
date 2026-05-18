@@ -79,4 +79,3 @@ func (b *Backend) ReleaseFrame(frameID state.FrameID) {
 
 // Stop is a no-op for the CLI backend; resources are released per-frame.
 func (b *Backend) Stop(_ context.Context) {}
-

@@ -11,7 +11,6 @@ import (
 // These tests use drivers registered in TestMain (runtime_test.go):
 // NewGenericDriver("", ""), NewGenericDriver("shell", "shell"), NewCodexDriver("").
 
-
 func TestCollectTrackedWorktreesEmpty(t *testing.T) {
 	s := state.State{Sessions: map[state.SessionID]state.Session{}}
 	tracked := collectTrackedWorktrees(s)

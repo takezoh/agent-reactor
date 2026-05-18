@@ -29,7 +29,7 @@ func (f *fakeSubsystem) BindFrame(_ context.Context, _ rsubsystem.BindRequest) (
 	return rsubsystem.BindResult{}, nil
 }
 func (f *fakeSubsystem) ReleaseFrame(_ state.FrameID) { atomic.AddInt32(&f.releaseN, 1) }
-func (f *fakeSubsystem) Stop(_ context.Context) { atomic.AddInt32(&f.stopN, 1) }
+func (f *fakeSubsystem) Stop(_ context.Context)       { atomic.AddInt32(&f.stopN, 1) }
 
 // fakeFactory returns a pre-built fakeSubsystem keyed by SubsystemID.
 type fakeFactory struct {
