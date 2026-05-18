@@ -320,4 +320,3 @@ func findHelperBin(name string) (string, error) {
 	}
 	return path, nil
 }
-

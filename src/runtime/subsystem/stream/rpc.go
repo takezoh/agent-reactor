@@ -175,4 +175,3 @@ func dialWebSocketUDS(sockPath string, timeout time.Duration) (*websocket.Conn, 
 	conn.SetReadLimit(-1)
 	return conn, nil
 }
-
