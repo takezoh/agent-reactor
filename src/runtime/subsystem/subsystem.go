@@ -61,3 +61,17 @@ type Subsystem interface {
 	// cleanup to finish and terminates backend processes (if any).
 	Stop(ctx context.Context)
 }
+
+// Factory creates or returns the Subsystem instance for a frame's execution
+// context. Implementations encapsulate environment resolution (host /
+// container) — Runtime, Driver, and Frame remain environment-agnostic.
+// Each LaunchSubsystem kind is backed by one Factory registered at Runtime
+// construction time.
+type Factory interface {
+	// Ensure returns the Subsystem and its SubsystemID for (project, plan).
+	// Idempotent: same (project, plan) returns the same Subsystem instance.
+	// ctx is used for backend startup (e.g. Stream's app-server dial).
+	// The returned SubsystemID is opaque to callers — only the factory
+	// (and the Subsystem it manages) knows the encoding.
+	Ensure(ctx context.Context, project string, plan state.LaunchPlan) (Subsystem, state.SubsystemID, error)
+}

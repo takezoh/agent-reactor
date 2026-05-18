@@ -130,15 +130,14 @@ func TestPaneDiedActiveSessionEmitsDeactivate(t *testing.T) {
 	}
 }
 
-// TestPaneDiedRootFrameWithSubsystemIDEvictsSession is a regression test for
-// the bug where assignSubsystemID always produces a non-empty SubsystemID,
-// causing failSubsystemFrame to return handled=true for root frames and
-// preventing eviction.
+// TestPaneDiedRootFrameWithSubsystemIDEvictsSession verifies root frames are
+// always evicted (not routed to failSubsystemFrame) even when they carry a
+// non-empty SubsystemID from a successful BindFrame.
 func TestPaneDiedRootFrameWithSubsystemIDEvictsSession(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	sess := stubSession(id)
-	sess.Frames[0].SubsystemID = SubsystemID("cli:" + string(id)) // as assignSubsystemID produces
+	sess.Frames[0].SubsystemID = SubsystemID("cli:/p")
 	s.Sessions[id] = sess
 	s.ActiveOccupant = OccupantFrame
 	s.ActiveSession = id

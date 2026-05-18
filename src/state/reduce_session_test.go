@@ -130,13 +130,6 @@ func (sdDriver) WithStartDir(s DriverState, dir string) DriverState {
 	return ss
 }
 
-type subsystemPlannerStub struct{ stubDriver }
-
-func (subsystemPlannerStub) Name() string { return "subsystem-planner" }
-func (subsystemPlannerStub) SubsystemID(project string, sandbox SandboxOverride, frameID FrameID) SubsystemID {
-	return SubsystemID("planned:" + string(frameID))
-}
-
 func init() {
 	if _, exists := driverRegistry[""]; !exists {
 		Register(fallbackDriver{})
@@ -152,9 +145,6 @@ func init() {
 	}
 	if _, exists := driverRegistry["sdstub"]; !exists {
 		Register(sdDriver{})
-	}
-	if _, exists := driverRegistry["subsystem-planner"]; !exists {
-		Register(subsystemPlannerStub{})
 	}
 }
 
@@ -277,7 +267,7 @@ func TestCreateSessionAllocatesAndSpawns(t *testing.T) {
 	}
 }
 
-func TestCreateSessionAssignsFrameSubsystemAndTarget(t *testing.T) {
+func TestCreateSessionLeavesSubsystemIDEmptyUntilBind(t *testing.T) {
 	s := New()
 	s.Now = time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
 
@@ -285,7 +275,7 @@ func TestCreateSessionAssignsFrameSubsystemAndTarget(t *testing.T) {
 		ConnID: 1, ReqID: "r", Event: "create-session",
 		Payload: mustPayload(map[string]string{
 			"project": "/foo",
-			"command": "subsystem-planner",
+			"command": "planner",
 		}),
 	})
 
@@ -297,8 +287,8 @@ func TestCreateSessionAssignsFrameSubsystemAndTarget(t *testing.T) {
 			t.Fatalf("frame count = %d, want 1", len(sess.Frames))
 		}
 		frame := sess.Frames[0]
-		if frame.SubsystemID != SubsystemID("planned:"+string(frame.ID)) {
-			t.Fatalf("SubsystemID = %q", frame.SubsystemID)
+		if frame.SubsystemID != "" {
+			t.Fatalf("SubsystemID = %q, want empty (factory fills in via EvTmuxPaneSpawned)", frame.SubsystemID)
 		}
 		if frame.TargetID != TargetID(frame.ID) {
 			t.Fatalf("TargetID = %q, want %q", frame.TargetID, frame.ID)

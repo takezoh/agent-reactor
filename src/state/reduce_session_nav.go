@@ -19,6 +19,18 @@ func reduceTmuxPaneSpawned(s State, e EvTmuxPaneSpawned) (State, []Effect) {
 		return s, nil
 	}
 
+	// The subsystem factory chose this frame's backend identity during ensureSubsystem;
+	// record it on the frame so cleanup and routing have a stable handle.
+	if e.SubsystemID != "" && sess.Frames[frameIdx].SubsystemID != e.SubsystemID {
+		s.Sessions = cloneSessions(s.Sessions)
+		sess = s.Sessions[e.SessionID]
+		frames := make([]SessionFrame, len(sess.Frames))
+		copy(frames, sess.Frames)
+		frames[frameIdx].SubsystemID = e.SubsystemID
+		sess.Frames = frames
+		s.Sessions[e.SessionID] = sess
+	}
+
 	// When the subsystem created a managed worktree during BindFrame, propagate
 	// the resolved path to the driver so it is persisted for cold-start reconstruction.
 	if e.WorktreeStartDir != "" {

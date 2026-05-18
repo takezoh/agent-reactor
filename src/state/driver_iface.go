@@ -335,10 +335,6 @@ type LaunchPreparer interface {
 	PrepareLaunch(s DriverState, mode LaunchMode, project, baseCommand string, options LaunchOptions, sandboxed bool) (LaunchPlan, error)
 }
 
-type SubsystemPlanner interface {
-	SubsystemID(project string, sandbox SandboxOverride, frameID FrameID) SubsystemID
-}
-
 // Driver is the interface every per-driver-type plugin implements. Each
 // impl is a stateless value type registered once at init time; the
 // per-session state lives in DriverState values returned by NewState.

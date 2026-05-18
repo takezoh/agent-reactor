@@ -84,13 +84,12 @@ func reduceCreateSession(s State, connID ConnID, reqID string, p CreateSessionPa
 		LaunchOptions: p.Options,
 		Driver:        driverState,
 		Frames: []SessionFrame{{
-			ID:          rootFrameID,
-			SubsystemID: assignSubsystemID(p.Project, command, p.Sandbox, rootFrameID),
-			TargetID:    TargetID(rootFrameID),
-			Project:     p.Project,
-			Command:     command,
-			CreatedAt:   s.Now,
-			Driver:      driverState,
+			ID:        rootFrameID,
+			TargetID:  TargetID(rootFrameID),
+			Project:   p.Project,
+			Command:   command,
+			CreatedAt: s.Now,
+			Driver:    driverState,
 		}},
 	}
 
@@ -105,7 +104,7 @@ func reduceCreateSession(s State, connID ConnID, reqID string, p CreateSessionPa
 	s.Sessions = cloneSessions(s.Sessions)
 	s.Sessions[sessID] = session
 
-	return s, []Effect{spawnEffect(sessID, rootFrameID, session.Frames[0].SubsystemID, launch, connID, reqID)}
+	return s, []Effect{spawnEffect(sessID, rootFrameID, launch, connID, reqID)}
 }
 
 func resolveCreateCommand(s State, command string) string {
@@ -191,7 +190,6 @@ func pushDriverInternal(s State, sid SessionID, project, rawCommand string, opti
 		CreatedAt: s.Now,
 		Driver:    driverState,
 	}
-	frame.SubsystemID = assignSubsystemID(project, command, sess.Sandbox, frame.ID)
 	frame.TargetID = TargetID(frame.ID)
 	sess = pushMRU(sess, sess.ActiveFrameID)
 	sess.ActiveFrameID = frame.ID
@@ -208,15 +206,7 @@ func pushDriverInternal(s State, sid SessionID, project, rawCommand string, opti
 	sess.Frames[len(sess.Frames)-1].LaunchOptions = launch.Options
 	s.Sessions[sid] = sess
 
-	return s, []Effect{spawnEffect(sid, frame.ID, frame.SubsystemID, launch, connID, reqID)}, nil
-}
-
-func assignSubsystemID(project, command string, sandbox SandboxOverride, frameID FrameID) SubsystemID {
-	driver := GetDriver(command)
-	if planner, ok := driver.(SubsystemPlanner); ok {
-		return planner.SubsystemID(project, sandbox, frameID)
-	}
-	return SubsystemID("cli:" + string(frameID))
+	return s, []Effect{spawnEffect(sid, frame.ID, launch, connID, reqID)}, nil
 }
 
 func reduceForkSession(s State, connID ConnID, reqID string, p ForkSessionParams) (State, []Effect) {
@@ -295,7 +285,7 @@ func spawnForkSession(s State, connID ConnID, reqID string, sess Session, forkDr
 	newSess.Frames[0].LaunchOptions = launch.Options
 	s.Sessions = cloneSessions(s.Sessions)
 	s.Sessions[newSessID] = newSess
-	return s, []Effect{spawnEffect(newSessID, rootFrameID, newSess.Frames[0].SubsystemID, launch, connID, reqID)}
+	return s, []Effect{spawnEffect(newSessID, rootFrameID, launch, connID, reqID)}
 }
 
 // makeForkSession initialises a new Session value for a fork operation.
@@ -310,12 +300,11 @@ func makeForkSession(s State, src Session, newSessID SessionID, rootFrameID Fram
 		LaunchOptions: opts,
 		Driver:        driverState,
 		Frames: []SessionFrame{{
-			ID:          rootFrameID,
-			SubsystemID: assignSubsystemID(src.Project, forkCommand, src.Sandbox, rootFrameID),
-			Project:     src.Project,
-			Command:     forkCommand,
-			CreatedAt:   s.Now,
-			Driver:      driverState,
+			ID:        rootFrameID,
+			Project:   src.Project,
+			Command:   forkCommand,
+			CreatedAt: s.Now,
+			Driver:    driverState,
 		}},
 	}
 }

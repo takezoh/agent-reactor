@@ -17,21 +17,20 @@ type Effect interface {
 // EvTmuxPaneSpawned / EvTmuxSpawnFailed, forwarding the Reply*
 // fields so the reducer can complete the create-session round trip.
 type EffSpawnTmuxWindow struct {
-	SessionID   SessionID
-	FrameID     FrameID
-	SubsystemID SubsystemID // non-empty for stream-subsystem frames; used for pane sharing
-	Mode        LaunchMode
-	Project     string
-	Command     string
-	StartDir    string
-	Sandbox     SandboxOverride
-	Options     LaunchOptions
-	Subsystem   LaunchSubsystem
-	Stream      StreamLaunchOptions
-	Stdin       []byte // piped into the spawned command; nil = no stdin
-	Env         map[string]string
-	ReplyConn   ConnID
-	ReplyReqID  string
+	SessionID  SessionID
+	FrameID    FrameID
+	Mode       LaunchMode
+	Project    string
+	Command    string
+	StartDir   string
+	Sandbox    SandboxOverride
+	Options    LaunchOptions
+	Subsystem  LaunchSubsystem
+	Stream     StreamLaunchOptions
+	Stdin      []byte // piped into the spawned command; nil = no stdin
+	Env        map[string]string
+	ReplyConn  ConnID
+	ReplyReqID string
 }
 
 // EffKillSessionWindow destroys the tmux window containing the given session pane.

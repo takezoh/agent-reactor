@@ -80,14 +80,6 @@ func (CodexDriver) Name() string                            { return CodexDriver
 func (CodexDriver) DisplayName() string                     { return CodexDriverName }
 func (CodexDriver) Status(s state.DriverState) state.Status { return s.(CodexState).Status }
 
-func (CodexDriver) SubsystemID(project string, sandbox state.SandboxOverride, _ state.FrameID) state.SubsystemID {
-	mode := "auto"
-	if sandbox == state.SandboxOverrideHost {
-		mode = "host"
-	}
-	return state.SubsystemID("codex:" + mode + ":" + strings.ReplaceAll(project, ":", "_"))
-}
-
 func (CodexDriver) StartDir(s state.DriverState) string {
 	cs, ok := s.(CodexState)
 	if !ok {

@@ -8,53 +8,26 @@ import (
 
 	cstream "github.com/takezoh/agent-roost/runtime/subsystem/stream"
 	"github.com/takezoh/agent-roost/sandbox"
-	"github.com/takezoh/agent-roost/state"
 )
 
-// ensureStreamBackend returns the stream backend for the given subsystem ID,
-// creating and starting it on first access.
-func (r *Runtime) ensureStreamBackend(ctx context.Context, subsystemID state.SubsystemID, project string, cfg cstream.CommandConfig, opts state.StreamLaunchOptions) (*cstream.Backend, error) {
-	if existing, ok := r.streamBackends.Load(subsystemID); ok {
-		return existing.(*cstream.Backend), nil
-	}
-
+// resolveStreamSockPaths returns the host-side and container-side sock paths
+// for the given project. The container path equals the host path when the
+// project runs directly on the host.
+func (r *Runtime) resolveStreamSockPaths(project string) (string, string, error) {
 	dataDir := r.cfg.DataDir
 	if dataDir == "" {
 		dataDir = os.TempDir()
 	}
 	runDir, err := EnsureProjectRunDir(filepath.Join(dataDir, "run"), project)
 	if err != nil {
-		return nil, fmt.Errorf("stream backend: run dir: %w", err)
+		return "", "", fmt.Errorf("stream backend: run dir: %w", err)
 	}
-	sockPath := filepath.Join(runDir, cstream.SockName)
-	containerSock := sockPath
+	hostSock := filepath.Join(runDir, cstream.SockName)
+	containerSock := hostSock
 	if launcher(r.cfg).IsContainer(project) {
 		containerSock = ContainerRunDir + "/" + cstream.SockName
 	}
-
-	backend := cstream.New(
-		r,
-		subsystemID,
-		project,
-		cfg.ServerBin,
-		cfg.ServerArgs,
-		cfg.Model,
-		opts.SandboxPolicy == state.StreamSandboxPolicyExternal,
-		opts.ApprovalPolicy == state.StreamApprovalPolicyAutoApprove,
-		sockPath,
-		containerSock,
-		cstream.LoopbackPort,
-		func() state.FrameID { return r.activeFrameID },
-	)
-	actual, loaded := r.streamBackends.LoadOrStore(subsystemID, backend)
-	if loaded {
-		return actual.(*cstream.Backend), nil
-	}
-	if err := backend.Start(ctx); err != nil {
-		r.streamBackends.Delete(subsystemID)
-		return nil, err
-	}
-	return backend, nil
+	return hostSock, containerSock, nil
 }
 
 // ContainerExecConfig implements stream.RuntimeHook: returns docker exec

@@ -38,24 +38,24 @@ func isSandboxed(s State, project string, override SandboxOverride) bool {
 
 // spawnEffect builds an EffSpawnTmuxWindow from a resolved LaunchPlan.
 // plan.Project, plan.Sandbox, and plan.Stdin must be set by the caller before invoking.
-// subsystemID is the frame's SubsystemID; empty for non-subsystem (CLI) frames.
-func spawnEffect(sessID SessionID, frameID FrameID, subsystemID SubsystemID, plan LaunchPlan, connID ConnID, reqID string) EffSpawnTmuxWindow {
+// The runtime resolves the frame's SubsystemID during ensureSubsystem and
+// reports it back via EvTmuxPaneSpawned.
+func spawnEffect(sessID SessionID, frameID FrameID, plan LaunchPlan, connID ConnID, reqID string) EffSpawnTmuxWindow {
 	return EffSpawnTmuxWindow{
-		SessionID:   sessID,
-		FrameID:     frameID,
-		SubsystemID: subsystemID,
-		Mode:        LaunchModeCreate,
-		Project:     plan.Project,
-		Command:     plan.Command,
-		StartDir:    plan.StartDir,
-		Sandbox:     plan.Sandbox,
-		Options:     plan.Options,
-		Subsystem:   plan.Subsystem,
-		Stream:      plan.Stream,
-		Stdin:       plan.Stdin,
-		Env:         map[string]string{"ROOST_SESSION_ID": string(sessID), "ROOST_FRAME_ID": string(frameID)},
-		ReplyConn:   connID,
-		ReplyReqID:  reqID,
+		SessionID:  sessID,
+		FrameID:    frameID,
+		Mode:       LaunchModeCreate,
+		Project:    plan.Project,
+		Command:    plan.Command,
+		StartDir:   plan.StartDir,
+		Sandbox:    plan.Sandbox,
+		Options:    plan.Options,
+		Subsystem:  plan.Subsystem,
+		Stream:     plan.Stream,
+		Stdin:      plan.Stdin,
+		Env:        map[string]string{"ROOST_SESSION_ID": string(sessID), "ROOST_FRAME_ID": string(frameID)},
+		ReplyConn:  connID,
+		ReplyReqID: reqID,
 	}
 }
 

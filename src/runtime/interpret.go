@@ -9,7 +9,6 @@ import (
 	"time"
 
 	rsubsystem "github.com/takezoh/agent-roost/runtime/subsystem"
-	cstream "github.com/takezoh/agent-roost/runtime/subsystem/stream"
 	"github.com/takezoh/agent-roost/runtime/worker"
 	"github.com/takezoh/agent-roost/state"
 	"github.com/takezoh/agent-roost/uiproc"
@@ -78,9 +77,9 @@ func (r *Runtime) executeMiscEffect(eff state.Effect) {
 		r.executeRecordNotification(e)
 
 	case state.EffReleaseFrameSandboxes:
-		// Stop all stream backends (kills app-server processes).
-		r.streamBackends.Range(func(_, v any) bool {
-			v.(rsubsystem.Subsystem).Stop(context.Background())
+		ctx := context.Background()
+		r.subsystems.Range(func(_, v any) bool {
+			v.(rsubsystem.Subsystem).Stop(ctx)
 			return true
 		})
 		// Drain sandbox (container/VM) cleanup closures in parallel.
@@ -302,7 +301,7 @@ func (r *Runtime) spawnTmuxWindowAsync(e state.EffSpawnTmuxWindow) {
 		Stdin:     e.Stdin,
 	}
 
-	sub, err := r.ensureSubsystem(ctx, e.Subsystem, e.SubsystemID, e.Project, plan)
+	sub, subsystemID, err := r.ensureSubsystem(ctx, e.Subsystem, e.Project, plan)
 	if err != nil {
 		slog.Error("runtime: ensure subsystem failed", "frame", e.FrameID, "err", err)
 		r.enqueueSpawnFailed(e, err.Error())
@@ -344,6 +343,7 @@ func (r *Runtime) spawnTmuxWindowAsync(e state.EffSpawnTmuxWindow) {
 	r.Enqueue(state.EvTmuxPaneSpawned{
 		SessionID:        e.SessionID,
 		FrameID:          e.FrameID,
+		SubsystemID:      subsystemID,
 		PaneTarget:       paneID,
 		WorktreeStartDir: bindResult.WorktreeStartDir,
 		WorktreeName:     bindResult.WorktreeName,
@@ -352,19 +352,26 @@ func (r *Runtime) spawnTmuxWindowAsync(e state.EffSpawnTmuxWindow) {
 	})
 }
 
-// ensureSubsystem returns the Subsystem for the given kind, creating and
-// registering a stream backend on demand.
-func (r *Runtime) ensureSubsystem(ctx context.Context, kind state.LaunchSubsystem, subsystemID state.SubsystemID, project string, plan state.LaunchPlan) (rsubsystem.Subsystem, error) {
-	switch kind {
-	case state.LaunchSubsystemStream:
-		cfg, err := cstream.ParseCommand(plan.Command)
-		if err != nil {
-			return nil, err
-		}
-		return r.ensureStreamBackend(ctx, subsystemID, project, cfg, plan.Stream)
-	default:
-		return r.ensureCLIBackend(project), nil
+// ensureSubsystem dispatches to the factory registered for the given kind,
+// caches the returned Subsystem in r.subsystems, and returns the resolved
+// SubsystemID. The factory itself decides how (project, plan) maps to an
+// instance — runtime does not branch on kind beyond this lookup. An empty
+// kind is treated as CLI (the default for drivers that do not set
+// LaunchPlan.Subsystem explicitly).
+func (r *Runtime) ensureSubsystem(ctx context.Context, kind state.LaunchSubsystem, project string, plan state.LaunchPlan) (rsubsystem.Subsystem, state.SubsystemID, error) {
+	if kind == "" {
+		kind = state.LaunchSubsystemCLI
 	}
+	factory, ok := r.subsystemFactories[kind]
+	if !ok {
+		return nil, "", fmt.Errorf("runtime: unknown subsystem kind %q", kind)
+	}
+	sub, id, err := factory.Ensure(ctx, project, plan)
+	if err != nil {
+		return nil, "", err
+	}
+	r.subsystems.LoadOrStore(id, sub)
+	return sub, id, nil
 }
 
 // buildSpawnCommand builds the tmux command string for a resolved wrapped.Command.

@@ -8,13 +8,13 @@ func failSubsystemFrame(s State, frameID FrameID, message string, unregisterPane
 		return s, nil, false
 	}
 	// Root frames (idx 0) must be evicted, not failed as a subsystem.
-	// assignSubsystemID always produces a non-empty SubsystemID, so the
-	// SubsystemID == "" check below is insufficient to guard root frames.
 	if frameIdx == 0 {
 		return s, nil, false
 	}
 	frame := sess.Frames[frameIdx]
 	if frame.SubsystemID == "" {
+		// BindFrame has not completed yet for this frame; no subsystem
+		// owns it, so a subsystem-level failure cannot route here.
 		return s, nil, false
 	}
 	next, rawEffs, ok := stepDriver(s, frameID, DEvSubsystem{

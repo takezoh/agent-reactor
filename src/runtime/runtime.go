@@ -20,7 +20,9 @@ import (
 	"github.com/takezoh/agent-roost/config"
 	"github.com/takezoh/agent-roost/features"
 	"github.com/takezoh/agent-roost/lib/pathmap"
+	rsubsystem "github.com/takezoh/agent-roost/runtime/subsystem"
 	clisubsystem "github.com/takezoh/agent-roost/runtime/subsystem/cli"
+	cstream "github.com/takezoh/agent-roost/runtime/subsystem/stream"
 	"github.com/takezoh/agent-roost/runtime/worker"
 	"github.com/takezoh/agent-roost/state"
 )
@@ -126,13 +128,20 @@ type Runtime struct {
 	// <dataDir>/warm/ so they survive daemon warm restarts.
 	warmFrames *warmFrameStore
 
-	// cliBackends holds one *cli.Backend per project path.
-	// Access via sync.Map because spawnTmuxWindowAsync runs in goroutines.
-	cliBackends sync.Map // string (project path) → *cli.Backend
-	// streamBackends holds one *stream.Backend per subsystem ID
-	// (project×sandbox). Access via sync.Map because spawnTmuxWindowAsync
-	// runs in goroutines.
-	streamBackends sync.Map // state.SubsystemID → *stream.Backend
+	// subsystems holds every live Subsystem instance keyed by its opaque
+	// SubsystemID. Subsystems are environment-aware (host vs container);
+	// the runtime keeps them as opaque values and routes lifecycle calls
+	// uniformly. Access via sync.Map because spawnTmuxWindowAsync runs in
+	// goroutines.
+	subsystems sync.Map // state.SubsystemID → rsubsystem.Subsystem
+	// subsystemFactories is the static dispatch table from LaunchSubsystem
+	// kind to the Factory that constructs Backends for that kind. Populated
+	// once in New; never mutated thereafter.
+	subsystemFactories map[state.LaunchSubsystem]rsubsystem.Factory
+	// cliFactory is held as a typed handle so CleanupUntracked can iterate
+	// only CLI backends without exposing CLI-specific methods on the generic
+	// Subsystem interface.
+	cliFactory *clisubsystem.Factory
 	// frameSubsystems tracks which subsystem owns each live frame,
 	// keyed by FrameID → subsystem.Subsystem. Used to route ReleaseFrame.
 	frameSubsystems sync.Map // state.FrameID → subsystem.Subsystem
@@ -203,22 +212,28 @@ func New(cfg Config) *Runtime {
 			r.warmFrames = wf
 		}
 	}
+	r.registerSubsystemFactories()
 	return r
+}
+
+// registerSubsystemFactories is the one place that knows which factories
+// back each kind; adding a new subsystem only requires extending this map.
+func (r *Runtime) registerSubsystemFactories() {
+	r.cliFactory = clisubsystem.NewFactory()
+	streamFactory := cstream.NewFactory(cstream.FactoryConfig{
+		Runtime:          r,
+		ResolveSockPaths: r.resolveStreamSockPaths,
+		IsContainer:      func(project string) bool { return launcher(r.cfg).IsContainer(project) },
+		ActiveFrameID:    func() state.FrameID { return r.activeFrameID },
+	})
+	r.subsystemFactories = map[state.LaunchSubsystem]rsubsystem.Factory{
+		state.LaunchSubsystemCLI:    r.cliFactory,
+		state.LaunchSubsystemStream: streamFactory,
+	}
 }
 
 // Done signals when Run has fully exited.
 func (r *Runtime) Done() <-chan struct{} { return r.done }
-
-// ensureCLIBackend returns the CLI backend for the given project, creating
-// one on first access.
-func (r *Runtime) ensureCLIBackend(project string) *clisubsystem.Backend {
-	if v, ok := r.cliBackends.Load(project); ok {
-		return v.(*clisubsystem.Backend)
-	}
-	b := clisubsystem.New(project)
-	actual, _ := r.cliBackends.LoadOrStore(project, b)
-	return actual.(*clisubsystem.Backend)
-}
 
 func (r *Runtime) ResetWarmState() error {
 	if r.warmFrames == nil {
@@ -229,9 +244,11 @@ func (r *Runtime) ResetWarmState() error {
 
 // CleanupSubsystems removes untracked managed worktrees for all known CLI
 // backends. Called at coordinator startup to prune orphans from previous runs.
+// Type-asserts on a narrow interface so the generic Subsystem contract stays
+// free of CLI-specific concerns.
 func (r *Runtime) CleanupSubsystems(ctx context.Context) {
-	r.cliBackends.Range(func(_, v any) bool {
-		v.(*clisubsystem.Backend).CleanupUntracked(ctx)
+	r.cliFactory.Range(func(b *clisubsystem.Backend) bool {
+		b.CleanupUntracked(ctx)
 		return true
 	})
 }
