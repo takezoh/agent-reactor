@@ -236,14 +236,23 @@ func (l *DevcontainerLauncher) makeCleanup(frameID state.FrameID, inst *sandbox.
 	}
 }
 
-// BuildOverlayFunc returns the OverlayFunc for the given sandbox resolver and proxy runner.
-// dataDir is the daemon's data directory (e.g. ~/.roost); it contains the run/ directory tree.
-// postCreateSubcmds lists driver-specific setup commands; the caller supplies these to enforce
-// driver/runtime isolation — runtime itself has no knowledge of driver names.
-// projects is used to enumerate workspace bind-mounts for shared containers.
-// The returned function is called per-EnsureInstance to compute the roost-specific
-// env/mounts overlay without triggering any image build.
-func BuildOverlayFunc(resolveSandbox func(string) config.SandboxConfig, projects config.ProjectsConfig, proxy *CredProxyRunner, dataDir string, postCreateSubcmds []string) sandboxdc.OverlayFunc {
+// BuildContainerOverlay returns the OverlayFunc applied once per container at
+// EnsureInstance time. Its output ends up baked into the container-scoped
+// DevcontainerSpec, so it must carry only container-scope state: workspace
+// bind-mounts, postCreate bridges, container-level env defaults.
+//
+// Per-frame state (per-project credential / env-script results that vary across
+// frames inside a shared container) is resolved later by ResolveFrameContext
+// and emitted as docker exec -e at launch time — NOT through this overlay.
+//
+// effectiveOverlayProject keeps the shared-mode invariant: for SharedContainerKey
+// the project is dropped to "" so project-scope sandbox config is not merged.
+// For project-mode containers the actual project is used (= existing behavior).
+//
+// dataDir is the daemon's data directory (e.g. ~/.roost). postCreateSubcmds
+// are driver-specific setup commands; the caller injects them so runtime stays
+// driver-agnostic. projects supplies the workspace list for shared containers.
+func BuildContainerOverlay(resolveSandbox func(string) config.SandboxConfig, projects config.ProjectsConfig, proxy *CredProxyRunner, dataDir string, postCreateSubcmds []string) sandboxdc.OverlayFunc {
 	return func(instanceKey, projectPath, dcDir string) (sandboxdc.SpecOverlay, error) {
 		// Shared containers run all projects in one image: per-project env,
 		// credentials, bridges, and workspace fallback would otherwise be

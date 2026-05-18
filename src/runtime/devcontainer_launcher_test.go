@@ -323,7 +323,7 @@ func TestResolveFrameContext_EmptyProjectPath(t *testing.T) {
 // Regression guard for BUG #4–#7: in shared mode the overlay must not be
 // stamped with the first-frame project, because every later frame's docker
 // exec would otherwise pick up that project's env/credentials/bridges.
-func TestBuildOverlayFunc_SharedMode_UsesUserScope(t *testing.T) {
+func TestBuildContainerOverlay_SharedMode_UsesUserScope(t *testing.T) {
 	stubHelperBinaries(t)
 	// resolveSandbox captures which key is requested. Project mode must
 	// pass the project; shared mode must pass "".
@@ -333,7 +333,7 @@ func TestBuildOverlayFunc_SharedMode_UsesUserScope(t *testing.T) {
 		return config.SandboxConfig{}
 	}
 	dataDir := t.TempDir()
-	overlay := BuildOverlayFunc(resolveSandbox, config.ProjectsConfig{}, nil, dataDir, nil)
+	overlay := BuildContainerOverlay(resolveSandbox, config.ProjectsConfig{}, nil, dataDir, nil)
 
 	if _, err := overlay(sandboxdc.SharedContainerKey, "/workspace/fintech", "/tmp/dc"); err != nil {
 		t.Fatalf("shared overlay: %v", err)
@@ -353,7 +353,7 @@ func TestBuildOverlayFunc_SharedMode_UsesUserScope(t *testing.T) {
 // Regression guard: the WorkspaceFolderFallback baked into the shared spec
 // must NOT be the first frame's project — otherwise spec.WorkspaceTarget()
 // returns that path and every later frame's docker exec lands there.
-func TestBuildOverlayFunc_SharedMode_WorkspaceFallbackIsEmpty(t *testing.T) {
+func TestBuildContainerOverlay_SharedMode_WorkspaceFallbackIsEmpty(t *testing.T) {
 	stubHelperBinaries(t)
 	resolveSandbox := func(string) config.SandboxConfig {
 		return config.SandboxConfig{
@@ -361,7 +361,7 @@ func TestBuildOverlayFunc_SharedMode_WorkspaceFallbackIsEmpty(t *testing.T) {
 		}
 	}
 	dataDir := t.TempDir()
-	overlay := BuildOverlayFunc(resolveSandbox, config.ProjectsConfig{}, nil, dataDir, nil)
+	overlay := BuildContainerOverlay(resolveSandbox, config.ProjectsConfig{}, nil, dataDir, nil)
 
 	ov, err := overlay(sandboxdc.SharedContainerKey, "/workspace/fintech", "/tmp/dc")
 	if err != nil {
@@ -373,7 +373,7 @@ func TestBuildOverlayFunc_SharedMode_WorkspaceFallbackIsEmpty(t *testing.T) {
 	}
 }
 
-func TestBuildOverlayFunc_ProjectMode_WorkspaceFallbackUsesProject(t *testing.T) {
+func TestBuildContainerOverlay_ProjectMode_WorkspaceFallbackUsesProject(t *testing.T) {
 	stubHelperBinaries(t)
 	resolveSandbox := func(string) config.SandboxConfig {
 		return config.SandboxConfig{
@@ -381,7 +381,7 @@ func TestBuildOverlayFunc_ProjectMode_WorkspaceFallbackUsesProject(t *testing.T)
 		}
 	}
 	dataDir := t.TempDir()
-	overlay := BuildOverlayFunc(resolveSandbox, config.ProjectsConfig{}, nil, dataDir, nil)
+	overlay := BuildContainerOverlay(resolveSandbox, config.ProjectsConfig{}, nil, dataDir, nil)
 
 	ov, err := overlay("/workspace/myapp", "/workspace/myapp", "/tmp/dc")
 	if err != nil {

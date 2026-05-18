@@ -277,7 +277,7 @@ func newAgentLauncher(ctx context.Context, sb config.SandboxConfig, resolver *co
 		if err != nil {
 			return nil, fmt.Errorf("sandbox: start in-process credproxy: %w", err)
 		}
-		overlayFn := runtime.BuildOverlayFunc(func(project string) config.SandboxConfig {
+		overlayFn := runtime.BuildContainerOverlay(func(project string) config.SandboxConfig {
 			return resolver.Resolve(project)
 		}, projects, runner, dataDir, statedriver.SetupSubcmds())
 		mgr := sandboxdc.New(overlayFn)
