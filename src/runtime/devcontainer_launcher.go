@@ -366,14 +366,51 @@ func (l *DevcontainerLauncher) ResolveFrameContext(ctx context.Context, projectP
 	}
 	dc := l.resolveSandbox(effectiveProject).Devcontainer
 
-	proxySpec, scriptEnv, err := resolveOverlaySpecs(l.proxy, effectiveProject, dc)
+	proxySpec, _, err := resolveOverlaySpecs(l.proxy, effectiveProject, dc)
 	if err != nil {
 		return sandbox.FrameContext{}, err
 	}
 	return sandbox.FrameContext{
 		FrameID: frameID,
-		Env:     buildOverlayEnv(scriptEnv, proxySpec),
+		Env:     frameScopeEnv(proxySpec.Env),
 	}, nil
+}
+
+// frameScopeEnv returns the subset of proxy-supplied env that is safe to emit
+// as docker exec -e per frame. Container-scope keys (PATH, ROOST_*, anything
+// whose value still contains $-placeholders the container resolves at create
+// time) MUST be excluded — otherwise docker exec receives both the spec's
+// expanded value and the raw placeholder string, and the "last -e wins" rule
+// of docker hands the broken raw string to the container (e.g. PATH=...:$PATH
+// with $PATH literal, making /bin/bash unreachable).
+//
+// Per-frame credentials (AWS_PROFILE, GCP_PROJECT, custom OIDC tokens, …)
+// flow through unchanged.
+func frameScopeEnv(proxyEnv map[string]string) map[string]string {
+	out := make(map[string]string, len(proxyEnv))
+	for k, v := range proxyEnv {
+		if isContainerScopeEnvKey(k) {
+			continue
+		}
+		if strings.Contains(v, "$") {
+			// Placeholder is meant for spec.RemoteEnv container-time expansion.
+			// Leaving it in frameCtx would emit the raw $… into docker exec -e.
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// isContainerScopeEnvKey identifies env keys whose value does not vary across
+// frames in the same container. These are owned by BuildContainerOverlay and
+// must not be re-emitted from frameCtx (see frameScopeEnv).
+func isContainerScopeEnvKey(k string) bool {
+	switch k {
+	case "PATH", "ROOST_SOCKET", "ROOST_DATA_DIR", "SSH_AUTH_SOCK":
+		return true
+	}
+	return false
 }
 
 func resolveOverlaySpecs(proxy *CredProxyRunner, projectPath string, dc config.DevcontainerConfig) (container.Spec, map[string]string, error) {

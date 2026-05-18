@@ -305,6 +305,40 @@ func TestResolveFrameContext_SharedMode_DropsProject(t *testing.T) {
 	}
 }
 
+// Regression guard for "bash: executable file not found" in shared mode:
+// hostexec provider emits PATH="<shims>:$PATH" expecting the container-create
+// pipeline to expand $PATH against the image env. Routing that same value
+// through frameCtx would land the literal "$PATH" into docker exec -e, and
+// docker's "last -e wins" rule would clobber the already-expanded
+// spec.RemoteEnv["PATH"], leaving the container unable to find /bin/bash.
+// frameScopeEnv must drop both the PATH key and any value that still contains
+// an unresolved $-placeholder.
+func TestFrameScopeEnv_DropsContainerScopeAndPlaceholders(t *testing.T) {
+	in := map[string]string{
+		"PATH":               "/opt/roost/run/hostexec-shims:$PATH",
+		"ROOST_SOCKET":       "/opt/roost/run/roost.sock",
+		"ROOST_DATA_DIR":     "/opt/roost/run",
+		"SSH_AUTH_SOCK":      "/opt/roost/run/agent.sock",
+		"AWS_PROFILE":        "prod",                                       // per-frame credential, must pass
+		"GCP_PROJECT":        "my-proj",                                    // per-frame credential, must pass
+		"NESTED_PLACEHOLDER": "${SOME_OTHER}/bin:/usr/bin",                  // unresolved, drop
+	}
+	out := frameScopeEnv(in)
+
+	mustKeep := []string{"AWS_PROFILE", "GCP_PROJECT"}
+	for _, k := range mustKeep {
+		if _, ok := out[k]; !ok {
+			t.Errorf("expected %s to pass through frameScopeEnv, got %v", k, out)
+		}
+	}
+	mustDrop := []string{"PATH", "ROOST_SOCKET", "ROOST_DATA_DIR", "SSH_AUTH_SOCK", "NESTED_PLACEHOLDER"}
+	for _, k := range mustDrop {
+		if _, ok := out[k]; ok {
+			t.Errorf("expected %s to be dropped by frameScopeEnv, got %v", k, out)
+		}
+	}
+}
+
 // Regression guard: in project mode, ResolveFrameContext must pass the actual
 // project (not "") to env-script and credproxy so per-project credentials
 // resolve correctly. Project mode keeps the legacy behavior where every frame
