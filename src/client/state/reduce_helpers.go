@@ -154,13 +154,11 @@ func findFrame(s State, frameID FrameID) (SessionID, Session, int, bool) {
 	return "", Session{}, -1, false
 }
 
-func truncateFrames(sess Session, from int) (Session, []SessionFrame) {
+func truncateFrames(sess Session, from int) []SessionFrame {
 	if from < 0 || from >= len(sess.Frames) {
-		return sess, nil
+		return nil
 	}
-	removed := append([]SessionFrame(nil), sess.Frames[from:]...)
-	sess.Frames = append([]SessionFrame(nil), sess.Frames[:from]...)
-	return sess, removed
+	return append([]SessionFrame(nil), sess.Frames[from:]...)
 }
 
 // stepDriver runs the per-session driver Step inside the reducer and

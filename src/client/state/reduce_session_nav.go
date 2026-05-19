@@ -79,29 +79,9 @@ type CreateSessionReply struct {
 
 func reduceTmuxSpawnFailed(s State, e EvTmuxSpawnFailed) (State, []Effect) {
 	var effs []Effect
-	if sess, ok := s.Sessions[e.SessionID]; ok {
-		if idx := findFrameIndex(sess, e.FrameID); idx >= 0 {
-			frame := sess.Frames[idx]
-			if frame.SubsystemID != "" {
-				next, effs, handled := failSubsystemFrame(s, e.FrameID, "tmux spawn failed: "+e.Err, false)
-				if handled {
-					if e.ReplyConn == 0 {
-						return next, effs
-					}
-					return next, append(effs,
-						errResp(e.ReplyConn, e.ReplyReqID, ErrCodeInternal,
-							fmt.Sprintf("tmux spawn failed: %s", e.Err)),
-					)
-				}
-			}
-			sess, _ = truncateFrames(sess, idx)
-			s.Sessions = cloneSessions(s.Sessions)
-			if len(sess.Frames) == 0 {
-				delete(s.Sessions, e.SessionID)
-			} else {
-				s.Sessions[e.SessionID] = sess
-			}
-		}
+	if next, evictEffs, ok := evictFrame(s, e.FrameID, false); ok {
+		s = next
+		effs = evictEffs
 	}
 	if e.ReplyConn == 0 {
 		return s, effs

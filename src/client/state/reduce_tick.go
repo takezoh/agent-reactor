@@ -132,10 +132,6 @@ func reducePaneDied(s State, e EvPaneDied) (State, []Effect) {
 		slog.Info("state: reducePaneDied bail=no-owner")
 		return s, nil
 	}
-	if next, effs, handled := failSubsystemFrame(s, ownerID, "pane exited", true); handled {
-		slog.Info("state: reducePaneDied branch=failSubsystemFrame", "owner", ownerID)
-		return next, effs
-	}
 	s, effs, ok := evictFrame(s, ownerID, true)
 	if !ok {
 		slog.Info("state: reducePaneDied evictFrame returned !ok", "owner", ownerID)
