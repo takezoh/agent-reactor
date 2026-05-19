@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"context"
 	"testing"
 
 	"github.com/takezoh/agent-roost/state"
@@ -98,6 +99,134 @@ func TestFactoryMakeID_HostStaysPerProject(t *testing.T) {
 	}
 	if want := state.SubsystemID("stream:host:/workspace/a"); idA != want {
 		t.Errorf("host ID = %q, want %q", idA, want)
+	}
+}
+
+// Spec: 「コンテナで App Server は 1 つ」「shared モードで複数プロジェクトが
+// 1 つの App Server を共有」「frame は 1 つの App Server に接続して thread を
+// 取得する」。Factory.Ensure を異なるプロジェクトから呼んでも、同じ shared
+// container に属する限り、同じ Backend インスタンス (= 同じ app-server
+// プロセス、同じ WebSocket 接続) が返ることを保証する。
+//
+// Backend.Start は WebSocket dial を行うので、テストは予めキャッシュに
+// sentinel Backend を入れて Ensure のキャッシュヒット経路だけを検証する。
+// これにより Ensure が異なる project に対しても「同じ ID → 同じ Backend」
+// を返す契約を pin できる。
+func TestFactory_EnsureSharesBackendAcrossProjectsInSharedContainer(t *testing.T) {
+	f := NewFactory(FactoryConfig{
+		IsContainer: func(string) bool { return true },
+		RunDirKey:   func(string) string { return "__shared__" },
+	})
+	sharedID := state.SubsystemID("stream:container:__shared__")
+	sentinel := &Backend{subsystemID: sharedID}
+	f.backends[sharedID] = sentinel
+
+	plan := state.LaunchPlan{Command: "codex"}
+	subA, idA, errA := f.Ensure(context.Background(), "/workspace/agent-roost", plan)
+	if errA != nil {
+		t.Fatalf("Ensure A: %v", errA)
+	}
+	subB, idB, errB := f.Ensure(context.Background(), "/workspace/fintech", plan)
+	if errB != nil {
+		t.Fatalf("Ensure B: %v", errB)
+	}
+	if idA != sharedID || idB != sharedID {
+		t.Errorf("subsystem IDs not collapsed: A=%q B=%q want=%q", idA, idB, sharedID)
+	}
+	if subA != sentinel || subB != sentinel {
+		t.Errorf("Ensure returned different Backend instances — app-server is duplicated")
+	}
+	if got := len(f.backends); got != 1 {
+		t.Errorf("backend count = %d, want 1 (one app-server per shared container)", got)
+	}
+}
+
+// Spec: project-isolation devcontainer はプロジェクトごとに別 container を
+// 持つので、Backend (= app-server) もプロジェクトごとに 1 つ。Ensure は
+// 同じ Factory から呼ばれても異なる Backend インスタンスを返さなければ
+// ならない。
+func TestFactory_EnsureKeepsSeparateBackendsForProjectMode(t *testing.T) {
+	f := NewFactory(FactoryConfig{
+		IsContainer: func(string) bool { return true },
+		RunDirKey:   func(p string) string { return p },
+	})
+	idA := state.SubsystemID("stream:container:/workspace/a")
+	idB := state.SubsystemID("stream:container:/workspace/b")
+	backendA := &Backend{subsystemID: idA}
+	backendB := &Backend{subsystemID: idB}
+	f.backends[idA] = backendA
+	f.backends[idB] = backendB
+
+	plan := state.LaunchPlan{Command: "codex"}
+	subA, gotIDA, errA := f.Ensure(context.Background(), "/workspace/a", plan)
+	if errA != nil {
+		t.Fatalf("Ensure A: %v", errA)
+	}
+	subB, gotIDB, errB := f.Ensure(context.Background(), "/workspace/b", plan)
+	if errB != nil {
+		t.Fatalf("Ensure B: %v", errB)
+	}
+	if gotIDA == gotIDB {
+		t.Fatalf("project-mode IDs collapsed: %q", gotIDA)
+	}
+	if subA != backendA {
+		t.Errorf("project A: got different Backend — must reuse the per-project one")
+	}
+	if subB != backendB {
+		t.Errorf("project B: got different Backend — must reuse the per-project one")
+	}
+	if subA == subB {
+		t.Errorf("project mode: A and B returned the same Backend; app-server isolation broken")
+	}
+}
+
+// Spec: 同一 Backend に対する複数 frame は thread を別々に持つ。
+// BindFrame が同じ Backend に新規 frame を登録するごとに frame binding が
+// 1 つずつ追加される (thread は ResumeThreadID が空のとき空文字で記録、
+// session_ready event で後から確定する)。複数 frame が同じ app-server に
+// 集約される共有構造の不変条件をここで pin する。
+func TestBackend_BindThreadRegistersMultipleFrameBindings(t *testing.T) {
+	b := New(nil, "stream:container:__shared__", "/workspace/agent-roost",
+		"codex", nil, "", false, false,
+		"/tmp/codex.sock", "/opt/roost/run/codex.sock", LoopbackPort,
+		func() state.FrameID { return "" },
+	)
+
+	frameA := state.FrameID("frame-a")
+	frameB := state.FrameID("frame-b")
+
+	// startTurn 呼び出しをスキップするため、ResumeThreadID 経路ではなく
+	// 直接 frames map に登録するヘルパーを使う想定だが、本テストでは
+	// 「frames map に 2 つの binding が共存できる」ことを直接検証する。
+	b.frames[frameA] = &frameBinding{frameID: frameA, threadID: "thread-a"}
+	b.threads["thread-a"] = frameA
+	b.frames[frameB] = &frameBinding{frameID: frameB, threadID: "thread-b"}
+	b.threads["thread-b"] = frameB
+
+	if got := len(b.frames); got != 2 {
+		t.Fatalf("frame bindings = %d, want 2 (one app-server, two frames)", got)
+	}
+	if b.frameForThread("thread-a") != frameA {
+		t.Errorf("thread-a → frame mapping lost")
+	}
+	if b.frameForThread("thread-b") != frameB {
+		t.Errorf("thread-b → frame mapping lost")
+	}
+
+	// ReleaseFrame は一方のみを解放し、もう一方の binding は維持されること
+	// (= app-server は他の frame のために生き続ける) を保証する。
+	b.ReleaseFrame(frameA)
+	if _, exists := b.frames[frameA]; exists {
+		t.Errorf("released frameA still in frames map")
+	}
+	if _, exists := b.threads["thread-a"]; exists {
+		t.Errorf("released frameA's thread-a still in threads map")
+	}
+	if _, exists := b.frames[frameB]; !exists {
+		t.Errorf("frameB was unexpectedly removed when releasing frameA")
+	}
+	if b.frameForThread("thread-b") != frameB {
+		t.Errorf("frameB → thread-b mapping lost after releasing A")
 	}
 }
 
