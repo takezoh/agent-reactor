@@ -27,9 +27,10 @@ Roost does not build images. The image name is declared by the user in `devconta
 | Decision | Choice | Rationale |
 |---|---|---|
 | Backend abstraction | `sandbox.Manager[I any]` + typed `Instance[I]` | Eliminates `any` and forced type-asserts. Backend-specific state (e.g. `*devcontainer.ContainerState`) is carried as the type parameter |
-| Instance scope | Per-project; frames share via ref-count | Multiple frames in the same project share one container. Image is shared across projects at build time but containers remain per-project. `AcquireFrame` / `ReleaseFrame` manage the ref-count; `DestroyInstance` is called when the count reaches zero |
+| Instance scope | Per-container, keyed by isolation mode | Project isolation: one container per project (key = projectPath). Shared isolation: a single `__shared__` container hosts every project's frames. `AcquireFrame` / `ReleaseFrame` manage the per-instance ref-count; `DestroyInstance` is called when the count reaches zero. The image is shared across projects at build time |
 | Config resolution | User scope + project scope merged by `config.SandboxResolver` with mtime-based caching | Default direct mode; individual repos opt into devcontainer without daemon restart |
-| Lifecycle and effect | detach → `EffDetachClient` only (container survives); shutdown → `EffReleaseFrameSandboxes` then `EffKillSession` (container destroyed); SIGINT (ctx cancel) → same as detach | Container lifetime decisions are expressed as state-layer effects, ordered in the event loop rather than a defer stack |
+| Lifecycle and effect | detach → `EffDetachClient` only (container survives); shutdown → `EffReleaseFrameSandboxes` then `EffKillSession` (`DestroyInstance` runs `docker rm` for both shared and project containers); SIGINT (ctx cancel) → same as detach | Container lifetime decisions are expressed as state-layer effects, ordered in the event loop rather than a defer stack. The destroy step removes `docker rm`'s side effect on shared containers too: in-container daemons (sockbridge, codex app-server) only exist on a freshly-`postCreate`-d container, so reusing a stale one breaks cold start |
+| Cold-start fresh provisioning | `coordinator.coldStart` brackets `PrewarmContainers` / `RecreateAll` with `BeginColdStart` / `EndColdStart` on the `ColdStartAware` launcher. `Manager.EnsureInstance` then sees `opts.ColdStart=true` and `docker rm`s any surviving container before calling `createContainer` | Even when graceful shutdown is skipped (SIGKILL / crash), the next cold start guarantees `postCreate` runs and bridges are alive |
 | Crash recovery | `PruneOrphans` at daemon startup enumerates containers labelled `roost-managed=1` and kills any whose project is not in sessions.json | Covers SIGKILL / panic paths where defer and effects never run. sessions.json is the ground truth |
 | Image resolution | `LoadSpec` reads `image:` (top-level) then `build.name` from devcontainer.json | Roost does not build images. The user builds externally and declares the image name in devcontainer.json |
 
@@ -61,12 +62,12 @@ The image must already exist locally (or be pullable by docker on first `docker 
 
 ### Container Identity
 
-One long-lived container per project idles between frame activations. Frames join via `docker exec -it` rather than spawning a new container per frame.
+Frames join via `docker exec -it` rather than spawning a new container per frame. The container scope is determined by the resolved isolation mode:
 
-- Container name: `roost-<sha256[:6] of project path>`
-- Labels: `roost-managed=1`, `roost-project=<abs-path>`
+- **Project isolation** (default): one long-lived container per project. Container name `roost-<sha256[:6] of project path>`; labels `roost-managed=1`, `roost-project=<abs-path>`
+- **Shared isolation**: a single container named `roost-shared` hosts every project's frames. All bind-mounts for every roost-managed project are added at create time so any frame inside can reach its workspace. Per-frame state (workspace, env, credentials) is supplied via `docker exec -e` / `-w` at launch time, never frozen onto the spec
 
-Multiple projects can share the same image name; each project still gets its own container.
+Multiple projects can share the same image name regardless of isolation mode.
 
 ### Workspace Mount
 
