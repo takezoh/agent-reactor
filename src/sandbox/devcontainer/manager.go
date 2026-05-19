@@ -26,15 +26,15 @@ const SharedContainerKey = "__shared__"
 // that would otherwise require a real docker daemon (the stale-bind-mount
 // recreate path, the shared-vs-project destroy split, …).
 var (
-	startContainerFn        = StartContainer
-	stopContainerFn         = StopContainer
-	removeContainerFn       = RemoveContainer
-	createContainerFn       = CreateContainer
-	findContainerFn         = FindContainer
-	findSharedContainerFn   = FindSharedContainer
-	imageEnvFn              = ImageEnv
-	runPostCreateFn         = RunPostCreate
-	waitForContainerFn      = waitForContainer
+	startContainerFn      = StartContainer
+	stopContainerFn       = StopContainer
+	removeContainerFn     = RemoveContainer
+	createContainerFn     = CreateContainer
+	findContainerFn       = FindContainer
+	findSharedContainerFn = FindSharedContainer
+	imageEnvFn            = ImageEnv
+	runPostCreateFn       = RunPostCreate
+	waitForContainerFn    = waitForContainer
 )
 
 // ContainerState holds runtime data for one project's devcontainer.
@@ -162,9 +162,10 @@ func (m *Manager) ensureContainer(ctx context.Context, instanceKey, projectPath 
 		return nil
 	}
 
-	var ctr *ContainerInfo
-	var dcPath string
-	var err error
+	var (
+		ctr *ContainerInfo
+		err error
+	)
 
 	t := time.Now()
 	findCtx, findCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -179,24 +180,9 @@ func (m *Manager) ensureContainer(ctx context.Context, instanceKey, projectPath 
 		return fmt.Errorf("devcontainer: find container: %w", err)
 	}
 
-	if opts.SharedMode {
-		if opts.DevcontainerDir != "" {
-			p := filepath.Join(opts.DevcontainerDir, "devcontainer.json")
-			if _, statErr := os.Stat(p); statErr != nil {
-				return fmt.Errorf("devcontainer: shared devcontainer path %q: devcontainer.json not found", opts.DevcontainerDir)
-			}
-			dcPath = p
-		} else {
-			dcPath, err = UserBaseDC()
-			if err != nil {
-				return fmt.Errorf("devcontainer: %w", err)
-			}
-		}
-	} else {
-		dcPath, err = FindDevcontainerPath(projectPath, opts.DevcontainerDir)
-		if err != nil {
-			return fmt.Errorf("devcontainer: %w", err)
-		}
+	dcPath, err := resolveDCPath(projectPath, opts)
+	if err != nil {
+		return err
 	}
 
 	t = time.Now()
@@ -244,6 +230,29 @@ func (m *Manager) ensureContainer(ctx context.Context, instanceKey, projectPath 
 		// fall through to createContainer
 	}
 	return m.createContainer(ctx, instanceKey, image, spec)
+}
+
+// resolveDCPath returns the path to devcontainer.json for the given project and options.
+func resolveDCPath(projectPath string, opts sandbox.StartOptions) (string, error) {
+	if opts.SharedMode {
+		if opts.DevcontainerDir != "" {
+			p := filepath.Join(opts.DevcontainerDir, "devcontainer.json")
+			if _, statErr := os.Stat(p); statErr != nil {
+				return "", fmt.Errorf("devcontainer: shared devcontainer path %q: devcontainer.json not found", opts.DevcontainerDir)
+			}
+			return p, nil
+		}
+		dcPath, err := UserBaseDC()
+		if err != nil {
+			return "", fmt.Errorf("devcontainer: %w", err)
+		}
+		return dcPath, nil
+	}
+	dcPath, err := FindDevcontainerPath(projectPath, opts.DevcontainerDir)
+	if err != nil {
+		return "", fmt.Errorf("devcontainer: %w", err)
+	}
+	return dcPath, nil
 }
 
 // tryReuseElseRecreate attempts to reuse the existing container. If reuse

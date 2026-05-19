@@ -21,10 +21,10 @@ func rawMessages(t *testing.T, kv map[string]any) map[string]json.RawMessage {
 
 func TestExtractString(t *testing.T) {
 	cases := []struct {
-		name string
+		name  string
 		extra map[string]any
-		key  string
-		want string
+		key   string
+		want  string
 	}{
 		{"present", map[string]any{"k": "value"}, "k", "value"},
 		{"absent", map[string]any{}, "k", ""},

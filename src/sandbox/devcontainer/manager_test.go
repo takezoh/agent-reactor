@@ -889,7 +889,7 @@ func TestEnsureInstance_CreateNew_ProjectMode(t *testing.T) {
 			created = true
 			return "new-ctr-id", nil
 		},
-		start: func(_ context.Context, _ string) error { return nil },
+		start:      func(_ context.Context, _ string) error { return nil },
 		postCreate: func(_ context.Context, _, _ string, _ []string) {},
 	})
 	m := New(nil)
@@ -1013,7 +1013,7 @@ func TestEnsureInstance_ReuseRunningSkipsExtraPostCreate(t *testing.T) {
 func TestEnsureInstance_ImageEnvFailureIsNonFatal(t *testing.T) {
 	project := setupTestSpec(t)
 	withMockDockerStack(t, dockerStackMocks{
-		find:     func(_ context.Context, _ string) (*ContainerInfo, error) { return nil, nil },
+		find: func(_ context.Context, _ string) (*ContainerInfo, error) { return nil, nil },
 		imageEnv: func(_ context.Context, _ string) (map[string]string, error) {
 			return nil, fmt.Errorf("image not found locally")
 		},

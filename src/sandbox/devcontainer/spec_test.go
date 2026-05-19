@@ -233,17 +233,17 @@ func TestParseMountSpec_ShortForm(t *testing.T) {
 
 func TestParseShortMount(t *testing.T) {
 	cases := []struct {
-		in      string
-		src     string
-		tgt     string
-		ok      bool
+		in  string
+		src string
+		tgt string
+		ok  bool
 	}{
 		{"/host:/container", "/host", "/container", true},
 		{"/host:/container:ro", "/host", "/container", true},
 		{"single-segment", "", "", false},
 		{"", "", "", false},
-		{":/container", "", "/container", false},     // empty source
-		{"/host:", "/host", "", false},               // empty target
+		{":/container", "", "/container", false}, // empty source
+		{"/host:", "/host", "", false},           // empty target
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {

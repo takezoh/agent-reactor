@@ -245,7 +245,7 @@ func TestRunDirKey(t *testing.T) {
 	cases := []struct {
 		name        string
 		isolation   string
-		hasDC       bool                 // simulate .devcontainer present?
+		hasDC       bool // simulate .devcontainer present?
 		projectPath string
 		want        string
 	}{
@@ -422,9 +422,9 @@ func TestFrameScopeEnv_DropsContainerScopeAndPlaceholders(t *testing.T) {
 		"ROOST_SOCKET":       "/opt/roost/run/roost.sock",
 		"ROOST_DATA_DIR":     "/opt/roost/run",
 		"SSH_AUTH_SOCK":      "/opt/roost/run/agent.sock",
-		"AWS_PROFILE":        "prod",                                       // per-frame credential, must pass
-		"GCP_PROJECT":        "my-proj",                                    // per-frame credential, must pass
-		"NESTED_PLACEHOLDER": "${SOME_OTHER}/bin:/usr/bin",                  // unresolved, drop
+		"AWS_PROFILE":        "prod",                       // per-frame credential, must pass
+		"GCP_PROJECT":        "my-proj",                    // per-frame credential, must pass
+		"NESTED_PLACEHOLDER": "${SOME_OTHER}/bin:/usr/bin", // unresolved, drop
 	}
 	out := frameScopeEnv(in)
 
