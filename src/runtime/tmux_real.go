@@ -53,7 +53,11 @@ func (b *RealTmuxBackend) SpawnWindow(name, command, startDir string, env map[st
 	if len(parts) == 2 {
 		paneID = parts[1]
 	}
-	if err := b.client.SetOption(b.sessionName+":"+idx, "remain-on-exit", "off"); err != nil {
+	// Keep the dead pane so #{pane_dead_status} stays readable after the
+	// command exits. The runtime decides whether to evict (exit 0) or
+	// keep the frame as stopped (exit != 0) and closes the window via
+	// KillPaneWindow when eviction wins.
+	if err := b.client.SetOption(b.sessionName+":"+idx, "remain-on-exit", "on"); err != nil {
 		return idx, paneID, err
 	}
 	return idx, paneID, nil
@@ -174,6 +178,25 @@ func (b *RealTmuxBackend) PaneAlive(target string) (bool, error) {
 		return false, err
 	}
 	return out != "1", nil
+}
+
+func (b *RealTmuxBackend) PaneExitStatus(target string) (bool, int, error) {
+	out, err := b.client.Run("display-message", "-t", target, "-p", "#{pane_dead}|#{pane_dead_status}")
+	if err != nil {
+		return false, -1, err
+	}
+	parts := strings.SplitN(strings.TrimSpace(out), "|", 2)
+	if len(parts) < 1 || parts[0] != "1" {
+		return false, -1, nil
+	}
+	if len(parts) < 2 || parts[1] == "" {
+		return true, -1, nil
+	}
+	code, convErr := strconv.Atoi(parts[1])
+	if convErr != nil {
+		return true, -1, nil
+	}
+	return true, code, nil
 }
 
 func (b *RealTmuxBackend) RespawnPane(target, command string) error {

@@ -62,6 +62,19 @@ func (c *CommonState) ApplyWorktreeResolved(e state.DEvWorktreeResolved) {
 	}
 }
 
+// ApplyCommandExited marks the driver as stopped after an abnormal
+// command exit. The exit code is appended to LastHookEvent so the
+// status-line / event log can surface it to the user, but no other
+// fields are touched — the rest of the driver state is preserved as
+// it was at the moment of the exit (last_prompt, transcript_path,
+// branch info) for inspection on cold start.
+func (c *CommonState) ApplyCommandExited(e state.DEvCommandExited) {
+	c.Status = state.StatusStopped
+	if !e.Timestamp.IsZero() {
+		c.StatusChangedAt = e.Timestamp
+	}
+}
+
 // HandleTick common implementation for drivers. Completes StartDir,
 // skips heavy work for Idle/Stopped sessions, and refreshes branch info
 // when active.

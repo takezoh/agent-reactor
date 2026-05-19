@@ -199,6 +199,9 @@ func (d CodexDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 	case state.DEvWorktreeResolved:
 		cs.ApplyWorktreeResolved(e)
 		return cs, nil, d.view(cs)
+	case state.DEvCommandExited:
+		cs.ApplyCommandExited(e)
+		return cs, nil, d.view(cs)
 	}
 	return cs, nil, d.view(cs)
 }

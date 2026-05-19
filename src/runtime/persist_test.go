@@ -87,11 +87,10 @@ func TestFilePersistSaveEmpty(t *testing.T) {
 	}
 }
 
-func TestFilePersistDeletesOrphanFiles(t *testing.T) {
+func TestFilePersistExplicitDeleteRemovesFile(t *testing.T) {
 	dir := t.TempDir()
 	p := NewFilePersist(dir)
 
-	// Save two sessions
 	if err := p.Save([]SessionSnapshot{
 		{ID: "s1", Project: "/a", Frames: []SessionFrameSnapshot{{ID: "f1", Project: "/a", Command: "claude"}}},
 		{ID: "s2", Project: "/b", Frames: []SessionFrameSnapshot{{ID: "f2", Project: "/b", Command: "claude"}}},
@@ -99,21 +98,37 @@ func TestFilePersistDeletesOrphanFiles(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// Remove s2
+	if err := p.Delete("s2"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "sessions", "s2.json")); !os.IsNotExist(err) {
+		t.Error("s2.json should have been deleted")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sessions", "s1.json")); err != nil {
+		t.Errorf("s1.json missing: %v", err)
+	}
+}
+
+// Save must be upsert-only: a session absent from the input list
+// must NOT be removed from disk. Removal is explicit via Delete.
+// This guards against the catastrophic-loss path where a transient
+// empty in-memory state would otherwise wipe the directory.
+func TestFilePersistSaveDoesNotPrune(t *testing.T) {
+	dir := t.TempDir()
+	p := NewFilePersist(dir)
+
 	if err := p.Save([]SessionSnapshot{
-		{ID: "s1", Project: "/a", Frames: []SessionFrameSnapshot{{ID: "f1", Project: "/a", Command: "claude"}}},
+		{ID: "keep", Project: "/k", Frames: []SessionFrameSnapshot{{ID: "fk", Project: "/k", Command: "claude"}}},
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// s2.json should be deleted
-	if _, err := os.Stat(filepath.Join(dir, "sessions", "s2.json")); !os.IsNotExist(err) {
-		t.Error("s2.json should have been deleted")
+	if err := p.Save(nil); err != nil {
+		t.Fatalf("Save(nil): %v", err)
 	}
-
-	// s1.json should still exist
-	if _, err := os.Stat(filepath.Join(dir, "sessions", "s1.json")); err != nil {
-		t.Errorf("s1.json missing: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "sessions", "keep.json")); err != nil {
+		t.Errorf("keep.json wiped by empty Save: %v", err)
 	}
 }
 

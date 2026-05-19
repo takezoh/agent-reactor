@@ -20,6 +20,12 @@ type PaneLifecycle interface {
 	// PaneAlive returns true if the named pane is currently alive
 	// (i.e. #{pane_dead} == 0). False on error or dead pane.
 	PaneAlive(target string) (bool, error)
+	// PaneExitStatus reports the exit code of a dead pane via
+	// #{pane_dead_status}. Returns (true, code) when the pane is
+	// dead and exit status was captured; (false, -1) when the pane
+	// is alive or no exit status is available. Requires the pane to
+	// have been spawned with remain-on-exit=on.
+	PaneExitStatus(target string) (dead bool, code int, err error)
 }
 
 // PaneIO covers key input and buffer operations directed at a pane.
@@ -115,8 +121,15 @@ type TmuxBackend interface {
 
 // PersistBackend abstracts sessions.json persistence so tests don't
 // touch the filesystem.
+//
+// Save is upsert-only: it writes each snapshot but never removes
+// existing records that are absent from the input. Removal is
+// explicit via Delete(id). This split prevents catastrophic data loss
+// when in-memory state is transiently empty — the empty-list signal
+// is no longer interpreted as "wipe everything".
 type PersistBackend interface {
 	Save(sessions []SessionSnapshot) error
+	Delete(id string) error
 	Load() ([]SessionSnapshot, error)
 }
 
@@ -204,6 +217,7 @@ func (noopTmux) SetStatusLine(string) error                { return nil }
 func (noopTmux) SetEnv(string, string) error               { return nil }
 func (noopTmux) UnsetEnv(string) error                     { return nil }
 func (noopTmux) PaneAlive(string) (bool, error)            { return true, nil }
+func (noopTmux) PaneExitStatus(string) (bool, int, error)  { return false, -1, nil }
 func (noopTmux) RespawnPane(string, string) error          { return nil }
 func (noopTmux) CapturePane(string, int) (string, error)   { return "", nil }
 func (noopTmux) ShowEnvironment() (string, error)          { return "", nil }
@@ -220,6 +234,7 @@ func (noopTmux) SendEnter(string) error                    { return nil }
 type noopPersist struct{}
 
 func (noopPersist) Save([]SessionSnapshot) error     { return nil }
+func (noopPersist) Delete(string) error              { return nil }
 func (noopPersist) Load() ([]SessionSnapshot, error) { return nil, nil }
 
 type noopEventLog struct{}

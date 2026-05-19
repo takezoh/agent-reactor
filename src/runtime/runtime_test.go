@@ -58,6 +58,7 @@ type fakeTmuxBackend struct {
 	envs             map[string]string
 	popups           []string
 	alive            map[string]bool
+	exitStatus       map[string]int // pane target → exit code (when dead)
 	captured         string
 	spawnWID         string
 	spawnPane        string
@@ -73,6 +74,7 @@ type fakeTmuxBackend struct {
 func newFakeTmux() *fakeTmuxBackend {
 	return &fakeTmuxBackend{
 		alive:       map[string]bool{},
+		exitStatus:  map[string]int{},
 		envs:        map[string]string{},
 		paneIDs:     map[string]string{},
 		spawnWID:    "1",
@@ -201,6 +203,19 @@ func (f *fakeTmuxBackend) PaneAlive(target string) (bool, error) {
 	}
 	return v, nil
 }
+func (f *fakeTmuxBackend) PaneExitStatus(target string) (bool, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	alive, known := f.alive[target]
+	if !known || alive {
+		return false, -1, nil
+	}
+	code, has := f.exitStatus[target]
+	if !has {
+		return false, -1, nil
+	}
+	return true, code, nil
+}
 func (f *fakeTmuxBackend) RespawnPane(target, cmd string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -231,9 +246,10 @@ func (f *fakeTmuxBackend) PasteBuffer(string, string) error { return nil }
 func (f *fakeTmuxBackend) SendEnter(string) error           { return nil }
 
 type recordingPersist struct {
-	mu    sync.Mutex
-	saves int
-	last  []SessionSnapshot
+	mu      sync.Mutex
+	saves   int
+	last    []SessionSnapshot
+	deletes []string
 }
 
 func (r *recordingPersist) Save(s []SessionSnapshot) error {
@@ -241,6 +257,12 @@ func (r *recordingPersist) Save(s []SessionSnapshot) error {
 	defer r.mu.Unlock()
 	r.saves++
 	r.last = s
+	return nil
+}
+func (r *recordingPersist) Delete(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.deletes = append(r.deletes, id)
 	return nil
 }
 func (r *recordingPersist) Load() ([]SessionSnapshot, error) { return nil, nil }

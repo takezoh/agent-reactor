@@ -13,6 +13,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,16 @@ import (
 	"github.com/takezoh/agent-roost/runtime/worker"
 	"github.com/takezoh/agent-roost/state"
 )
+
+// sameSessionMap returns true when the two maps refer to the same
+// underlying map header. Reducers that intend to mutate sessions go
+// through cloneSessions which allocates a new map, so identity check
+// is sufficient to skip persistence work on events that did not touch
+// sessions. Pure pointer comparison on Go maps isn't allowed, hence
+// the reflect.Value.Pointer detour.
+func sameSessionMap(a, b map[state.SessionID]state.Session) bool {
+	return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
+}
 
 // Config carries the runtime's startup parameters. Backends are
 // injected (interfaces) so tests can swap fakes.
@@ -332,6 +343,14 @@ func (r *Runtime) Run(ctx context.Context) error {
 	defer r.cfg.EventLog.CloseAll()
 	defer r.cfg.ToolLog.CloseAll()
 	defer r.deactivateBeforeExit()
+	// Final persist flush. The dispatch loop already writes per-delta,
+	// but signal-driven shutdown (SIGINT/SIGTERM) cancels ctx and exits
+	// the loop without giving any reducer a chance to run a closing
+	// pass. This defer guarantees the on-disk snapshot reflects the
+	// last in-memory state regardless of termination path. SIGKILL /
+	// panic still skips defers — that gap is owned by the next
+	// cold-start's PruneOrphans.
+	defer r.finalPersistFlush()
 	// Sandbox resources are released via state.EffReleaseFrameSandboxes on
 	// explicit shutdown. On daemon crash (SIGKILL) or panic, the defer stack
 	// does not run; next startup's PruneOrphans recovers orphaned containers.
@@ -421,11 +440,57 @@ func (r *Runtime) scheduleActiveFramePaneProbe() {
 // resulting effect. Effects may enqueue more events into r.eventCh
 // (e.g. tmux spawn → EvTmuxWindowSpawned), which are picked up on
 // subsequent loop iterations.
+//
+// After Reduce returns, dispatch reconciles persistence with the
+// state delta: sessions present in prev but absent in next are
+// Deleted from disk; the remaining set is Saved (upsert). This makes
+// persistence a runtime-level invariant rather than something each
+// reducer must remember to emit via EffPersistSnapshot. See the
+// "sessions.json が終了時の snapshot になっていない" investigation.
 func (r *Runtime) dispatch(ev state.Event) {
+	prev := r.state.Sessions
 	next, effects := state.Reduce(r.state, ev)
 	r.state = next
 	for _, eff := range effects {
 		r.execute(eff)
+	}
+	r.reconcilePersist(prev, r.state.Sessions)
+}
+
+// finalPersistFlush writes the current snapshot one last time on
+// event-loop exit. Idempotent with the per-dispatch reconcilePersist,
+// but covers the window between an unpersisted state mutation and
+// ctx.Done() — see T3 in regression_persist_test.go.
+func (r *Runtime) finalPersistFlush() {
+	if len(r.state.Sessions) == 0 {
+		return
+	}
+	if err := r.cfg.Persist.Save(r.snapshotSessions()); err != nil {
+		slog.Error("runtime: final persist flush failed", "err", err)
+	}
+}
+
+// reconcilePersist writes the session-level delta produced by the
+// last reduce step to disk. Map identity is the change signal:
+// reducers that mutate sessions go through cloneSessions, which
+// returns a new map header; reducers that don't touch sessions leave
+// the reference intact and incur zero I/O here.
+func (r *Runtime) reconcilePersist(prev, next map[state.SessionID]state.Session) {
+	if sameSessionMap(prev, next) {
+		return
+	}
+	for id := range prev {
+		if _, kept := next[id]; !kept {
+			if err := r.cfg.Persist.Delete(string(id)); err != nil {
+				slog.Warn("runtime: persist delete failed", "id", id, "err", err)
+			}
+		}
+	}
+	if len(next) == 0 {
+		return
+	}
+	if err := r.cfg.Persist.Save(r.snapshotSessions()); err != nil {
+		slog.Error("runtime: persist save failed", "err", err)
 	}
 }
 

@@ -18,18 +18,39 @@ import (
 // LoadSnapshot reads sessions.json and registers each session in
 // r.state. Driver state is restored via the registered Driver's
 // Restore method.
+//
+// On cold start the tmux session is brand new — any dead panes from
+// the previous daemon run have evaporated along with the old server.
+// Frames whose driver was at status=stopped have nothing left to
+// inspect (the tail output lived in the dead pane, which is gone)
+// and cannot be respawned without overwriting the very state the
+// user wanted to keep. Those frames are dropped here, and snapshots
+// whose every frame was stopped are removed from disk so they do
+// not show up again on the next cold start.
+//
+// Warm start keeps everything: stopped frames in a live tmux session
+// still have their dead panes attached for inspection.
 func (r *Runtime) LoadSnapshot(coldStart bool) error {
 	snaps, err := r.cfg.Persist.Load()
 	if err != nil {
 		return err
 	}
 	now := time.Now()
+	dropped := 0
 	for _, snap := range snaps {
-		if sess, ok := restoreSession(snap, coldStart, now); ok {
-			r.state.Sessions[sess.ID] = sess
+		sess, ok := restoreSession(snap, coldStart, now)
+		if !ok {
+			if coldStart {
+				dropped++
+				if err := r.cfg.Persist.Delete(snap.ID); err != nil {
+					slog.Warn("bootstrap: drop unrecoverable snapshot failed", "id", snap.ID, "err", err)
+				}
+			}
+			continue
 		}
+		r.state.Sessions[sess.ID] = sess
 	}
-	slog.Info("bootstrap: snapshot loaded", "count", len(snaps))
+	slog.Info("bootstrap: snapshot loaded", "count", len(snaps)-dropped, "dropped_stopped", dropped)
 	return nil
 }
 
@@ -44,6 +65,14 @@ func restoreSession(snap SessionSnapshot, coldStart bool, now time.Time) (state.
 		if drv == nil {
 			slog.Warn("bootstrap: no driver for command, skipping frame", "command", fsnap.Command)
 			break
+		}
+		// Cold start has no live tmux pane to inherit the dead command's
+		// tail output, so a stopped frame turns into a zombie (no pane
+		// to display, no window to close). Drop it here instead. The
+		// frame's purpose — running a command — is gone, and the pane
+		// inspection state died with the old tmux server.
+		if coldStart && fsnap.DriverState["status"] == "stopped" {
+			continue
 		}
 		if coldStart && fsnap.DriverState["status"] == "running" {
 			fsnap.DriverState["status"] = "waiting"

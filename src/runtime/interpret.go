@@ -547,28 +547,42 @@ func (r *Runtime) activeStatusLine() string {
 }
 
 // reconcileWindows checks whether each tracked session pane still
-// exists. Missing panes are reported via EvTmuxWindowVanished.
-// The active frame is skipped because it is swap-paned into roost:0.1 and
-// detected reactively via swapSessionIntoMain returning isMissingPaneErr.
+// exists. Two distinct conditions are surfaced:
+//
+//   - The pane is dead but still around (remain-on-exit=on holds it):
+//     the command process exited. Read #{pane_dead_status} and emit
+//     EvFrameCommandExited so the reducer can decide between
+//     eviction (exit 0) and keeping the frame as stopped (exit != 0).
+//
+//   - The query for the pane itself failed with a missing-pane style
+//     error: the tmux window was destroyed externally (user kill-window).
+//     Emit EvTmuxWindowVanished to evict unconditionally — there is
+//     nothing left to inspect.
+//
+// The active frame is skipped because it is swap-paned into roost:0.1
+// and detected reactively via swapSessionIntoMain returning
+// isMissingPaneErr.
 func (r *Runtime) reconcileWindows() {
 	for frameID, target := range r.sessionPanes {
 		if frameID == r.activeFrameID {
 			slog.Debug("runtime: reconcile pane skipped (active)", "frame", frameID, "target", target)
 			continue
 		}
-		alive, err := r.cfg.Tmux.PaneAlive(target)
+		dead, code, err := r.cfg.Tmux.PaneExitStatus(target)
 		if err != nil {
 			slog.Debug("runtime: reconcile pane failed", "frame", frameID, "pane", target, "err", err)
+			r.Enqueue(state.EvTmuxWindowVanished{FrameID: frameID})
 			continue
 		}
-		if !alive {
-			if tail, terr := r.cfg.Tmux.CapturePane(target, 20); terr == nil && tail != "" {
-				slog.Info("runtime: pane tail on vanish", "frame", frameID, "target", target, "tail", tail)
-			} else {
-				slog.Info("runtime: pane vanished", "frame", frameID, "target", target)
-			}
-			r.Enqueue(state.EvTmuxWindowVanished{FrameID: frameID})
+		if !dead {
+			continue
 		}
+		if tail, terr := r.cfg.Tmux.CapturePane(target, 20); terr == nil && tail != "" {
+			slog.Info("runtime: pane tail on exit", "frame", frameID, "target", target, "exit_code", code, "tail", tail)
+		} else {
+			slog.Info("runtime: pane exited", "frame", frameID, "target", target, "exit_code", code)
+		}
+		r.Enqueue(state.EvFrameCommandExited{FrameID: frameID, ExitCode: code})
 	}
 }
 

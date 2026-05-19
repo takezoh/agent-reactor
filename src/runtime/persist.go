@@ -10,10 +10,11 @@ import (
 
 // FilePersist is the production PersistBackend. It writes each session
 // to an individual file under <dataDir>/sessions/<id>.json with atomic
-// temp+rename. Sessions that are no longer present are deleted.
+// temp+rename. Save is upsert-only — it does not remove sessions absent
+// from the input. Removal must go through Delete(id) so a transient
+// in-memory empty state cannot wipe disk.
 type FilePersist struct {
-	dir          string
-	lastKnownIDs map[string]struct{} // nil = first Save not yet called
+	dir string
 }
 
 // NewFilePersist constructs a FilePersist anchored at the given data
@@ -22,57 +23,30 @@ func NewFilePersist(dataDir string) *FilePersist {
 	return &FilePersist{dir: filepath.Join(dataDir, "sessions")}
 }
 
-// Save writes each session to its own file and removes files for
-// sessions that are no longer in the list. ReadDir is skipped when the
-// set of session IDs has not shrunk since the last call, avoiding a
-// redundant directory scan on every tick.
+// Save writes each session to its own file. Sessions not present in the
+// input are left on disk untouched — callers must invoke Delete to
+// remove a session.
 func (p *FilePersist) Save(sessions []SessionSnapshot) error {
 	if err := os.MkdirAll(p.dir, 0o755); err != nil {
 		return fmt.Errorf("persist: mkdir: %w", err)
 	}
-
-	want := make(map[string]struct{}, len(sessions))
 	for _, sess := range sessions {
-		want[sess.ID] = struct{}{}
 		if err := p.writeOne(sess); err != nil {
 			return err
 		}
 	}
-
-	needPrune := p.lastKnownIDs == nil // first call: always prune
-	if !needPrune {
-		for id := range p.lastKnownIDs {
-			if _, ok := want[id]; !ok {
-				needPrune = true
-				break
-			}
-		}
-	}
-
-	if needPrune {
-		if err := p.pruneObsolete(want); err != nil {
-			return err
-		}
-	}
-
-	p.lastKnownIDs = want
 	return nil
 }
 
-func (p *FilePersist) pruneObsolete(want map[string]struct{}) error {
-	entries, err := os.ReadDir(p.dir)
-	if err != nil {
-		return fmt.Errorf("persist: readdir: %w", err)
+// Delete removes a single session's file. Missing files are not an
+// error (idempotent).
+func (p *FilePersist) Delete(id string) error {
+	if id == "" {
+		return nil
 	}
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".tmp") {
-			continue
-		}
-		id := strings.TrimSuffix(name, ".json")
-		if _, ok := want[id]; !ok {
-			_ = os.Remove(filepath.Join(p.dir, name))
-		}
+	path := filepath.Join(p.dir, id+".json")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("persist: delete %s: %w", id, err)
 	}
 	return nil
 }

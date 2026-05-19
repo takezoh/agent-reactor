@@ -271,6 +271,9 @@ func (d ClaudeDriver) Step(prev state.DriverState, ctx state.FrameContext, ev st
 	case state.DEvWorktreeResolved:
 		cs.ApplyWorktreeResolved(e)
 		return cs, nil, d.view(cs)
+	case state.DEvCommandExited:
+		cs.ApplyCommandExited(e)
+		return cs, nil, d.view(cs)
 	}
 
 	return cs, nil, d.view(cs)

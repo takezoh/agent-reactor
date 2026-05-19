@@ -171,6 +171,9 @@ func (d ShellDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 	case state.DEvWorktreeResolved:
 		ss.ApplyWorktreeResolved(e)
 		return ss, nil, d.view(ss)
+	case state.DEvCommandExited:
+		ss.ApplyCommandExited(e)
+		return ss, nil, d.view(ss)
 
 	case state.DEvHook:
 		return ss, nil, d.view(ss)

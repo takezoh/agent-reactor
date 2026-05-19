@@ -245,6 +245,18 @@ type DEvWorktreeResolved struct {
 
 func (DEvWorktreeResolved) isDriverEvent() {}
 
+// DEvCommandExited is delivered to the driver when the frame's
+// command process has exited and the runtime has decided to keep the
+// frame around (i.e. the exit was abnormal — ExitCode != 0). The
+// driver should set its status to Stopped and capture any final
+// state it wants to persist for cold-start inspection.
+type DEvCommandExited struct {
+	ExitCode  int
+	Timestamp time.Time
+}
+
+func (DEvCommandExited) isDriverEvent() {}
+
 // ViewProvider is an optional capability for drivers that provide a
 // custom TUI view.
 type ViewProvider interface {

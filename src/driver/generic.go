@@ -190,6 +190,9 @@ func (d GenericDriver) Step(prev state.DriverState, ctx state.FrameContext, ev s
 	case state.DEvWorktreeResolved:
 		gs.ApplyWorktreeResolved(e)
 		return gs, nil, d.view(gs)
+	case state.DEvCommandExited:
+		gs.ApplyCommandExited(e)
+		return gs, nil, d.view(gs)
 	}
 
 	return gs, nil, d.view(gs)

@@ -156,10 +156,29 @@ type EvPaneDied struct {
 	OwnerFrameID FrameID // set for pane 0.0 dead detection
 }
 
-// EvTmuxWindowVanished is fired by ReconcileWindows when a session
-// window has disappeared (agent process exited).
+// EvTmuxWindowVanished is fired by ReconcileWindows when the tmux
+// window backing a frame has truly disappeared (the user closed the
+// window via tmux's own kill-window, for instance). The frame is
+// always evicted because there is nothing left to inspect.
 type EvTmuxWindowVanished struct {
 	FrameID FrameID
+}
+
+// EvFrameCommandExited is fired by ReconcileWindows when a frame's
+// command process has exited but the pane is still around (windows
+// are spawned with remain-on-exit=on so the tail output and exit
+// status can be inspected). The reducer decides:
+//   - ExitCode == 0  → intentional exit, evict the frame and kill
+//     the dead window.
+//   - ExitCode != 0  → abnormal exit, mark the frame status=stopped
+//     and leave the window for the user to inspect.
+//
+// Idempotent: the reducer ignores the event when the frame's driver
+// is already at StatusStopped, so re-detection on subsequent ticks is
+// safe.
+type EvFrameCommandExited struct {
+	FrameID  FrameID
+	ExitCode int
 }
 
 // EvTmuxPaneSpawned is the async result of a tmux new-window call
@@ -241,6 +260,7 @@ func (EvFileChanged) isEvent()        {}
 func (EvJobResult) isEvent()          {}
 func (EvPaneDied) isEvent()           {}
 func (EvTmuxWindowVanished) isEvent() {}
+func (EvFrameCommandExited) isEvent() {}
 func (EvTmuxPaneSpawned) isEvent()    {}
 func (EvTmuxSpawnFailed) isEvent()    {}
 func (EvPaneOsc) isEvent()            {}

@@ -66,11 +66,29 @@ func (r *Runtime) RecreateAll() error {
 
 func (r *Runtime) recreateSessionFrames(id state.SessionID, sess state.Session, size paneSize) error {
 	for _, frame := range sess.Frames {
+		if isStoppedFrame(frame) {
+			slog.Info("bootstrap: skipping spawn for stopped frame",
+				"session", id, "frame", frame.ID, "command", frame.Command)
+			continue
+		}
 		if err := r.spawnFrameWindow(id, sess.Sandbox, frame, size); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// isStoppedFrame returns true when the frame's driver reports
+// StatusStopped — the command exited abnormally in a prior session
+// and the frame is kept for inspection. Cold-start must not respawn
+// such frames: the command is gone, and resurrecting it as a fresh
+// process would destroy the very state the user wants to look at.
+func isStoppedFrame(frame state.SessionFrame) bool {
+	drv := state.GetDriver(frame.Command)
+	if drv == nil || frame.Driver == nil {
+		return false
+	}
+	return drv.Status(frame.Driver) == state.StatusStopped
 }
 
 // spawnFrameWindow prepares and spawns a single frame's tmux window during cold start.

@@ -31,6 +31,8 @@ func Reduce(s State, ev Event) (State, []Effect) {
 		return reduceTmuxSpawnFailed(s, e)
 	case EvTmuxWindowVanished:
 		return reduceTmuxWindowVanished(s, e)
+	case EvFrameCommandExited:
+		return reduceFrameCommandExited(s, e)
 	case EvPaneDied:
 		return reducePaneDied(s, e)
 

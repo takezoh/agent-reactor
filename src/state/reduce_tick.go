@@ -155,3 +155,39 @@ func reduceTmuxWindowVanished(s State, e EvTmuxWindowVanished) (State, []Effect)
 	}
 	return s, effs
 }
+
+// reduceFrameCommandExited routes a command-exit signal based on its
+// exit code. ExitCode == 0 is an intentional exit (the user typed
+// /quit, the script finished, etc.) and triggers full eviction —
+// the dead tmux pane is also closed via EffKillSessionWindow.
+// A non-zero ExitCode is an abnormal exit: the frame is kept in
+// state with driver status=Stopped so the user can still find it in
+// the session list, and the dead pane is left attached so the tail
+// output (stack trace, error message) remains visible.
+//
+// The reducer is idempotent — reconcileWindows may re-detect the
+// same dead pane on subsequent ticks. Once a frame's driver reports
+// StatusStopped, we treat the exit as already handled and emit no
+// further effects.
+func reduceFrameCommandExited(s State, e EvFrameCommandExited) (State, []Effect) {
+	_, sess, idx, ok := findFrame(s, e.FrameID)
+	if !ok {
+		return s, nil
+	}
+	frame := sess.Frames[idx]
+	drv := GetDriver(frame.Command)
+	if drv != nil && frame.Driver != nil && drv.Status(frame.Driver) == StatusStopped {
+		return s, nil
+	}
+
+	if e.ExitCode == 0 {
+		next, effs, _ := evictFrame(s, e.FrameID, true)
+		return next, effs
+	}
+
+	next, rawEffs, _ := stepDriver(s, e.FrameID, DEvCommandExited{
+		ExitCode:  e.ExitCode,
+		Timestamp: s.Now,
+	})
+	return next, rawEffs
+}
