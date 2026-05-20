@@ -46,8 +46,8 @@ const (
 // WorkerHandle is a placeholder for the agent process handle (concrete type set in issue 013).
 type WorkerHandle any
 
-// RetryTimer is a placeholder for the retry timer handle (concrete type set in issue 012).
-type RetryTimer any
+// RetryTimer wraps a one-shot Timer scheduled by the scheduler (SPEC §8.4).
+type RetryTimer struct{ t Timer }
 
 // RunAttempt holds the runtime state of a running issue (SPEC §4.1.5 / §16.4).
 type RunAttempt struct {

@@ -7,14 +7,14 @@ import (
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
-// ErrDuplicateDispatch is returned when Dispatch is called for an issue that is
-// already claimed or running. This enforces the §7.4 single-authority invariant.
+// ErrDuplicateDispatch is returned when Claim or Dispatch is called for an issue
+// that is already claimed or running. This enforces the §7.4 single-authority invariant.
 var ErrDuplicateDispatch = errors.New("issue already claimed or running")
 
-// Dispatch records a new running attempt for issue (SPEC §16.4).
+// Claim reserves an issue slot before spawning (SPEC §16.4).
 // Returns ErrDuplicateDispatch if the issue is already claimed or running.
 // Removes any existing retry entry for the issue.
-func (s *State) Dispatch(issue tracker.Issue, attempt int, session LiveSession) error {
+func (s *State) Claim(issue tracker.Issue, attempt int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -26,14 +26,31 @@ func (s *State) Dispatch(issue tracker.Issue, attempt int, session LiveSession) 
 	}
 
 	delete(s.retryAttempts, issue.ID)
-
 	s.claimed[issue.ID] = struct{}{}
-	s.running[issue.ID] = RunAttempt{
+	return nil
+}
+
+// MarkRunning promotes an already-claimed issue to running after spawn succeeds (SPEC §16.4).
+func (s *State) MarkRunning(issueID string, issue tracker.Issue, attempt int, session LiveSession) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.running[issueID] = RunAttempt{
 		Issue:   issue,
 		Session: session,
 		Attempt: attempt,
 		Phase:   PhasePreparingWorkspace,
 	}
+}
+
+// Dispatch records a new running attempt for issue (SPEC §16.4). It is a convenience
+// wrapper around Claim + MarkRunning for callers that have the session ready upfront.
+// Returns ErrDuplicateDispatch if the issue is already claimed or running.
+func (s *State) Dispatch(issue tracker.Issue, attempt int, session LiveSession) error {
+	if err := s.Claim(issue, attempt); err != nil {
+		return err
+	}
+	s.MarkRunning(issue.ID, issue, attempt, session)
 	return nil
 }
 

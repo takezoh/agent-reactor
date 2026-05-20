@@ -160,6 +160,58 @@ func TestStateSnapshot_IsDeepCopy(t *testing.T) {
 	}
 }
 
+func TestStateClaim_AddsToClaimedOnly(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id10", "PROJ-10")
+
+	if err := s.Claim(issue, 1); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	snap := s.Snapshot()
+	if _, ok := snap.Claimed["id10"]; !ok {
+		t.Error("expected id10 in claimed")
+	}
+	if _, ok := snap.Running["id10"]; ok {
+		t.Error("expected id10 NOT in running after Claim")
+	}
+}
+
+func TestStateMarkRunning_PromotesToRunning(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id11", "PROJ-11")
+	session := LiveSession{SessionID: "s11"}
+
+	if err := s.Claim(issue, 2); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	s.MarkRunning(issue.ID, issue, 2, session)
+
+	snap := s.Snapshot()
+	if _, ok := snap.Claimed["id11"]; !ok {
+		t.Error("expected id11 still in claimed")
+	}
+	run, ok := snap.Running["id11"]
+	if !ok {
+		t.Fatal("expected id11 in running")
+	}
+	if run.Attempt != 2 {
+		t.Errorf("got attempt %d, want 2", run.Attempt)
+	}
+}
+
+func TestStateClaim_DuplicateRejected(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id12", "PROJ-12")
+
+	if err := s.Claim(issue, 1); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if err := s.Claim(issue, 2); !errors.Is(err, ErrDuplicateDispatch) {
+		t.Errorf("expected ErrDuplicateDispatch, got %v", err)
+	}
+}
+
 func TestStateConcurrentDispatch_NoDuplicate(t *testing.T) {
 	s := NewState()
 	issue := testIssue("id5", "PROJ-5")
