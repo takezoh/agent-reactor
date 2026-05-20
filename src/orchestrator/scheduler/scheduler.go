@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/takezoh/agent-roost/platform/metrics"
 	ptrackerv "github.com/takezoh/agent-roost/platform/tracker"
 
 	"github.com/takezoh/agent-roost/orchestrator/wfconfig"
@@ -44,20 +45,33 @@ type WorkerExit struct {
 	Attempt int
 }
 
+// CodexActivity is sent on the codexActivity channel when the agent runner receives
+// a codex protocol notification (SPEC §10 / §13.5).
+type CodexActivity struct {
+	IssueID      string
+	Event        string // codex notification method name
+	Message      string // non-empty for item/agentMessage/delta events
+	Timestamp    time.Time
+	Usage        *metrics.Usage             // non-nil for thread/tokenUsage/updated
+	RateLimit    *metrics.RateLimitSnapshot // non-nil for account/rateLimits/updated
+	TurnDuration *time.Duration             // non-nil for turn/completed (elapsed turn time)
+}
+
 // Scheduler runs the polling loop per SPEC §16.2.
 type Scheduler struct {
-	workflowPath string
-	interval     time.Duration
-	lastGood     wfconfig.Config // last successfully resolved config; seeded from New
-	reloadCh     chan struct{}   // fsnotify → loop coalesced reload signal (buffered 1)
-	degraded     bool            // true while workflow is invalid; controls warn/recovery log
-	state        *State
-	deps         Deps
-	clock        Clock
-	retryFire    chan retryFireReq
-	workerDone   chan WorkerExit
-	tracker      schedulerTrackerAPI
-	workspace    schedulerWorkspaceAPI
+	workflowPath  string
+	interval      time.Duration
+	lastGood      wfconfig.Config // last successfully resolved config; seeded from New
+	reloadCh      chan struct{}   // fsnotify → loop coalesced reload signal (buffered 1)
+	degraded      bool            // true while workflow is invalid; controls warn/recovery log
+	state         *State
+	deps          Deps
+	clock         Clock
+	retryFire     chan retryFireReq
+	workerDone    chan WorkerExit
+	codexActivity chan CodexActivity
+	tracker       schedulerTrackerAPI
+	workspace     schedulerWorkspaceAPI
 }
 
 // New returns a Scheduler. cfg.Polling.IntervalMS determines the initial tick interval.
@@ -69,17 +83,18 @@ func New(workflowPath string, cfg wfconfig.Config, deps Deps) *Scheduler {
 	}
 	deps.Clock = clk
 	return &Scheduler{
-		workflowPath: workflowPath,
-		interval:     time.Duration(cfg.Polling.IntervalMS) * time.Millisecond,
-		lastGood:     cfg,
-		reloadCh:     make(chan struct{}, 1),
-		state:        NewState(),
-		deps:         deps,
-		clock:        clk,
-		retryFire:    make(chan retryFireReq, 64),
-		workerDone:   make(chan WorkerExit, 64),
-		tracker:      deps.RefreshTracker,
-		workspace:    deps.Workspace,
+		workflowPath:  workflowPath,
+		interval:      time.Duration(cfg.Polling.IntervalMS) * time.Millisecond,
+		lastGood:      cfg,
+		reloadCh:      make(chan struct{}, 1),
+		state:         NewState(),
+		deps:          deps,
+		clock:         clk,
+		retryFire:     make(chan retryFireReq, 64),
+		workerDone:    make(chan WorkerExit, 64),
+		codexActivity: make(chan CodexActivity, 64),
+		tracker:       deps.RefreshTracker,
+		workspace:     deps.Workspace,
 	}
 }
 
@@ -118,6 +133,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.handleRetry(ctx, req)
 		case w := <-s.workerDone:
 			s.handleWorkerExit(ctx, w)
+		case a := <-s.codexActivity:
+			s.handleCodexActivity(a)
 		case <-s.reloadCh:
 			s.tickOnce(ctx)
 			s.applyInterval(ticker)
@@ -129,6 +146,11 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // sends a WorkerExit on this channel when its turn loop ends (SPEC §16.6).
 func (s *Scheduler) WorkerDone() chan<- WorkerExit {
 	return s.workerDone
+}
+
+// CodexActivity returns the send-side of the codex-activity channel.
+func (s *Scheduler) CodexActivity() chan<- CodexActivity {
+	return s.codexActivity
 }
 
 // handleWorkerExit processes a worker-exit notification from the agent runner.
@@ -143,6 +165,20 @@ func (s *Scheduler) handleWorkerExit(ctx context.Context, w WorkerExit) {
 	}
 	if entry, ok := s.state.WorkerExitAbnormal(w.IssueID, w.Err, w.Attempt); ok {
 		scheduleRetry(s.state, s.clock, s.retryFire, ctx, entry, backoffDelay(entry.Attempt, cfg))
+	}
+}
+
+// handleCodexActivity processes a codex notification event from the agent runner.
+func (s *Scheduler) handleCodexActivity(a CodexActivity) {
+	s.state.UpdateCodexActivity(a.IssueID, a.Event, a.Message, a.Timestamp)
+	if a.Usage != nil {
+		s.state.RecordUsage(a.IssueID, *a.Usage)
+	}
+	if a.RateLimit != nil {
+		s.state.RecordRateLimit(a.IssueID, *a.RateLimit)
+	}
+	if a.TurnDuration != nil {
+		s.state.AddRuntime(a.IssueID, *a.TurnDuration)
 	}
 }
 

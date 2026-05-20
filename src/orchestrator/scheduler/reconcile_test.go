@@ -239,6 +239,26 @@ func TestReconcileRefresh_ErrorSkipsAll(t *testing.T) {
 
 // --- helpers ---
 
+func TestReconcileStall_RecentActivityPreventsKill(t *testing.T) {
+	w := &fakeWorker{}
+	now := time.Unix(1000, 0)
+	s := newReconcileScheduler(&fakeReconcileTracker{}, &fakeWorkspace{}, newFakeClock(now))
+
+	// StartedAt is old enough to exceed the stall threshold.
+	started := time.Unix(0, 0)
+	issue := testIssue("id10", "PROJ-10")
+	_ = s.state.Dispatch(issue, 1, LiveSession{Worker: w}, started)
+
+	// Record recent codex activity at "now" — must prevent kill.
+	s.state.UpdateCodexActivity("id10", "turn/completed", "", now)
+
+	s.reconcile(context.Background(), stalledCfg(500))
+
+	if len(w.killed) != 0 {
+		t.Errorf("worker killed despite recent codex activity: %v", w.killed)
+	}
+}
+
 func stalledCfg(stallMS int) wfconfig.Config {
 	cfg := wfconfig.Config{}
 	cfg.Codex.StallTimeoutMS = stallMS

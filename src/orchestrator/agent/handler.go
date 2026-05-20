@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/takezoh/agent-roost/orchestrator/lineargql"
+	"github.com/takezoh/agent-roost/orchestrator/scheduler"
 	"github.com/takezoh/agent-roost/platform/agent/codexclient"
 	"github.com/takezoh/agent-roost/platform/agent/codexschema"
+	schemav2 "github.com/takezoh/agent-roost/platform/agent/codexschema/v2"
+	"github.com/takezoh/agent-roost/platform/metrics"
 )
 
 type sessionIDs struct {
@@ -40,15 +44,22 @@ type linearArgs struct {
 
 // turnHandler dispatches codex protocol notifications to the spawn goroutine.
 type turnHandler struct {
-	conn         *codexclient.Conn
-	linearClient *lineargql.Client // nil when linear_graphql is not configured
-	mu           sync.Mutex
-	threadID     string
-	sessionReady chan<- sessionIDs
-	turnDone     chan<- turnResult
+	conn          *codexclient.Conn
+	linearClient  *lineargql.Client // nil when linear_graphql is not configured
+	mu            sync.Mutex
+	threadID      string
+	turnStartedAt time.Time // protected by mu; set on turn/started, cleared on turn/completed
+	sessionReady  chan<- sessionIDs
+	turnDone      chan<- turnResult
+	issueID       string
+	report        func(scheduler.CodexActivity)
 }
 
 func (h *turnHandler) OnNotification(method string, params json.RawMessage) {
+	now := time.Now()
+	act := scheduler.CodexActivity{IssueID: h.issueID, Event: method, Timestamp: now}
+
+	// Session management.
 	switch method {
 	case codexschema.MethodThreadStarted:
 		h.mu.Lock()
@@ -59,6 +70,7 @@ func (h *turnHandler) OnNotification(method string, params json.RawMessage) {
 		turnID := extractString(params, "turnId")
 		h.mu.Lock()
 		threadID := h.threadID
+		h.turnStartedAt = now
 		h.mu.Unlock()
 		select {
 		case h.sessionReady <- sessionIDs{threadID: threadID, turnID: turnID}:
@@ -66,6 +78,14 @@ func (h *turnHandler) OnNotification(method string, params json.RawMessage) {
 		}
 
 	case codexschema.MethodTurnCompleted:
+		h.mu.Lock()
+		started := h.turnStartedAt
+		h.turnStartedAt = time.Time{}
+		h.mu.Unlock()
+		if !started.IsZero() {
+			d := now.Sub(started)
+			act.TurnDuration = &d
+		}
 		select {
 		case h.turnDone <- turnResult{}:
 		default:
@@ -78,6 +98,52 @@ func (h *turnHandler) OnNotification(method string, params json.RawMessage) {
 		default:
 		}
 	}
+
+	// Metrics enrichment.
+	switch method {
+	case codexschema.MethodItemAgentMessageDelta:
+		act.Message = extractString(params, "delta")
+
+	case codexschema.MethodThreadTokenUsageUpdated:
+		var n schemav2.ThreadTokenUsageUpdatedNotification
+		if err := json.Unmarshal(params, &n); err == nil {
+			u := metrics.Usage{
+				ThreadID: n.ThreadID,
+				Input:    n.TokenUsage.Total.InputTokens,
+				Output:   n.TokenUsage.Total.OutputTokens,
+				Total:    n.TokenUsage.Total.TotalTokens,
+			}
+			act.Usage = &u
+		}
+
+	case codexschema.MethodAccountRateLimitsUpdated:
+		var n schemav2.AccountRateLimitsUpdatedNotification
+		if err := json.Unmarshal(params, &n); err == nil {
+			rl := mapRateLimit(n.RateLimits)
+			act.RateLimit = &rl
+		}
+	}
+
+	if h.report != nil {
+		h.report(act)
+	}
+}
+
+func mapRateLimit(rl schemav2.AccountRateLimitsUpdatedNotificationRateLimits) metrics.RateLimitSnapshot {
+	var snap metrics.RateLimitSnapshot
+	if rl.Primary != nil {
+		snap.PrimaryUsedPercent = rl.Primary.UsedPercent
+		if rl.Primary.ResetsAt != nil {
+			snap.PrimaryResetsAt = *rl.Primary.ResetsAt
+		}
+	}
+	if rl.Secondary != nil {
+		snap.SecondaryUsedPercent = rl.Secondary.UsedPercent
+		if rl.Secondary.ResetsAt != nil {
+			snap.SecondaryResetsAt = *rl.Secondary.ResetsAt
+		}
+	}
+	return snap
 }
 
 func (h *turnHandler) OnServerRequest(id int64, method string, params json.RawMessage) {

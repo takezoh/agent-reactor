@@ -19,19 +19,21 @@ const (
 
 // Server → client notifications.
 const (
-	MethodThreadStarted         = "thread/started"
-	MethodTurnStarted           = "turn/started"
-	MethodTurnCompleted         = "turn/completed"
-	MethodTurnPlanUpdated       = "turn/plan/updated"
-	MethodTurnDiffUpdated       = "turn/diff/updated"
-	MethodItemStarted           = "item/started"
-	MethodItemCompleted         = "item/completed"
-	MethodThreadStatusChanged   = "thread/status/changed"
-	MethodItemAgentMessageDelta = "item/agentMessage/delta"
-	MethodError                 = "error"
-	MethodWarning               = "warning"
-	MethodGuardianWarning       = "guardianWarning"
-	MethodDeprecationNotice     = "deprecationNotice"
+	MethodThreadStarted            = "thread/started"
+	MethodTurnStarted              = "turn/started"
+	MethodTurnCompleted            = "turn/completed"
+	MethodTurnPlanUpdated          = "turn/plan/updated"
+	MethodTurnDiffUpdated          = "turn/diff/updated"
+	MethodItemStarted              = "item/started"
+	MethodItemCompleted            = "item/completed"
+	MethodThreadStatusChanged      = "thread/status/changed"
+	MethodItemAgentMessageDelta    = "item/agentMessage/delta"
+	MethodThreadTokenUsageUpdated  = "thread/tokenUsage/updated"
+	MethodAccountRateLimitsUpdated = "account/rateLimits/updated"
+	MethodError                    = "error"
+	MethodWarning                  = "warning"
+	MethodGuardianWarning          = "guardianWarning"
+	MethodDeprecationNotice        = "deprecationNotice"
 )
 
 // Server → client requests (expect a reply from client).

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/takezoh/agent-roost/platform/metrics"
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
@@ -269,5 +270,132 @@ func TestUpdateIssueSnapshot_NoopForUnknownID(t *testing.T) {
 	snap := s.Snapshot()
 	if len(snap.Running) != 0 {
 		t.Error("expected running to remain empty")
+	}
+}
+
+func TestUpdateCodexActivity_SetsFields(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id20", "PROJ-20")
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := time.Unix(1234567890, 0)
+	s.UpdateCodexActivity("id20", "turn/completed", "hello", ts)
+
+	snap := s.Snapshot()
+	run := snap.Running["id20"]
+	if run.LastCodexEvent != "turn/completed" {
+		t.Errorf("got event %q, want turn/completed", run.LastCodexEvent)
+	}
+	if !run.LastCodexTimestamp.Equal(ts) {
+		t.Errorf("got ts %v, want %v", run.LastCodexTimestamp, ts)
+	}
+	if run.LastCodexMessage != "hello" {
+		t.Errorf("got message %q, want hello", run.LastCodexMessage)
+	}
+}
+
+func TestUpdateCodexActivity_EmptyMessageNotOverwritten(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id21", "PROJ-21")
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	s.UpdateCodexActivity("id21", "m1", "initial", time.Now())
+	s.UpdateCodexActivity("id21", "m2", "", time.Now())
+	snap := s.Snapshot()
+	if snap.Running["id21"].LastCodexMessage != "initial" {
+		t.Errorf("empty message overwrote existing: got %q", snap.Running["id21"].LastCodexMessage)
+	}
+}
+
+func TestUpdateCodexActivity_NoopForUnknownID(t *testing.T) {
+	s := NewState()
+	s.UpdateCodexActivity("unknown", "e", "m", time.Now()) // must not panic
+}
+
+func TestRecordUsage_AggregatesAcrossReports(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id22", "PROJ-22")
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	s.RecordUsage("id22", metrics.Usage{ThreadID: "t1", Input: 100, Output: 50, Total: 150})
+	snap := s.Snapshot()
+	run := snap.Running["id22"]
+	if run.TotalInputTokens != 100 || run.TotalOutputTokens != 50 || run.TotalTokens != 150 {
+		t.Errorf("after first report: got %d/%d/%d, want 100/50/150",
+			run.TotalInputTokens, run.TotalOutputTokens, run.TotalTokens)
+	}
+
+	// Second report cumulative 250/120/370 — only the delta is added (no double-count).
+	s.RecordUsage("id22", metrics.Usage{ThreadID: "t1", Input: 250, Output: 120, Total: 370})
+	snap = s.Snapshot()
+	run = snap.Running["id22"]
+	if run.TotalInputTokens != 250 || run.TotalOutputTokens != 120 || run.TotalTokens != 370 {
+		t.Errorf("after second report: got %d/%d/%d, want 250/120/370",
+			run.TotalInputTokens, run.TotalOutputTokens, run.TotalTokens)
+	}
+}
+
+func TestRecordUsage_NoopForUnknownID(t *testing.T) {
+	s := NewState()
+	s.RecordUsage("unknown", metrics.Usage{ThreadID: "t1", Input: 100}) // must not panic
+}
+
+func TestRecordUsage_AccumulatorCleanedUpOnExit(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id23", "PROJ-23")
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	s.RecordUsage("id23", metrics.Usage{ThreadID: "t1", Input: 100, Output: 50, Total: 150})
+	s.WorkerExitNormal("id23")
+
+	// Re-dispatch: accumulator must start fresh (no stale lastSeen).
+	if err := s.Dispatch(issue, 2, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	s.RecordUsage("id23", metrics.Usage{ThreadID: "t1", Input: 50, Output: 20, Total: 70})
+	snap := s.Snapshot()
+	run := snap.Running["id23"]
+	if run.TotalInputTokens != 50 || run.TotalOutputTokens != 20 || run.TotalTokens != 70 {
+		t.Errorf("stale accumulator: got %d/%d/%d, want 50/20/70",
+			run.TotalInputTokens, run.TotalOutputTokens, run.TotalTokens)
+	}
+}
+
+func TestRecordRateLimit_SetsField(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id24", "PROJ-24")
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	s.RecordRateLimit("id24", metrics.RateLimitSnapshot{PrimaryUsedPercent: 75, PrimaryResetsAt: 999})
+	snap := s.Snapshot()
+	run := snap.Running["id24"]
+	if run.RateLimit == nil {
+		t.Fatal("expected RateLimit to be set")
+	}
+	if run.RateLimit.PrimaryUsedPercent != 75 {
+		t.Errorf("got %d, want 75", run.RateLimit.PrimaryUsedPercent)
+	}
+}
+
+func TestAddRuntime_Accumulates(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id25", "PROJ-25")
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	s.AddRuntime("id25", 2*time.Second)
+	s.AddRuntime("id25", 3*time.Second)
+	snap := s.Snapshot()
+	if got := snap.Running["id25"].TotalRuntime; got != 5*time.Second {
+		t.Errorf("got %v, want 5s", got)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/takezoh/agent-roost/platform/metrics"
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
@@ -68,9 +69,11 @@ type RunAttempt struct {
 
 	CodexAppServerPID int
 
-	// Token/runtime aggregation placeholders — populated in P6.
-	TotalInputTokens  int
-	TotalOutputTokens int
+	TotalInputTokens  int64
+	TotalOutputTokens int64
+	TotalTokens       int64
+	TotalRuntime      time.Duration
+	RateLimit         *metrics.RateLimitSnapshot
 }
 
 // LiveSession holds the session identity for a running attempt (SPEC §4.1.6).
@@ -108,6 +111,7 @@ type State struct {
 	running       map[string]RunAttempt
 	claimed       map[string]struct{}
 	retryAttempts map[string]RetryEntry
+	usage         map[string]*metrics.Accumulator // per-issue token bookkeeping (§13.5 (b))
 }
 
 // NewState returns an initialized State.
@@ -116,5 +120,6 @@ func NewState() *State {
 		running:       make(map[string]RunAttempt),
 		claimed:       make(map[string]struct{}),
 		retryAttempts: make(map[string]RetryEntry),
+		usage:         make(map[string]*metrics.Accumulator),
 	}
 }

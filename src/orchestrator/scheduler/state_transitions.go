@@ -5,6 +5,7 @@ import (
 	"maps"
 	"time"
 
+	"github.com/takezoh/agent-roost/platform/metrics"
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
@@ -84,6 +85,7 @@ func (s *State) WorkerExitNormal(issueID string) (RetryEntry, bool) {
 	}
 	delete(s.running, issueID)
 	delete(s.claimed, issueID)
+	delete(s.usage, issueID)
 
 	return RetryEntry{
 		IssueID:    issueID,
@@ -106,6 +108,7 @@ func (s *State) WorkerExitAbnormal(issueID string, err error, attempt int) (Retr
 	}
 	delete(s.running, issueID)
 	delete(s.claimed, issueID)
+	delete(s.usage, issueID)
 
 	return RetryEntry{
 		IssueID:    issueID,
@@ -124,6 +127,7 @@ func (s *State) ReleaseClaim(issueID string) {
 	delete(s.running, issueID)
 	delete(s.claimed, issueID)
 	delete(s.retryAttempts, issueID)
+	delete(s.usage, issueID)
 }
 
 // EnqueueRetry registers a retry entry for an issue (SPEC §7.3).
@@ -133,6 +137,77 @@ func (s *State) EnqueueRetry(entry RetryEntry) {
 	defer s.mu.Unlock()
 
 	s.retryAttempts[entry.IssueID] = entry
+}
+
+// UpdateCodexActivity records the latest codex notification for stall detection (SPEC §8.5 Part A).
+// An empty message leaves LastCodexMessage unchanged.
+// No-op if issueID is not running.
+func (s *State) UpdateCodexActivity(issueID, event, message string, ts time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	run, ok := s.running[issueID]
+	if !ok {
+		return
+	}
+	run.LastCodexEvent = event
+	run.LastCodexTimestamp = ts
+	if message != "" {
+		run.LastCodexMessage = message
+	}
+	s.running[issueID] = run
+}
+
+// RecordUsage applies an absolute cumulative token report via §13.5 (b) bookkeeping.
+// No-op if issueID is not running.
+func (s *State) RecordUsage(issueID string, u metrics.Usage) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	run, ok := s.running[issueID]
+	if !ok {
+		return
+	}
+	acc, ok := s.usage[issueID]
+	if !ok {
+		acc = metrics.NewAccumulator()
+		s.usage[issueID] = acc
+	}
+	totals := acc.Observe(u)
+	run.TotalInputTokens = totals.Input
+	run.TotalOutputTokens = totals.Output
+	run.TotalTokens = totals.Total
+	s.running[issueID] = run
+}
+
+// RecordRateLimit stores the latest rate-limit snapshot (SPEC §13.5).
+// No-op if issueID is not running.
+func (s *State) RecordRateLimit(issueID string, rl metrics.RateLimitSnapshot) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	run, ok := s.running[issueID]
+	if !ok {
+		return
+	}
+	run.RateLimit = &rl
+	s.running[issueID] = run
+}
+
+// AddRuntime accumulates one completed turn's duration for §13.5 runtime aggregation.
+// No-op if issueID is not running or d is non-positive.
+func (s *State) AddRuntime(issueID string, d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	run, ok := s.running[issueID]
+	if !ok {
+		return
+	}
+	if d > 0 {
+		run.TotalRuntime += d
+	}
+	s.running[issueID] = run
 }
 
 // Snapshot returns a deep-copy read-only view of the current state (SPEC §7.3).

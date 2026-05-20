@@ -12,10 +12,152 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/takezoh/agent-roost/orchestrator/lineargql"
+	"github.com/takezoh/agent-roost/orchestrator/scheduler"
 	"github.com/takezoh/agent-roost/platform/agent/codexclient"
 	"github.com/takezoh/agent-roost/platform/agent/codexschema"
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
+
+// --- Activity tracking tests (§13.5 / §8.5) ---
+
+func TestTurnHandler_ActivityReportedOnEveryNotification(t *testing.T) {
+	var got []scheduler.CodexActivity
+	h := &turnHandler{
+		issueID:      "iss-1",
+		sessionReady: make(chan sessionIDs, 1),
+		turnDone:     make(chan turnResult, 1),
+		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
+	}
+
+	before := time.Now()
+	h.OnNotification("some/method", nil)
+	after := time.Now()
+
+	require.Len(t, got, 1)
+	require.Equal(t, "iss-1", got[0].IssueID)
+	require.Equal(t, "some/method", got[0].Event)
+	require.False(t, got[0].Timestamp.Before(before))
+	require.False(t, got[0].Timestamp.After(after))
+	require.Nil(t, got[0].Usage)
+	require.Nil(t, got[0].RateLimit)
+}
+
+// TestTurnHandler_UsageUsesTotalIgnoresLastPayload verifies §13.5 (a):
+// the delta-style "last" payload must be ignored; only "total" (absolute) is used.
+func TestTurnHandler_UsageUsesTotalIgnoresLastPayload(t *testing.T) {
+	var got []scheduler.CodexActivity
+	h := &turnHandler{
+		issueID:      "iss-2",
+		sessionReady: make(chan sessionIDs, 1),
+		turnDone:     make(chan turnResult, 1),
+		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
+	}
+
+	params, _ := json.Marshal(map[string]any{
+		"threadId": "thread1",
+		"turnId":   "turn1",
+		"tokenUsage": map[string]any{
+			"total": map[string]any{
+				"inputTokens":  int64(100),
+				"outputTokens": int64(50),
+				"totalTokens":  int64(150),
+			},
+			"last": map[string]any{
+				"inputTokens":  int64(10), // delta-style payload — must be ignored
+				"outputTokens": int64(5),
+				"totalTokens":  int64(15),
+			},
+		},
+	})
+	h.OnNotification("thread/tokenUsage/updated", params)
+
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].Usage)
+	require.Equal(t, "thread1", got[0].Usage.ThreadID)
+	require.Equal(t, int64(100), got[0].Usage.Input) // Total.inputTokens, not Last
+	require.Equal(t, int64(50), got[0].Usage.Output)
+	require.Equal(t, int64(150), got[0].Usage.Total)
+}
+
+func TestTurnHandler_RateLimitReported(t *testing.T) {
+	var got []scheduler.CodexActivity
+	h := &turnHandler{
+		issueID:      "iss-3",
+		sessionReady: make(chan sessionIDs, 1),
+		turnDone:     make(chan turnResult, 1),
+		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
+	}
+
+	resetsAt := int64(1234567890000)
+	params, _ := json.Marshal(map[string]any{
+		"rateLimits": map[string]any{
+			"primary": map[string]any{
+				"usedPercent": int64(75),
+				"resetsAt":    resetsAt,
+			},
+		},
+	})
+	h.OnNotification("account/rateLimits/updated", params)
+
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].RateLimit)
+	require.Equal(t, int64(75), got[0].RateLimit.PrimaryUsedPercent)
+	require.Equal(t, resetsAt, got[0].RateLimit.PrimaryResetsAt)
+	require.Equal(t, int64(0), got[0].RateLimit.SecondaryUsedPercent)
+}
+
+func TestTurnHandler_TurnDurationTracked(t *testing.T) {
+	var got []scheduler.CodexActivity
+	h := &turnHandler{
+		issueID:      "iss-4",
+		sessionReady: make(chan sessionIDs, 1),
+		turnDone:     make(chan turnResult, 1),
+		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
+	}
+
+	params, _ := json.Marshal(map[string]any{"turnId": "t1"})
+	h.OnNotification("turn/started", params)
+	time.Sleep(time.Millisecond)
+	h.OnNotification("turn/completed", nil)
+
+	require.Len(t, got, 2)
+	require.Nil(t, got[0].TurnDuration, "turn/started must not carry TurnDuration")
+	require.NotNil(t, got[1].TurnDuration, "turn/completed must carry TurnDuration")
+	require.Greater(t, *got[1].TurnDuration, time.Duration(0))
+}
+
+func TestTurnHandler_AgentMessageDeltaRecorded(t *testing.T) {
+	var got []scheduler.CodexActivity
+	h := &turnHandler{
+		issueID:      "iss-5",
+		sessionReady: make(chan sessionIDs, 1),
+		turnDone:     make(chan turnResult, 1),
+		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
+	}
+
+	params, _ := json.Marshal(map[string]any{
+		"delta":    "hello world",
+		"itemId":   "i1",
+		"threadId": "t1",
+		"turnId":   "u1",
+	})
+	h.OnNotification("item/agentMessage/delta", params)
+
+	require.Len(t, got, 1)
+	require.Equal(t, "hello world", got[0].Message)
+}
+
+func TestTurnHandler_NilReportNoPanic(t *testing.T) {
+	h := &turnHandler{
+		issueID:      "iss-6",
+		sessionReady: make(chan sessionIDs, 1),
+		turnDone:     make(chan turnResult, 1),
+		// report is nil — must not panic
+	}
+	h.OnNotification("some/method", nil)
+}
+
+// --- linear_graphql tool call tests (SPEC §10.5) ---
 
 // toolCallServer is a fake codex app-server that:
 //  1. Replies to initialize.

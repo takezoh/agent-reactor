@@ -50,6 +50,7 @@ type Runner struct {
 	Dispatcher     agentlaunch.Dispatcher
 	Tracker        stateRefresher
 	WorkerDone     chan<- scheduler.WorkerExit
+	CodexActivity  chan<- scheduler.CodexActivity
 	LinearClient   *lineargql.Client // nil disables the linear_graphql tool (SPEC §10.5)
 	proc           procFunc
 }

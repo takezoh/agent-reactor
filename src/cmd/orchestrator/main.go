@@ -117,5 +117,6 @@ func buildScheduler(ctx context.Context, absPath string, cfg wfconfig.Config, tm
 		Spawn:          runner.Spawn,
 	})
 	runner.WorkerDone = sched.WorkerDone()
+	runner.CodexActivity = sched.CodexActivity()
 	return sched, dispatcherCleanup, nil
 }

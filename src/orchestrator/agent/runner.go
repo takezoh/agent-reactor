@@ -57,7 +57,7 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 	frameID := fmt.Sprintf("%s#%d", issue.Identifier, attempt)
 
 	workerCtx, cancel := context.WithCancel(ctx)
-	lr, err := r.launchConn(workerCtx, frameID, wsPath)
+	lr, err := r.launchConn(workerCtx, frameID, wsPath, issue.ID)
 	if err != nil {
 		cancel()
 		return scheduler.LiveSession{}, err
@@ -244,7 +244,7 @@ func (r *Runner) renderPrompt(issue tracker.Issue, attempt int) (string, error) 
 	return rendered, nil
 }
 
-func (r *Runner) launchConn(ctx context.Context, frameID, wsPath string) (*launchResult, error) {
+func (r *Runner) launchConn(ctx context.Context, frameID, wsPath, issueID string) (*launchResult, error) {
 	plan := agentlaunch.LaunchPlan{
 		Command:  r.Cfg.Codex.Command,
 		Env:      map[string]string{},
@@ -267,11 +267,23 @@ func (r *Runner) launchConn(ctx context.Context, frameID, wsPath string) (*launc
 
 	sessionReady := make(chan sessionIDs, 1)
 	turnDone := make(chan turnResult, 1)
+	activity := r.CodexActivity
+	report := func(a scheduler.CodexActivity) {
+		if activity == nil {
+			return
+		}
+		select {
+		case activity <- a:
+		default:
+		}
+	}
 	h := &turnHandler{
 		conn:         conn,
 		linearClient: r.LinearClient,
 		sessionReady: sessionReady,
 		turnDone:     turnDone,
+		issueID:      issueID,
+		report:       report,
 	}
 
 	doneCh := make(chan struct{})
