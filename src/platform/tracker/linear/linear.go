@@ -24,15 +24,22 @@ type Client struct {
 	http         *http.Client
 }
 
-// New creates a Linear client. activeStates is used by FetchCandidateIssues.
-// terminal states are passed per-call to FetchIssuesByStates by the caller.
+// New creates a Linear client with the SPEC §11.2 network timeout (30s).
+// activeStates is used by FetchCandidateIssues; terminal states are passed
+// per-call to FetchIssuesByStates by the caller.
 func New(endpoint, apiKey, projectSlug string, activeStates []string) *Client {
+	return newClient(endpoint, apiKey, projectSlug, activeStates, &http.Client{Timeout: 30 * time.Second})
+}
+
+// newClient is the injectable constructor; tests supply a custom *http.Client
+// (e.g. a stub transport or a short timeout) to avoid real network waits.
+func newClient(endpoint, apiKey, projectSlug string, activeStates []string, hc *http.Client) *Client {
 	return &Client{
 		endpoint:     endpoint,
 		apiKey:       apiKey,
 		projectSlug:  projectSlug,
 		activeStates: activeStates,
-		http:         &http.Client{Timeout: 30 * time.Second},
+		http:         hc,
 	}
 }
 

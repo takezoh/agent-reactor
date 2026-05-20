@@ -31,7 +31,7 @@ func (m *Manager) AfterRun(ctx context.Context, identifier string) {
 }
 
 // runHook executes script via "sh -lc <script>" with cwd set to the workspace path.
-// The context deadline is extended by hooks.TimeoutMS regardless of the caller's deadline.
+// The hook runs under min(caller deadline, hooks.TimeoutMS).
 // Logs start, failure, and timeout. Returns ErrHookFailed on non-zero exit or timeout.
 // An empty script is a no-op.
 func (m *Manager) runHook(ctx context.Context, name, script, cwd string) error {

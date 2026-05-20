@@ -41,11 +41,14 @@ github.com/takezoh/agent-roost/cmd/roost                           15
 github.com/takezoh/agent-roost/cmd/roost-bridge                     0
 
 # orchestrator/ — Symphony scheduler service
+github.com/takezoh/agent-roost/orchestrator/tracker                85
 github.com/takezoh/agent-roost/orchestrator/wfconfig               70
 github.com/takezoh/agent-roost/orchestrator/workflowfile           95
+github.com/takezoh/agent-roost/orchestrator/workspace              80
 
 # platform/ — shared execution base
 github.com/takezoh/agent-roost/platform/agent/codexclient          60
+github.com/takezoh/agent-roost/platform/tracker/linear             80
 github.com/takezoh/agent-roost/platform/agent/codexschema/v1        0
 github.com/takezoh/agent-roost/platform/agent/codexschema/v2        0
 github.com/takezoh/agent-roost/platform/agentlaunch                63

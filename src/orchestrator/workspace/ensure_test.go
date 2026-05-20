@@ -99,6 +99,35 @@ func TestEnsure_AfterCreate_FailureFatal(t *testing.T) {
 	}
 }
 
+// §9.3: a failed after_create removes the just-created workspace so a later
+// Ensure re-creates it and re-runs after_create (no half-initialized dir).
+func TestEnsure_AfterCreate_FailureRemovesDir(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "marker")
+	// Hook fails on the first run, then succeeds once the marker exists.
+	script := fmt.Sprintf("test -f %s || { touch %s; exit 1; }", marker, marker)
+	m := New(wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: root},
+		Hooks:     wfconfig.HooksConfig{TimeoutMS: 5000, AfterCreate: script},
+	})
+
+	p, _ := m.Path("issue-1")
+	if _, err := m.Ensure(context.Background(), "issue-1"); !errors.Is(err, ErrHookFailed) {
+		t.Fatalf("first Ensure err = %v, want ErrHookFailed", err)
+	}
+	if _, statErr := os.Stat(p); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("workspace must be removed after after_create failure, stat: %v", statErr)
+	}
+
+	// Retry: dir was removed, so createdNow=true again and after_create re-runs (now succeeds).
+	if _, err := m.Ensure(context.Background(), "issue-1"); err != nil {
+		t.Fatalf("retry Ensure should succeed once after_create passes: %v", err)
+	}
+	if _, statErr := os.Stat(p); statErr != nil {
+		t.Errorf("workspace should exist after successful retry, stat: %v", statErr)
+	}
+}
+
 // §17.2: Remove deletes the workspace directory.
 func TestRemove_DeletesDirectory(t *testing.T) {
 	m := newTestManager(t)

@@ -303,14 +303,8 @@ func TestSPEC_17_3_FetchIssueStatesByIDs_EmptyIDs_NoAPICall(t *testing.T) {
 }
 
 // --- Error mapping tests ---
-
-func TestErrorMapping_RequestError(t *testing.T) {
-	c := linear.New("http://127.0.0.1:1", "key", "slug", []string{"Todo"})
-	_, err := c.FetchCandidateIssues(context.Background())
-	if !errors.Is(err, linear.ErrAPIRequest) {
-		t.Errorf("want ErrAPIRequest, got %v", err)
-	}
-}
+// ErrAPIRequest (transport failure) is covered in internal_test.go with an
+// injected failing transport, avoiding a real dial/timeout wait.
 
 func TestErrorMapping_NonHTTP200(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

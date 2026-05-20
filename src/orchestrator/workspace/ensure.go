@@ -23,6 +23,10 @@ func (m *Manager) Ensure(ctx context.Context, identifier string) (string, error)
 
 	if createdNow {
 		if hookErr := m.runHook(ctx, "after_create", m.hooks.AfterCreate, p); hookErr != nil {
+			// §9.3: remove the partially-prepared new workspace so a retry
+			// re-creates it and re-runs after_create (otherwise the dir would
+			// persist and the next Ensure would skip the hook).
+			_ = os.RemoveAll(p)
 			return "", fmt.Errorf("after_create hook: %w", hookErr)
 		}
 	}
