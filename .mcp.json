@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "observability": {
+      "type": "stdio",
+      "command": "/opt/roost/run/roost",
+      "args": ["mcp-exec", "observability"]
+    }
+  }
+}

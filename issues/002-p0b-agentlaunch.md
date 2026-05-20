@@ -1,7 +1,7 @@
 # 002: agentlaunch を runtime/ から platform/ へ抽出
 
 - **Phase**: P0b ([plans/04-phases.md#p0b-agentlaunch-抽出](../plans/04-phases.md))
-- **Status**: Open
+- **Status**: Done
 - **Depends on**: [001](001-p0a-physical-move.md)
 - **Blocks**: 後続の orchestrator 実装で sandbox 配線が必要な Phase (P4 以降)
 
