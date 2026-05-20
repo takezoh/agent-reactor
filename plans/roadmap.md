@@ -3,17 +3,19 @@
 Symphony SPEC 実装の全体ロードマップと進捗。設計の詳細は [04-phases.md](04-phases.md)、
 個別の作業単位は [issues/](../issues/) を参照。
 
-更新日: 2026-05-20
+更新日: 2026-05-21
 
 ## 現在地
 
-**M0–M2 完了。M3 (SPEC 機能完成) は P6–P8a 完了、P8b のみ partial。次は M4 (P9 conformance)。**
-P5 batch (017–019) で claude-app-server shim が完成し、`codex.command` で codex / claude を切替えても
-orchestrator が agent 非依存に動くことを実証（M2 完成）。M3 前半は P6a continuation loop (020)、
-P6b metrics+stall (021)、P7 observability HTTP server (022)、P8a WORKFLOW.md hot reload (023) を実装・archive 済み。
-**P8b `linear_graphql` (024) は handler + wiring まで完了したが、tool の advertise が pinned codex 0.128.0 の
-制約で不能**（`DynamicToolSpec` が schema 上 orphan = request からの `$ref` 参照ゼロ）。handler は forward-compatible
-で、codex schema bump が入れば実機 codex から到達可能になる。残るは **M4 (P9: SPEC §17 conformance + 位置付け doc)**。
+**M0–M4 完了。SPEC §1–§17 を満たす実装が一通り揃った。唯一の残件は P8b の tool advertise（外部要因で blocked）。**
+M2 で claude-app-server shim が完成し `codex.command` での agent 切替を実証。M3 で continuation loop (020)、
+metrics+stall (021)、observability HTTP server (022)、WORKFLOW.md hot reload (023) を実装・archive 済み。
+M4 (P9) で SPEC §17 conformance test 群（canonical `TestSPEC_*` マーカー + §17.8 実 Linear profile）と
+`docs/orchestrator/symphony-conformance.md`（SPEC §17 ↔ test 対応表 + posture）、orchestrator サービスの
+位置付け doc（AGENTS.md / ARCHITECTURE.md）を整備（025/026、archive 済み）。
+**唯一の残件は P8b `linear_graphql` (024) の tool advertise**: handler + wiring は実装済だが、pinned codex 0.128.0 で
+`DynamicToolSpec` が schema 上 orphan（request からの `$ref` 参照ゼロ）のため宣言できず、実機 codex から到達不能。
+codex schema bump が入れば forward-compatible な handler がそのまま機能する（外部要因待ち）。
 
 ## Phase 進捗
 
@@ -43,8 +45,8 @@ P6b metrics+stall (021)、P7 observability HTTP server (022)、P8a WORKFLOW.md h
 | P7 | observability HTTP server (`/`, `/api/v1/*`) | ✅ Done | [022](../issues/.archive/022-p7-http-server.md) |
 | P8a | WORKFLOW.md hot reload (§6.2) | ✅ Done | [023](../issues/.archive/023-p8a-hot-reload.md) |
 | P8b | `linear_graphql` agent tool (native `item/tool/call`, §10.5) | ⚠ Partial — advertise が schema 制約で blocked | [024](../issues/024-p8b-linear-graphql-tool.md) |
-| P9a | SPEC §17 conformance test 群 + conformance 表 | ⬜ Next | [025](../issues/025-p9a-conformance-suite.md) |
-| P9b | orchestrator サービスの位置付け doc (AGENTS.md/ARCHITECTURE.md) | ⬜ Next | [026](../issues/026-p9b-positioning-docs.md) |
+| P9a | SPEC §17 conformance test 群 + conformance 表 | ✅ Done | [025](../issues/.archive/025-p9a-conformance-suite.md) |
+| P9b | orchestrator サービスの位置付け doc (AGENTS.md/ARCHITECTURE.md) | ✅ Done | [026](../issues/.archive/026-p9b-positioning-docs.md) |
 
 ## マイルストーン
 
@@ -54,7 +56,7 @@ P6b metrics+stall (021)、P7 observability HTTP server (022)、P8a WORKFLOW.md h
 | **M1** 最小単線通電 | P1–P3 | 1 issue → codex app-server で 1 turn | ✅ Done |
 | **M2** 多 agent 対応 | P4–P5 | sandbox 配線 + claude / codex 切替 | ✅ Done |
 | **M3** SPEC 機能完成 | P6–P8 | SPEC §1–§16 を満たす | ✅ 実質完了（P8b advertise のみ codex schema 制約で blocked）|
-| **M4** conformance 確認 | P9 | SPEC §17 test pass + 位置付け doc | ▶ Next |
+| **M4** conformance 確認 | P9 | SPEC §17 test pass + 位置付け doc | ✅ Done |
 
 ## P0 で確立した基盤 (現状)
 

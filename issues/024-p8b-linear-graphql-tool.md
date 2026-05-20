@@ -2,9 +2,9 @@
 
 - **Phase**: P8b ([plans/04-phases.md#p8-hot-reload--linear_graphql-tool](../plans/04-phases.md))
 - **Status**: Partial — handler + wiring Done。**advertise は pinned codex 0.128.0 では実装不能**（§B の調査結果参照）。実機 codex から到達可能になるのは schema bump 後
-- **Depends on**: 008 (merged; Linear adapter/auth)、P0b/P0c (merged; `platform/mcpproxy`)
+- **Depends on**: 008 (merged; Linear adapter/auth)、P0c (merged; codexclient `item/tool/call`)
 - **並行可**: P5 と独立。agent 向けだが codex protocol native tool のため agent 種別（codex/claude）に依存しない
-- **Blocks**: M3
+- **Blocks**: なし。残件（advertise）は codex schema bump 待ちの外部要因で、M3/M4 は本 advertise 抜きで完了済
 
 ## Background
 

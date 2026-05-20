@@ -1,7 +1,7 @@
 # 026: orchestrator サービスの位置付けを agent-roost doc に追記
 
 - **Phase**: P9b ([plans/04-phases.md#p9-conformance-tests--docs](../plans/04-phases.md))
-- **Status**: Open
+- **Status**: Done (2026-05-21)
 - **Depends on**: M3 機能完成（P6–P8a 済）。[025](025-p9a-conformance-suite.md)（conformance 表）先行が望ましいが独立着手可
 - **Blocks**: M4 完成
 
