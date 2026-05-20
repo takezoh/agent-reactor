@@ -27,6 +27,9 @@ func Resolve(raw map[string]any, workflowDir string) (Config, error) {
 	if err := decodeCodex(raw, &c); err != nil {
 		return Config{}, err
 	}
+	if err := decodeServer(raw, &c); err != nil {
+		return Config{}, err
+	}
 	applyDefaults(&c, raw)
 	expandFields(&c)
 	normalizeWorkspaceRoot(&c, workflowDir)
@@ -194,6 +197,29 @@ func decodeAgent(raw map[string]any, c *Config) error {
 	if s, ok := m["max_retry_backoff_ms"]; ok {
 		if c.Agent.MaxRetryBackoffMS, err = coerceInt(s); err != nil {
 			return fmt.Errorf("agent.max_retry_backoff_ms: %w", err)
+		}
+	}
+	return nil
+}
+
+func decodeServer(raw map[string]any, c *Config) error {
+	v, ok := raw["server"]
+	if !ok {
+		return nil
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return fmt.Errorf("%w: server must be a map", ErrConfigCoerce)
+	}
+	var err error
+	if s, ok := m["port"]; ok {
+		if c.Server.Port, err = coerceInt(s); err != nil {
+			return fmt.Errorf("server.port: %w", err)
+		}
+	}
+	if s, ok := m["bind"]; ok {
+		if c.Server.Bind, err = coerceString(s); err != nil {
+			return fmt.Errorf("server.bind: %w", err)
 		}
 	}
 	return nil

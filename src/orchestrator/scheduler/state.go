@@ -102,6 +102,11 @@ type StateSnapshot struct {
 	Running       map[string]RunAttempt
 	Claimed       map[string]struct{}
 	RetryAttempts map[string]RetryEntry
+
+	// CodexTotals and CodexSecondsRunning are lifetime cumulative token/runtime aggregates
+	// across all issues (ended + currently-running). Populated by Snapshot (§13.5, B'').
+	CodexTotals         metrics.Totals
+	CodexSecondsRunning float64
 }
 
 // State is the orchestrator runtime state (SPEC §4.1.8 OrchestratorRuntimeState).
@@ -112,6 +117,13 @@ type State struct {
 	claimed       map[string]struct{}
 	retryAttempts map[string]RetryEntry
 	usage         map[string]*metrics.Accumulator // per-issue token bookkeeping (§13.5 (b))
+	runtime       map[string]time.Duration        // per-issue cumulative runtime across retries (§13.5 B'')
+
+	// codexTotals / codexRuntime accumulate ended-session contributions (§13.5 B'').
+	// Live-session contributions are added at Snapshot time from usage/runtime maps.
+	// Roll-up happens at ReleaseClaim (terminal); retry exits keep accumulators alive.
+	codexTotals  metrics.Totals
+	codexRuntime time.Duration
 }
 
 // NewState returns an initialized State.
@@ -121,5 +133,6 @@ func NewState() *State {
 		claimed:       make(map[string]struct{}),
 		retryAttempts: make(map[string]RetryEntry),
 		usage:         make(map[string]*metrics.Accumulator),
+		runtime:       make(map[string]time.Duration),
 	}
 }

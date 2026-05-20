@@ -345,7 +345,10 @@ func TestRecordUsage_NoopForUnknownID(t *testing.T) {
 	s.RecordUsage("unknown", metrics.Usage{ThreadID: "t1", Input: 100}) // must not panic
 }
 
-func TestRecordUsage_AccumulatorCleanedUpOnExit(t *testing.T) {
+// TestRecordUsage_AccumulatorPersistsAcrossContinuation verifies §13.5 B” semantics:
+// the per-issue accumulator survives WorkerExitNormal so that a resumed thread's
+// absolute-cumulative reports do not double-count previously observed totals.
+func TestRecordUsage_AccumulatorPersistsAcrossContinuation(t *testing.T) {
 	s := NewState()
 	issue := testIssue("id23", "PROJ-23")
 	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
@@ -354,16 +357,113 @@ func TestRecordUsage_AccumulatorCleanedUpOnExit(t *testing.T) {
 	s.RecordUsage("id23", metrics.Usage{ThreadID: "t1", Input: 100, Output: 50, Total: 150})
 	s.WorkerExitNormal("id23")
 
-	// Re-dispatch: accumulator must start fresh (no stale lastSeen).
+	// Re-dispatch with same thread continuing (higher absolute).
 	if err := s.Dispatch(issue, 2, LiveSession{}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	s.RecordUsage("id23", metrics.Usage{ThreadID: "t1", Input: 50, Output: 20, Total: 70})
+	// Thread resumes: reports 50 more input, 20 more output (absolute 150/70/220).
+	s.RecordUsage("id23", metrics.Usage{ThreadID: "t1", Input: 150, Output: 70, Total: 220})
 	snap := s.Snapshot()
 	run := snap.Running["id23"]
-	if run.TotalInputTokens != 50 || run.TotalOutputTokens != 20 || run.TotalTokens != 70 {
-		t.Errorf("stale accumulator: got %d/%d/%d, want 50/20/70",
+	// Lifetime totals: first segment 100/50/150 + second-segment delta 50/20/70 = 150/70/220.
+	if run.TotalInputTokens != 150 || run.TotalOutputTokens != 70 || run.TotalTokens != 220 {
+		t.Errorf("wrong lifetime total: got %d/%d/%d, want 150/70/220",
 			run.TotalInputTokens, run.TotalOutputTokens, run.TotalTokens)
+	}
+	// CodexTotals live contribution: same issue is still running, so ended counter is 0.
+	if snap.CodexTotals.Input != 150 || snap.CodexTotals.Total != 220 {
+		t.Errorf("CodexTotals wrong: got input=%d total=%d, want 150/220",
+			snap.CodexTotals.Input, snap.CodexTotals.Total)
+	}
+}
+
+// TestCodexTotals_RollupOnReleaseClaim verifies that terminal release (ReleaseClaim) rolls up
+// the per-issue accumulator into the State-level lifetime counter (§13.5 B”).
+func TestCodexTotals_RollupOnReleaseClaim(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id30", "PROJ-30")
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	s.RecordUsage("id30", metrics.Usage{ThreadID: "t1", Input: 200, Output: 80, Total: 280})
+	s.AddRuntime("id30", 10*time.Second)
+
+	// Before release: live contribution visible in snapshot.
+	snapBefore := s.Snapshot()
+	if snapBefore.CodexTotals.Input != 200 {
+		t.Errorf("before release: got CodexTotals.Input=%d, want 200", snapBefore.CodexTotals.Input)
+	}
+	if snapBefore.CodexSecondsRunning != 10.0 {
+		t.Errorf("before release: got CodexSecondsRunning=%v, want 10", snapBefore.CodexSecondsRunning)
+	}
+
+	s.ReleaseClaim("id30")
+
+	// After release: ended counter carries the rolled-up totals; no live entry.
+	snapAfter := s.Snapshot()
+	if snapAfter.CodexTotals.Input != 200 || snapAfter.CodexTotals.Total != 280 {
+		t.Errorf("after release: got CodexTotals input=%d total=%d, want 200/280",
+			snapAfter.CodexTotals.Input, snapAfter.CodexTotals.Total)
+	}
+	if snapAfter.CodexSecondsRunning != 10.0 {
+		t.Errorf("after release: got CodexSecondsRunning=%v, want 10", snapAfter.CodexSecondsRunning)
+	}
+}
+
+// TestCodexTotals_NoDoubleCountAcrossRetry verifies that a continuation retry followed by
+// terminal release does not double-count tokens (§13.5 B”).
+func TestCodexTotals_NoDoubleCountAcrossRetry(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id31", "PROJ-31")
+
+	// Attempt 1: thread reports 100 tokens absolute.
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	s.RecordUsage("id31", metrics.Usage{ThreadID: "t1", Input: 100, Output: 40, Total: 140})
+	s.WorkerExitNormal("id31")
+
+	// Attempt 2: same thread resumes, reports 150 absolute (50 more).
+	if err := s.Dispatch(issue, 2, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	s.RecordUsage("id31", metrics.Usage{ThreadID: "t1", Input: 150, Output: 60, Total: 210})
+
+	// Terminal release: should roll up accumulated 150/60/210 once.
+	s.ReleaseClaim("id31")
+
+	snap := s.Snapshot()
+	if snap.CodexTotals.Input != 150 || snap.CodexTotals.Total != 210 {
+		t.Errorf("double-counted: got input=%d total=%d, want 150/210",
+			snap.CodexTotals.Input, snap.CodexTotals.Total)
+	}
+}
+
+// TestCodexTotals_RuntimePersistsAcrossRetry verifies per-turn runtime survives continuation.
+func TestCodexTotals_RuntimePersistsAcrossRetry(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id32", "PROJ-32")
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	s.AddRuntime("id32", 5*time.Second)
+	s.WorkerExitNormal("id32")
+
+	// Re-dispatch, add more runtime in segment 2.
+	if err := s.Dispatch(issue, 2, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	s.AddRuntime("id32", 3*time.Second)
+
+	snap := s.Snapshot()
+	if snap.CodexSecondsRunning != 8.0 {
+		t.Errorf("got CodexSecondsRunning=%v, want 8", snap.CodexSecondsRunning)
+	}
+
+	s.ReleaseClaim("id32")
+	snapFinal := s.Snapshot()
+	if snapFinal.CodexSecondsRunning != 8.0 {
+		t.Errorf("after release: got %v, want 8", snapFinal.CodexSecondsRunning)
 	}
 }
 

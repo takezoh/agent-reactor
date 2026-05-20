@@ -153,6 +153,24 @@ func (s *Scheduler) CodexActivity() chan<- CodexActivity {
 	return s.codexActivity
 }
 
+// Snapshot returns a read-only copy of the current scheduler state (SPEC §7.3).
+// Safe to call concurrently with Run.
+func (s *Scheduler) Snapshot() StateSnapshot {
+	return s.state.Snapshot()
+}
+
+// Refresh queues an immediate poll+reconcile tick. Returns true when the request
+// was coalesced with a pending one (i.e. the signal channel was already full).
+// The operation is best-effort and non-blocking.
+func (s *Scheduler) Refresh() (coalesced bool) {
+	select {
+	case s.reloadCh <- struct{}{}:
+		return false
+	default:
+		return true
+	}
+}
+
 // handleWorkerExit processes a worker-exit notification from the agent runner.
 // It releases the scheduler slot and schedules a continuation or backoff retry.
 func (s *Scheduler) handleWorkerExit(ctx context.Context, w WorkerExit) {

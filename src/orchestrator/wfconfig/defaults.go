@@ -14,6 +14,7 @@ func applyDefaults(c *Config, raw map[string]any) {
 	hooks, _ := raw["hooks"].(map[string]any)
 	agent, _ := raw["agent"].(map[string]any)
 	codex, _ := raw["codex"].(map[string]any)
+	server, _ := raw["server"].(map[string]any)
 
 	applyTrackerDefaults(c, tracker)
 	if _, ok := polling["interval_ms"]; !ok {
@@ -33,6 +34,15 @@ func applyDefaults(c *Config, raw map[string]any) {
 	}
 	applyAgentDefaults(c, agent)
 	applyCodexDefaults(c, codex)
+	applyServerDefaults(c, server)
+}
+
+func applyServerDefaults(c *Config, server map[string]any) {
+	if _, ok := server["bind"]; !ok {
+		if c.Server.Bind == "" {
+			c.Server.Bind = "127.0.0.1"
+		}
+	}
 }
 
 func applyTrackerDefaults(c *Config, tracker map[string]any) {

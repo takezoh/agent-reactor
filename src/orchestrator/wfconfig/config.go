@@ -11,6 +11,14 @@ type Config struct {
 	Hooks     HooksConfig
 	Agent     AgentConfig
 	Codex     CodexConfig
+	Server    ServerConfig
+}
+
+// ServerConfig holds §13.7 HTTP observability server settings.
+// Port 0 means the server is disabled unless overridden by the CLI --port flag.
+type ServerConfig struct {
+	Port int    // TCP port; 0 = disabled, positive = listen on that port, ephemeral via net.Listen
+	Bind string // bind address, default 127.0.0.1 (loopback)
 }
 
 // TrackerConfig holds §5.3.1 tracker settings.

@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/takezoh/agent-roost/orchestrator/agent"
+	"github.com/takezoh/agent-roost/orchestrator/httpserver"
 	"github.com/takezoh/agent-roost/orchestrator/scheduler"
 	"github.com/takezoh/agent-roost/orchestrator/tracker"
 	"github.com/takezoh/agent-roost/orchestrator/wfconfig"
@@ -31,10 +32,18 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("orchestrator", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	workflow := fs.String("workflow", "./WORKFLOW.md", "path to WORKFLOW.md")
-	port := fs.Int("port", 0, "HTTP server port (future)")
+	port := fs.Int("port", 0, "HTTP server port (0 = disabled unless set in WORKFLOW.md)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+
+	// Detect whether --port was explicitly supplied on the command line.
+	portExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "port" {
+			portExplicit = true
+		}
+	})
 
 	if err := logger.Init("info"); err != nil {
 		fmt.Fprintf(stderr, "orchestrator: logger init: %v\n", err)
@@ -42,7 +51,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	}
 	defer logger.Close()
 
-	slog.Info("orchestrator starting", "workflow", *workflow, "port", *port)
+	slog.Info("orchestrator starting", "workflow", *workflow)
 
 	absPath, err := filepath.Abs(*workflow)
 	if err != nil {
@@ -79,6 +88,10 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	}
 	defer cleanup()
 
+	if err := maybeStartHTTPServer(ctx, sched, cfg, portExplicit, *port, stderr); err != nil {
+		return 1
+	}
+
 	if err := sched.Run(ctx); err != nil {
 		fmt.Fprintf(stderr, "orchestrator: scheduler: %v\n", err)
 		slog.Error("scheduler error", "err", err)
@@ -87,6 +100,29 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 
 	slog.Info("orchestrator stopped")
 	return 0
+}
+
+// maybeStartHTTPServer resolves the effective port and starts the HTTP server if enabled.
+// portExplicit indicates whether --port was explicitly provided on the CLI.
+func maybeStartHTTPServer(ctx context.Context, sched *scheduler.Scheduler, cfg wfconfig.Config, portExplicit bool, cliPort int, stderr io.Writer) error {
+	effectivePort := cfg.Server.Port
+	if portExplicit {
+		effectivePort = cliPort
+	}
+	if effectivePort == 0 {
+		return nil
+	}
+	srv, err := httpserver.New(
+		httpserver.Config{Bind: cfg.Server.Bind, Port: effectivePort},
+		httpserver.NewMux(sched, cfg.Workspace.Root),
+	)
+	if err != nil {
+		fmt.Fprintf(stderr, "orchestrator: http server: %v\n", err)
+		slog.Error("http server setup failed", "err", err)
+		return err
+	}
+	go srv.Serve(ctx)
+	return nil
 }
 
 // buildScheduler wires the tracker, agent dispatcher, and scheduler together.

@@ -75,6 +75,8 @@ func (s *State) UpdateIssueSnapshot(issueID string, issue tracker.Issue) {
 // WorkerExitNormal records a clean worker exit and returns a continuation RetryEntry (SPEC §7.3).
 // The caller (issue 012) sets DueAtMS to the 1s fixed delay before enqueueing.
 // Returns (zero, false) if issueID is not in running.
+// usage and runtime accumulators are kept alive across continuation so the resumed thread's
+// absolute-cumulative reports do not double-count (§13.5 B”).
 func (s *State) WorkerExitNormal(issueID string) (RetryEntry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -85,7 +87,7 @@ func (s *State) WorkerExitNormal(issueID string) (RetryEntry, bool) {
 	}
 	delete(s.running, issueID)
 	delete(s.claimed, issueID)
-	delete(s.usage, issueID)
+	// usage and runtime intentionally kept for cross-retry accumulation (§13.5 B'').
 
 	return RetryEntry{
 		IssueID:    issueID,
@@ -98,6 +100,8 @@ func (s *State) WorkerExitNormal(issueID string) (RetryEntry, bool) {
 // WorkerExitAbnormal records an abnormal worker exit and returns a backoff RetryEntry (SPEC §7.3).
 // The caller (issue 012) sets DueAtMS to the exponential delay before enqueueing.
 // Returns (zero, false) if issueID is not in running.
+// usage and runtime accumulators are kept alive so resumed threads (new or continuing) do not
+// double-count previously-accumulated totals (§13.5 B”).
 func (s *State) WorkerExitAbnormal(issueID string, err error, attempt int) (RetryEntry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -108,7 +112,7 @@ func (s *State) WorkerExitAbnormal(issueID string, err error, attempt int) (Retr
 	}
 	delete(s.running, issueID)
 	delete(s.claimed, issueID)
-	delete(s.usage, issueID)
+	// usage and runtime intentionally kept for cross-retry accumulation (§13.5 B'').
 
 	return RetryEntry{
 		IssueID:    issueID,
@@ -120,6 +124,8 @@ func (s *State) WorkerExitAbnormal(issueID string, err error, attempt int) (Retr
 }
 
 // ReleaseClaim removes an issue from all tracking maps, returning it to Unclaimed (SPEC §7.3).
+// It rolls up any accumulated token and runtime totals into the State-level lifetime counters
+// before deleting per-issue accumulators (§13.5 B”).
 func (s *State) ReleaseClaim(issueID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -127,7 +133,18 @@ func (s *State) ReleaseClaim(issueID string) {
 	delete(s.running, issueID)
 	delete(s.claimed, issueID)
 	delete(s.retryAttempts, issueID)
-	delete(s.usage, issueID)
+
+	if acc, ok := s.usage[issueID]; ok {
+		t := acc.Snapshot()
+		s.codexTotals.Input += t.Input
+		s.codexTotals.Output += t.Output
+		s.codexTotals.Total += t.Total
+		delete(s.usage, issueID)
+	}
+	if rt, ok := s.runtime[issueID]; ok {
+		s.codexRuntime += rt
+		delete(s.runtime, issueID)
+	}
 }
 
 // EnqueueRetry registers a retry entry for an issue (SPEC §7.3).
@@ -195,6 +212,7 @@ func (s *State) RecordRateLimit(issueID string, rl metrics.RateLimitSnapshot) {
 }
 
 // AddRuntime accumulates one completed turn's duration for §13.5 runtime aggregation.
+// Updates both the per-run display field and the cross-retry persistent runtime map (B”).
 // No-op if issueID is not running or d is non-positive.
 func (s *State) AddRuntime(issueID string, d time.Duration) {
 	s.mu.Lock()
@@ -206,11 +224,14 @@ func (s *State) AddRuntime(issueID string, d time.Duration) {
 	}
 	if d > 0 {
 		run.TotalRuntime += d
+		s.runtime[issueID] += d
 	}
 	s.running[issueID] = run
 }
 
 // Snapshot returns a deep-copy read-only view of the current state (SPEC §7.3).
+// CodexTotals and CodexSecondsRunning reflect lifetime cumulative values:
+// ended-session contributions (codexTotals/codexRuntime) plus all live accumulators (§13.5 B”).
 func (s *State) Snapshot() StateSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -223,5 +244,21 @@ func (s *State) Snapshot() StateSnapshot {
 	maps.Copy(snap.Running, s.running)
 	maps.Copy(snap.Claimed, s.claimed)
 	maps.Copy(snap.RetryAttempts, s.retryAttempts)
+
+	totals := s.codexTotals
+	for _, acc := range s.usage {
+		t := acc.Snapshot()
+		totals.Input += t.Input
+		totals.Output += t.Output
+		totals.Total += t.Total
+	}
+	snap.CodexTotals = totals
+
+	rt := s.codexRuntime
+	for _, d := range s.runtime {
+		rt += d
+	}
+	snap.CodexSecondsRunning = rt.Seconds()
+
 	return snap
 }
