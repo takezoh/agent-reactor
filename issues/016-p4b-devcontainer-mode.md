@@ -1,7 +1,7 @@
 # 016: orchestrator/agent — devcontainer/sandbox mode + host↔container path translation
 
 - **Phase**: P4b ([plans/04-phases.md#p4-codexclient-経由--sandbox-配線](../plans/04-phases.md))
-- **Status**: Open
+- **Status**: Done (commit 9f26029, 2026-05-20)
 - **Depends on**: 015 (Dispatcher seam)、P0b (merged; `platform/agentlaunch` の `DevcontainerLauncher`)
 - **Blocks**: M2 (多 agent 対応の前提)、P5 (claude-app-server shim を container 内で動かす)
 
