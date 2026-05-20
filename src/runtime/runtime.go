@@ -14,13 +14,13 @@ import (
 	"log/slog"
 	"net"
 	"reflect"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/takezoh/agent-roost/config"
 	"github.com/takezoh/agent-roost/features"
 	"github.com/takezoh/agent-roost/lib/pathmap"
+	"github.com/takezoh/agent-roost/runtime/framereg"
 	rsubsystem "github.com/takezoh/agent-roost/runtime/subsystem"
 	clisubsystem "github.com/takezoh/agent-roost/runtime/subsystem/cli"
 	cstream "github.com/takezoh/agent-roost/runtime/subsystem/stream"
@@ -120,38 +120,37 @@ type Runtime struct {
 	workspaceResolver *config.WorkspaceResolver
 
 	// sandboxCleanups holds WrappedLaunch.Cleanup callbacks keyed by FrameID.
-	// Protected by sandboxCleanupsMu because storeFrameCleanup is called from
-	// goroutines (spawnTmuxWindowAsync) while invoke/drain run in the event loop.
-	sandboxCleanupsMu sync.Mutex
-	sandboxCleanups   map[state.FrameID]func() error
+	// Owned exclusively by the event loop; written via handleSpawnComplete and
+	// bootstrap paths (pre-Run), read/cleared by invokeFrameCleanup /
+	// drainFrameCleanups — both on the loop or at shutdown.
+	sandboxCleanups map[state.FrameID]func() error
 
-	// containerTokens holds per-frame bearer tokens for the container endpoint.
-	containerTokens tokenStore
+	// frameReg maps container bearer tokens and bind-mount tables to frames.
+	// The event loop is the single writer; container endpoint HTTP handlers
+	// read concurrently. All reads/writes outside the loop go through the
+	// RWMutex inside framereg.Registry.
+	frameReg *framereg.Registry
 	// containerEndpoints holds one *containerEndpoint per project path.
-	// Access via sync.Map to allow concurrent startup from spawn goroutines.
-	containerEndpoints sync.Map // string (project path) → *containerEndpoint
-	// containerMounts holds the pathmap.Mounts for each frame that was launched
-	// inside a devcontainer. Used by the container endpoint to translate
-	// container-absolute paths to host-absolute paths in hook payloads.
-	containerMounts sync.Map // state.FrameID → pathmap.Mounts
+	// Owned by the event loop (started via startContainerEndpointIfNeeded
+	// which is called only from dispatchInternal / bootstrap paths).
+	containerEndpoints map[string]*containerEndpoint
 
 	// warmFrames persists warm-only per-frame state (container tokens) to
 	// <dataDir>/warm/ so they survive daemon warm restarts.
 	warmFrames *warmFrameStore
 
-	// subsystems holds every live Subsystem instance keyed by its opaque
-	// SubsystemID. Subsystems are environment-aware (host vs container);
-	// the runtime keeps them as opaque values and routes lifecycle calls
-	// uniformly. Access via sync.Map because spawnTmuxWindowAsync runs in
-	// goroutines.
-	subsystems sync.Map // state.SubsystemID → rsubsystem.Subsystem
+	// subsystems holds every live Subsystem keyed by SubsystemID.
+	// Owned exclusively by the event loop; populated via handleSpawnComplete
+	// and bootstrap paths (pre-Run).
+	subsystems map[state.SubsystemID]rsubsystem.Subsystem
 	// subsystemFactories is the static dispatch table from LaunchSubsystem
 	// kind to the Factory that constructs Backends for that kind. Populated
 	// once in New; never mutated thereafter.
 	subsystemFactories map[state.LaunchSubsystem]rsubsystem.Factory
-	// frameSubsystems tracks which subsystem owns each live frame,
-	// keyed by FrameID → subsystem.Subsystem. Used to route ReleaseFrame.
-	frameSubsystems sync.Map // state.FrameID → subsystem.Subsystem
+	// frameSubsystems tracks which subsystem owns each live frame.
+	// Owned exclusively by the event loop; populated via handleSpawnComplete
+	// and bootstrap paths (pre-Run).
+	frameSubsystems map[state.FrameID]rsubsystem.Subsystem
 }
 
 // New constructs a Runtime ready for Run. Backends must be set on the
@@ -197,15 +196,19 @@ func New(cfg Config) *Runtime {
 	initial := state.New()
 	initial.Features = cfg.Features
 	r := &Runtime{
-		cfg:               cfg,
-		state:             initial,
-		sessionPanes:      map[state.FrameID]string{},
-		eventCh:           make(chan state.Event, 256),
-		internalCh:        make(chan internalEvent, 64),
-		conns:             map[state.ConnID]*ipcConn{},
-		done:              make(chan struct{}),
-		workspaceResolver: config.NewWorkspaceResolver(),
-		sandboxCleanups:   map[state.FrameID]func() error{},
+		cfg:                cfg,
+		state:              initial,
+		sessionPanes:       map[state.FrameID]string{},
+		eventCh:            make(chan state.Event, 256),
+		internalCh:         make(chan internalEvent, 64),
+		conns:              map[state.ConnID]*ipcConn{},
+		done:               make(chan struct{}),
+		workspaceResolver:  config.NewWorkspaceResolver(),
+		sandboxCleanups:    map[state.FrameID]func() error{},
+		frameReg:           framereg.New(),
+		containerEndpoints: map[string]*containerEndpoint{},
+		subsystems:         map[state.SubsystemID]rsubsystem.Subsystem{},
+		frameSubsystems:    map[state.FrameID]rsubsystem.Subsystem{},
 	}
 	if cfg.Pool != nil {
 		r.workers = cfg.Pool
@@ -308,12 +311,7 @@ func (r *Runtime) Enqueue(ev state.Event) {
 // used by the container endpoint to translate container paths to host paths.
 // Returns (nil, false) for non-sandbox frames.
 func (r *Runtime) MountsForFrame(frameID state.FrameID) (pathmap.Mounts, bool) {
-	v, ok := r.containerMounts.Load(frameID)
-	if !ok {
-		return nil, false
-	}
-	ms, ok := v.(pathmap.Mounts)
-	return ms, ok
+	return r.frameReg.GetMounts(frameID)
 }
 
 // SetRelay registers a FileRelay with the runtime via the event loop.

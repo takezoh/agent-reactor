@@ -36,14 +36,17 @@ linters:
       forbid-default-patterns: false
       patterns:
         - pattern: 'sync\.Mutex'
-          pkg: github\.com/takezoh/agent-roost/state
-          msg: "state/ is a pure functional core — no mutexes allowed"
+          msg: "prefer lock-free ownership model; if this is a leaf I/O component, add nolint:forbidigo with a reason"
         - pattern: 'sync\.RWMutex'
-          pkg: github\.com/takezoh/agent-roost/state
-          msg: "state/ is a pure functional core — no mutexes allowed"
-      # NOTE: "go" keyword (goroutines) cannot be detected by forbidigo because it matches
-      # CallExpr nodes only; GoStmt is invisible to it. The "no goroutines in state/" rule
-      # is enforced by code review. A custom staticcheck analyzer would be needed to automate it.
+          msg: "prefer lock-free ownership model; if this is a single-writer registry, put it in a sub-package (e.g. framereg)"
+        - pattern: 'sync\.Map'
+          msg: "sync.Map is banned; use plain maps owned by one goroutine or a dedicated registry sub-package"
+      # NOTE: forbidigo matches CallExpr nodes only — it cannot catch type declarations
+      # or struct field types (var mu sync.Mutex / struct{ mu sync.Mutex }). These are
+      # caught at code review time. The patterns above fire on incorrect *uses* such as
+      # mu.Lock() / mu.Unlock() calls (still useful as a secondary signal), not on
+      # declarations. The structural enforcement (off-loop goroutines hold spawnDeps not
+      # *Runtime) is the primary guard — see ARCHITECTURE.md "Single event loop" principle.
 
     depguard:
       rules:

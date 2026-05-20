@@ -10,32 +10,21 @@ import (
 
 	"github.com/takezoh/agent-roost/lib/pathmap"
 	"github.com/takezoh/agent-roost/proto"
+	"github.com/takezoh/agent-roost/runtime/framereg"
 	"github.com/takezoh/agent-roost/state"
 )
 
-func newTestContainerEndpoint(t *testing.T) (ep *containerEndpoint, sockPath string, events chan state.Event) {
+// newTestRegistry creates a framereg.Registry with one registered frame token.
+// Returns the registry and the token string.
+func newTestRegistry(t *testing.T, frameID state.FrameID) (*framereg.Registry, string) {
 	t.Helper()
-	dir := t.TempDir()
-	sockPath = filepath.Join(dir, "roost.sock")
-	events = make(chan state.Event, 8)
-
-	var tokens tokenStore
-	frameID := state.FrameID("test-frame")
-	token, err := tokens.Generate(frameID)
+	tok, err := generateToken()
 	if err != nil {
-		t.Fatalf("token generate: %v", err)
+		t.Fatalf("generateToken: %v", err)
 	}
-	t.Logf("test token: %s → %s", token, frameID)
-
-	ep, err = startContainerEndpoint(sockPath, &tokens, func(ev state.Event) {
-		events <- ev
-	}, nil)
-	if err != nil {
-		t.Fatalf("startContainerEndpoint: %v", err)
-	}
-	t.Cleanup(func() { ep.close() })
-
-	return ep, sockPath, events
+	reg := framereg.New()
+	reg.Register(frameID, tok)
+	return reg, tok
 }
 
 func sendRawCommand(t *testing.T, sockPath string, cmd proto.Command) (proto.Envelope, error) {
@@ -64,29 +53,16 @@ func sendRawCommand(t *testing.T, sockPath string, cmd proto.Command) (proto.Env
 }
 
 func TestContainerEndpointAcceptsHookEvent(t *testing.T) {
-	_, sockPath, events := newTestContainerEndpoint(t)
-
-	var tokens tokenStore
-	frameID := state.FrameID("test-frame")
-	token, _ := tokens.Generate(frameID)
-
-	// Use the real token stored in the endpoint's tokenStore by re-reading it.
-	// Recreate: we need the token that was generated in newTestContainerEndpoint.
-	// Simplest approach: create fresh endpoint with known token.
 	dir := t.TempDir()
 	sp2 := filepath.Join(dir, "roost.sock")
-	var ts2 tokenStore
 	fid2 := state.FrameID("frame-hook")
-	tok2, _ := ts2.Generate(fid2)
+	reg2, tok2 := newTestRegistry(t, fid2)
 	evCh := make(chan state.Event, 4)
-	ep2, err := startContainerEndpoint(sp2, &ts2, func(ev state.Event) { evCh <- ev }, nil)
+	ep2, err := startContainerEndpoint(sp2, reg2, func(ev state.Event) { evCh <- ev })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	t.Cleanup(ep2.close)
-	_ = token
-	_ = sockPath
-	_ = events
 
 	payload, _ := json.Marshal(map[string]string{"result": "ok"})
 	env, err := sendRawCommand(t, sp2, proto.CmdHookEvent{
@@ -138,8 +114,7 @@ func TestContainerEndpointRejectsUnknownCommands(t *testing.T) {
 
 	dir := t.TempDir()
 	sp := filepath.Join(dir, "roost.sock")
-	var ts tokenStore
-	ep, err := startContainerEndpoint(sp, &ts, func(state.Event) {}, nil)
+	ep, err := startContainerEndpoint(sp, framereg.New(), func(state.Event) {})
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -164,9 +139,8 @@ func TestContainerEndpointRejectsUnknownCommands(t *testing.T) {
 func TestContainerEndpointRejectsInvalidToken(t *testing.T) {
 	dir := t.TempDir()
 	sp := filepath.Join(dir, "roost.sock")
-	var ts tokenStore
-	ts.Generate(state.FrameID("f1"))
-	ep, err := startContainerEndpoint(sp, &ts, func(state.Event) {}, nil)
+	reg, _ := newTestRegistry(t, "f1")
+	ep, err := startContainerEndpoint(sp, reg, func(state.Event) {})
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -190,12 +164,11 @@ func TestContainerEndpointRejectsInvalidToken(t *testing.T) {
 func TestContainerEndpointRejectsRevokedToken(t *testing.T) {
 	dir := t.TempDir()
 	sp := filepath.Join(dir, "roost.sock")
-	var ts tokenStore
 	fid := state.FrameID("frame-revoked")
-	tok, _ := ts.Generate(fid)
-	ts.Revoke(fid)
+	reg, tok := newTestRegistry(t, fid)
+	reg.Delete(fid)
 
-	ep, err := startContainerEndpoint(sp, &ts, func(state.Event) {}, nil)
+	ep, err := startContainerEndpoint(sp, reg, func(state.Event) {})
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -218,13 +191,9 @@ func TestTranslatePayloadPaths(t *testing.T) {
 		{Host: "/home/u/myapp", Container: "/workspaces/myapp"},
 	}
 	frameID := state.FrameID("f1")
-	getMounts := func(id state.FrameID) (pathmap.Mounts, bool) {
-		if id == frameID {
-			return ms, true
-		}
-		return nil, false
-	}
-	ep := &containerEndpoint{getMounts: getMounts}
+	reg := framereg.New()
+	reg.StoreMounts(frameID, ms)
+	ep := &containerEndpoint{reg: reg}
 
 	t.Run("cwd translated to host and container_cwd preserved", func(t *testing.T) {
 		payload, _ := json.Marshal(map[string]string{
@@ -316,22 +285,16 @@ func TestContainerEndpointTranslatesCwd(t *testing.T) {
 	dir := t.TempDir()
 	sp := filepath.Join(dir, "roost.sock")
 
-	var ts tokenStore
 	frameID := state.FrameID("frame-translate")
-	tok, _ := ts.Generate(frameID)
+	reg, tok := newTestRegistry(t, frameID)
 
 	ms := pathmap.Mounts{
 		{Host: "/home/u/proj", Container: "/workspaces/proj"},
 	}
-	getMounts := func(id state.FrameID) (pathmap.Mounts, bool) {
-		if id == frameID {
-			return ms, true
-		}
-		return nil, false
-	}
+	reg.StoreMounts(frameID, ms)
 
 	evCh := make(chan state.Event, 4)
-	ep, err := startContainerEndpoint(sp, &ts, func(ev state.Event) { evCh <- ev }, getMounts)
+	ep, err := startContainerEndpoint(sp, reg, func(ev state.Event) { evCh <- ev })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -368,8 +331,7 @@ func TestContainerEndpointTranslatesCwd(t *testing.T) {
 func TestContainerEndpointSocketPermissions(t *testing.T) {
 	dir := t.TempDir()
 	sp := filepath.Join(dir, "roost.sock")
-	var ts tokenStore
-	ep, err := startContainerEndpoint(sp, &ts, func(state.Event) {}, nil)
+	ep, err := startContainerEndpoint(sp, framereg.New(), func(state.Event) {})
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}

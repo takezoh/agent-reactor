@@ -11,6 +11,7 @@ import (
 
 	"github.com/takezoh/agent-roost/lib/pathmap"
 	"github.com/takezoh/agent-roost/proto"
+	"github.com/takezoh/agent-roost/runtime/framereg"
 	"github.com/takezoh/agent-roost/state"
 )
 
@@ -28,13 +29,12 @@ const (
 // in each CmdHookEvent. A valid token resolves to the FrameID of the
 // spawning frame, which becomes the event SenderID.
 type containerEndpoint struct {
-	listener  net.Listener
-	tokens    *tokenStore
-	enqueue   func(state.Event)
-	getMounts func(state.FrameID) (pathmap.Mounts, bool)
+	listener net.Listener
+	reg      *framereg.Registry
+	enqueue  func(state.Event)
 }
 
-func startContainerEndpoint(sockPath string, tokens *tokenStore, enqueue func(state.Event), getMounts func(state.FrameID) (pathmap.Mounts, bool)) (*containerEndpoint, error) {
+func startContainerEndpoint(sockPath string, reg *framereg.Registry, enqueue func(state.Event)) (*containerEndpoint, error) {
 	_ = os.Remove(sockPath)
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -46,7 +46,7 @@ func startContainerEndpoint(sockPath string, tokens *tokenStore, enqueue func(st
 		_ = ln.Close()
 		return nil, err
 	}
-	ep := &containerEndpoint{listener: ln, tokens: tokens, enqueue: enqueue, getMounts: getMounts}
+	ep := &containerEndpoint{listener: ln, reg: reg, enqueue: enqueue}
 	go ep.accept()
 	slog.Info("runtime: container endpoint listening", "sock", sockPath)
 	return ep, nil
@@ -108,7 +108,7 @@ func (ep *containerEndpoint) handleHook(w *bufio.Writer, env proto.Envelope) {
 		}
 	}
 
-	frameID, ok := ep.tokens.Lookup(cmd.Token)
+	frameID, ok := ep.reg.Lookup(cmd.Token)
 	if !ok {
 		containerWriteError(w, env.ReqID, proto.ErrInvalidArgument, "invalid token")
 		return
@@ -144,7 +144,7 @@ func (ep *containerEndpoint) handleSubsystem(w *bufio.Writer, env proto.Envelope
 		}
 	}
 
-	frameID, ok := ep.tokens.Lookup(cmd.Token)
+	frameID, ok := ep.reg.Lookup(cmd.Token)
 	if !ok {
 		containerWriteError(w, env.ReqID, proto.ErrInvalidArgument, "invalid token")
 		return
@@ -181,10 +181,10 @@ func (ep *containerEndpoint) handleSubsystem(w *bufio.Writer, env proto.Envelope
 // depends on the container-side working directory (e.g. transcript project dir).
 // Fields without a registered mount (non-sandbox frames) are left unchanged.
 func (ep *containerEndpoint) translatePayloadPaths(frameID state.FrameID, payload json.RawMessage) json.RawMessage {
-	if ep.getMounts == nil || len(payload) == 0 {
+	if len(payload) == 0 {
 		return payload
 	}
-	ms, ok := ep.getMounts(frameID)
+	ms, ok := ep.reg.GetMounts(frameID)
 	if !ok || len(ms) == 0 {
 		return payload
 	}
@@ -214,11 +214,9 @@ func (ep *containerEndpoint) translateSubsystemPayload(frameID state.FrameID, ra
 			return p, err
 		}
 	}
-	if ep.getMounts != nil {
-		if ms, ok := ep.getMounts(frameID); ok && len(ms) > 0 {
-			translateSubsystemToolPaths(&p, ms)
-			translateSubsystemDiffPaths(&p, ms)
-		}
+	if ms, ok := ep.reg.GetMounts(frameID); ok && len(ms) > 0 {
+		translateSubsystemToolPaths(&p, ms)
+		translateSubsystemDiffPaths(&p, ms)
 	}
 	return p, nil
 }
@@ -308,33 +306,29 @@ func translateTranscriptField(frameID state.FrameID, fields map[string]json.RawM
 	return false
 }
 
-// startContainerEndpointIfNeeded starts the container endpoint for the
-// given project at sockPath if one is not already running. At most one
-// endpoint per project path. Thread-safe.
+// startContainerEndpointIfNeeded starts the container endpoint for the given
+// project at sockPath if one is not already running. Must be called from
+// the event loop (containerEndpoints is a loop-owned plain map).
 func (r *Runtime) startContainerEndpointIfNeeded(project, sockPath string) {
-	// Claim the slot with a sentinel to prevent concurrent startups.
-	sentinel := &containerEndpoint{}
-	if _, loaded := r.containerEndpoints.LoadOrStore(project, sentinel); loaded {
+	if _, exists := r.containerEndpoints[project]; exists {
 		return
 	}
-	ep, err := startContainerEndpoint(sockPath, &r.containerTokens, r.Enqueue, r.MountsForFrame)
+	ep, err := startContainerEndpoint(sockPath, r.frameReg, r.Enqueue)
 	if err != nil {
 		slog.Error("runtime: container endpoint start failed", "project", project, "sock", sockPath, "err", err)
-		r.containerEndpoints.Delete(project)
 		return
 	}
-	r.containerEndpoints.Store(project, ep)
+	r.containerEndpoints[project] = ep
 }
 
 // shutdownContainerEndpoints closes all active container endpoint listeners.
 // Called from shutdownIPC.
 func (r *Runtime) shutdownContainerEndpoints() {
-	r.containerEndpoints.Range(func(_, v any) bool {
-		if ep, ok := v.(*containerEndpoint); ok && ep.listener != nil {
+	for _, ep := range r.containerEndpoints {
+		if ep.listener != nil {
 			ep.close()
 		}
-		return true
-	})
+	}
 }
 
 func containerWriteOK(w *bufio.Writer, reqID string) {

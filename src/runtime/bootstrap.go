@@ -371,10 +371,10 @@ func (r *Runtime) RecoverSandboxFrames() {
 				continue
 			}
 			if cleanup != nil {
-				r.storeFrameCleanup(frame.ID, cleanup)
+				r.sandboxCleanups[frame.ID] = cleanup
 			}
 			if len(mounts) > 0 {
-				r.containerMounts.Store(frame.ID, mounts)
+				r.frameReg.StoreMounts(frame.ID, mounts)
 			}
 			// Start the container endpoint for sandboxed frames so hook events
 			// can be received immediately after daemon warm restart.
@@ -419,7 +419,7 @@ func (r *Runtime) recoverWarmTokens(liveFrames map[string]struct{}) {
 			continue
 		}
 		if st.ContainerToken != "" {
-			r.containerTokens.Register(state.FrameID(st.FrameID), st.ContainerToken)
+			r.frameReg.Register(state.FrameID(st.FrameID), st.ContainerToken)
 		}
 	}
 }

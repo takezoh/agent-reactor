@@ -27,7 +27,10 @@ type FileRelay struct {
 	mu      sync.Mutex
 	watcher *fsnotify.Watcher
 	files   map[string]*relayFile
-	rt      *Runtime
+	// send routes wire bytes to the event loop via internalBroadcastWire.
+	// The goroutines must not call broadcastWire directly because conns and
+	// state.Subscribers are owned exclusively by the event loop.
+	send func(internalEvent)
 
 	stop chan struct{}
 	wg   sync.WaitGroup
@@ -44,6 +47,8 @@ type relayFile struct {
 const relaySweepInterval = 100 * time.Millisecond
 
 // NewFileRelay creates and starts a file relay for the given runtime.
+// Only rt.enqueueInternal is captured; the goroutines hold no *Runtime
+// reference so they cannot touch loop-owned state directly.
 func NewFileRelay(rt *Runtime) (*FileRelay, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -52,7 +57,7 @@ func NewFileRelay(rt *Runtime) (*FileRelay, error) {
 	fr := &FileRelay{
 		watcher: w,
 		files:   map[string]*relayFile{},
-		rt:      rt,
+		send:    rt.enqueueInternal,
 		stop:    make(chan struct{}),
 	}
 	fr.wg.Add(2)
@@ -196,10 +201,7 @@ func (fr *FileRelay) sweep() {
 		if content == "" {
 			continue
 		}
-		fr.mu.Lock()
-		f.offset = newOffset
-		fr.mu.Unlock()
-
+		f.offset = newOffset // safe: sweepLoop is the sole writer of offset
 		fr.broadcast(f, content)
 	}
 }
@@ -246,5 +248,5 @@ func (fr *FileRelay) broadcast(f *relayFile, content string) {
 	if err != nil {
 		return
 	}
-	fr.rt.broadcastWire(wire, event.EventName())
+	fr.send(internalBroadcastWire{wire: wire, eventName: event.EventName()})
 }

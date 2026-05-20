@@ -4,25 +4,44 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/takezoh/agent-roost/lib/pathmap"
 	"github.com/takezoh/agent-roost/state"
 )
 
 // storeFrameCleanup registers a sandbox cleanup callback for a frame.
-// Called from goroutines (spawnTmuxWindowAsync) so the map access is mutex-guarded.
+// No-op when fn is nil. Must be called from the event loop or bootstrap (pre-Run) only.
 func (r *Runtime) storeFrameCleanup(frameID state.FrameID, fn func() error) {
-	r.sandboxCleanupsMu.Lock()
+	if fn == nil {
+		return
+	}
 	r.sandboxCleanups[frameID] = fn
-	r.sandboxCleanupsMu.Unlock()
+}
+
+// registerContainerFrame atomically registers the container token and mounts,
+// starts the endpoint if needed, and schedules the warm-frame persist in a
+// goroutine so the event loop is not blocked on disk I/O.
+// Must be called from the event loop or bootstrap (pre-Run) only.
+func (r *Runtime) registerContainerFrame(frameID state.FrameID, project, sockDir, token string, mounts pathmap.Mounts) {
+	r.frameReg.RegisterWithMounts(frameID, token, mounts)
+	r.startContainerEndpointIfNeeded(project, ContainerSockPath(sockDir))
+	if r.warmFrames == nil {
+		return
+	}
+	wf := WarmFrameState{FrameID: string(frameID), ContainerToken: token}
+	wfStore := r.warmFrames
+	go func() {
+		if err := wfStore.Save(wf); err != nil {
+			slog.Warn("runtime: warm frame save failed", "frame", frameID, "err", err)
+		}
+	}()
 }
 
 // invokeFrameCleanup retrieves the registered sandbox cleanup for the frame,
 // removes it from the map, and runs it in a goroutine so the event loop is not blocked.
 func (r *Runtime) invokeFrameCleanup(frameID state.FrameID) {
-	r.containerMounts.Delete(frameID)
-	r.sandboxCleanupsMu.Lock()
+	r.frameReg.Delete(frameID)
 	fn := r.sandboxCleanups[frameID]
 	delete(r.sandboxCleanups, frameID)
-	r.sandboxCleanupsMu.Unlock()
 	if fn == nil {
 		return
 	}
@@ -37,10 +56,8 @@ func (r *Runtime) invokeFrameCleanup(frameID state.FrameID) {
 // waits for them to finish. Called at daemon shutdown before the launcher
 // itself is shut down.
 func (r *Runtime) drainFrameCleanups() {
-	r.sandboxCleanupsMu.Lock()
 	fns := r.sandboxCleanups
 	r.sandboxCleanups = map[state.FrameID]func() error{}
-	r.sandboxCleanupsMu.Unlock()
 	var wg sync.WaitGroup
 	for frameID, fn := range fns {
 		wg.Add(1)

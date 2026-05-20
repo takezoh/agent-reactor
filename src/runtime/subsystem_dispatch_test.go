@@ -41,54 +41,53 @@ func (f *fakeFactory) Ensure(_ context.Context, _ string, _ state.LaunchPlan) (r
 }
 
 func TestEnsureSubsystemDispatchesByKind(t *testing.T) {
-	r := &Runtime{}
-	a := &fakeSubsystem{id: "fake:a", kind: state.LaunchSubsystem("a")}
-	b := &fakeSubsystem{id: "fake:b", kind: state.LaunchSubsystem("b")}
-	r.subsystemFactories = map[state.LaunchSubsystem]rsubsystem.Factory{
-		state.LaunchSubsystem("a"): &fakeFactory{sub: a},
-		state.LaunchSubsystem("b"): &fakeFactory{sub: b},
+	factories := map[state.LaunchSubsystem]rsubsystem.Factory{
+		state.LaunchSubsystem("a"): &fakeFactory{sub: &fakeSubsystem{id: "fake:a", kind: state.LaunchSubsystem("a")}},
+		state.LaunchSubsystem("b"): &fakeFactory{sub: &fakeSubsystem{id: "fake:b", kind: state.LaunchSubsystem("b")}},
 	}
+	a := factories[state.LaunchSubsystem("a")].(*fakeFactory).sub
+	b := factories[state.LaunchSubsystem("b")].(*fakeFactory).sub
 
-	sub, id, err := r.ensureSubsystem(context.Background(), state.LaunchSubsystem("a"), "/p", state.LaunchPlan{})
+	sub, id, err := ensureSubsystemOnce(context.Background(), factories, state.LaunchSubsystem("a"), "/p", state.LaunchPlan{})
 	if err != nil || sub != a || id != "fake:a" {
 		t.Fatalf("kind a: got (%v, %q, %v), want (a, fake:a, nil)", sub, id, err)
 	}
-	sub, id, err = r.ensureSubsystem(context.Background(), state.LaunchSubsystem("b"), "/p", state.LaunchPlan{})
+	sub, id, err = ensureSubsystemOnce(context.Background(), factories, state.LaunchSubsystem("b"), "/p", state.LaunchPlan{})
 	if err != nil || sub != b || id != "fake:b" {
 		t.Fatalf("kind b: got (%v, %q, %v), want (b, fake:b, nil)", sub, id, err)
 	}
 }
 
 func TestEnsureSubsystemUnknownKindErrors(t *testing.T) {
-	r := &Runtime{
-		subsystemFactories: map[state.LaunchSubsystem]rsubsystem.Factory{},
-	}
-	_, _, err := r.ensureSubsystem(context.Background(), state.LaunchSubsystem("unknown"), "/p", state.LaunchPlan{})
+	factories := map[state.LaunchSubsystem]rsubsystem.Factory{}
+	_, _, err := ensureSubsystemOnce(context.Background(), factories, state.LaunchSubsystem("unknown"), "/p", state.LaunchPlan{})
 	if err == nil {
 		t.Fatal("expected error for unknown kind")
 	}
 }
 
 func TestEnsureSubsystemEmptyKindDefaultsToCLI(t *testing.T) {
-	r := &Runtime{}
 	a := &fakeSubsystem{id: "cli:default", kind: state.LaunchSubsystemCLI}
-	r.subsystemFactories = map[state.LaunchSubsystem]rsubsystem.Factory{
+	factories := map[state.LaunchSubsystem]rsubsystem.Factory{
 		state.LaunchSubsystemCLI: &fakeFactory{sub: a},
 	}
-	sub, _, err := r.ensureSubsystem(context.Background(), "", "/p", state.LaunchPlan{})
+	sub, _, err := ensureSubsystemOnce(context.Background(), factories, "", "/p", state.LaunchPlan{})
 	if err != nil || sub != a {
 		t.Fatalf("got (%v, %v), want (a, nil)", sub, err)
 	}
 }
 
 func TestReleaseFrameSandboxesStopsAllSubsystems(t *testing.T) {
-	r := &Runtime{
-		sandboxCleanups: map[state.FrameID]func() error{},
-	}
 	a := &fakeSubsystem{id: "a", kind: state.LaunchSubsystemCLI}
 	b := &fakeSubsystem{id: "b", kind: state.LaunchSubsystemStream}
-	r.subsystems.Store(a.id, a)
-	r.subsystems.Store(b.id, b)
+	r := &Runtime{
+		sandboxCleanups: map[state.FrameID]func() error{},
+		subsystems: map[state.SubsystemID]rsubsystem.Subsystem{
+			a.id: a,
+			b.id: b,
+		},
+		frameSubsystems: map[state.FrameID]rsubsystem.Subsystem{},
+	}
 
 	r.execute(state.EffReleaseFrameSandboxes{})
 

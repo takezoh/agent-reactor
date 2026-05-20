@@ -2,8 +2,6 @@ package runtime
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
@@ -176,12 +174,4 @@ func (r *CredProxyRunner) ContainerSpec(ctx context.Context, projectPath string)
 		out.BridgeSpecs = append(out.BridgeSpecs, s.BridgeSpecs...)
 	}
 	return out, nil
-}
-
-func generateToken() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(buf), nil
 }

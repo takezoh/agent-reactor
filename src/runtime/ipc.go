@@ -11,7 +11,9 @@ import (
 	"os"
 	"sync"
 
+	"github.com/takezoh/agent-roost/lib/pathmap"
 	"github.com/takezoh/agent-roost/proto"
+	rsubsystem "github.com/takezoh/agent-roost/runtime/subsystem"
 	"github.com/takezoh/agent-roost/state"
 )
 
@@ -25,7 +27,8 @@ type ipcConn struct {
 	outbox  chan []byte
 	done    chan struct{}
 	once    sync.Once
-	writeMu sync.Mutex
+	writeMu sync.Mutex //nolint:forbidigo // leaf I/O: ipcConn is a single-conn handler, writeMu serialises concurrent Send calls
+	writer  *bufio.Writer
 }
 
 const ipcOutboxSize = 64
@@ -36,6 +39,7 @@ func newIPCConn(id state.ConnID, conn net.Conn) *ipcConn {
 		conn:   conn,
 		outbox: make(chan []byte, ipcOutboxSize),
 		done:   make(chan struct{}),
+		writer: bufio.NewWriter(conn),
 	}
 }
 
@@ -134,6 +138,34 @@ type internalStartRestoredTaps struct{}
 
 func (internalStartRestoredTaps) isInternalEvent() {}
 
+// internalBroadcastWire is enqueued by FileRelay.broadcast so that the
+// wire bytes are sent from the event loop, not the sweep goroutine. This
+// keeps conns/state.Subscribers exclusively owned by the loop.
+type internalBroadcastWire struct {
+	wire      []byte
+	eventName string
+}
+
+func (internalBroadcastWire) isInternalEvent() {}
+
+// internalSpawnComplete is enqueued by the spawn goroutine after a
+// tmux window has been successfully created. The event loop stores all
+// I/O handles (subsystem, cleanup, token, mounts) into loop-owned maps
+// and then dispatches state.EvTmuxPaneSpawned.
+type internalSpawnComplete struct {
+	effect           state.EffSpawnTmuxWindow
+	subsystemID      state.SubsystemID
+	sub              rsubsystem.Subsystem
+	cleanup          func() error
+	token            string         // empty for non-container frames
+	mounts           pathmap.Mounts // nil for non-container frames
+	containerSockDir string         // raw ContainerSockDir from WrappedLaunch; empty for non-container
+	paneID           string
+	bindResult       rsubsystem.BindResult
+}
+
+func (internalSpawnComplete) isInternalEvent() {}
+
 // dispatchInternal handles runtime-internal events.
 func (r *Runtime) dispatchInternal(ev internalEvent) {
 	switch e := ev.(type) {
@@ -145,8 +177,11 @@ func (r *Runtime) dispatchInternal(ev internalEvent) {
 		r.relay = e.relay
 		r.syncRelayWatches()
 	case internalStartRestoredTaps:
-		_ = e
 		r.startRestoredTaps()
+	case internalBroadcastWire:
+		r.broadcastWire(e.wire, e.eventName)
+	case internalSpawnComplete:
+		r.handleSpawnComplete(e)
 	}
 }
 
@@ -290,7 +325,7 @@ func (r *Runtime) writeWire(cc *ipcConn, wire []byte) error {
 	default:
 	}
 
-	w := bufio.NewWriter(cc.conn)
+	w := cc.writer
 	if _, err := w.Write(wire); err != nil {
 		return err
 	}
