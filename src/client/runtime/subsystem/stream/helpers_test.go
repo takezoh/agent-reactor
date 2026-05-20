@@ -239,13 +239,6 @@ func TestFirstNonEmpty(t *testing.T) {
 	}
 }
 
-func TestMustJSON(t *testing.T) {
-	raw := mustJSON(map[string]string{"a": "b"})
-	if string(raw) != `{"a":"b"}` {
-		t.Errorf("got %s", raw)
-	}
-}
-
 func TestItemType(t *testing.T) {
 	if got := itemType([]byte(`{"item":{"type":"x"}}`)); got != "x" {
 		t.Errorf("got %q", got)

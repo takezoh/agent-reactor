@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/takezoh/agent-roost/client/runtime/subsystem"
 	"github.com/takezoh/agent-roost/client/state"
@@ -33,6 +34,9 @@ type FactoryConfig struct {
 	// ActiveFrameID returns the currently active FrameID; used by Backends
 	// to route events to the foreground frame.
 	ActiveFrameID func() state.FrameID
+	// ReadTimeout overrides the per-request JSON-RPC timeout.  Zero uses the
+	// default (15 seconds).  Corresponds to the codex.read_timeout_ms config key.
+	ReadTimeout time.Duration
 }
 
 // Factory creates Stream Backends keyed by (sandbox mode × project). Sandbox
@@ -81,6 +85,7 @@ func (f *Factory) Ensure(ctx context.Context, project string, plan state.LaunchP
 		container,
 		LoopbackPort,
 		f.cfg.ActiveFrameID,
+		f.cfg.ReadTimeout,
 	)
 
 	f.mu.Lock()

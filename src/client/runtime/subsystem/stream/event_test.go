@@ -10,7 +10,7 @@ import (
 func newTestBackend() (*Backend, *fakeRuntime) {
 	fr := &fakeRuntime{}
 	b := New(fr, "sid", "/p", "codex", nil, "", false, false, "/sock", "/csock", 0,
-		func() state.FrameID { return "" })
+		func() state.FrameID { return "" }, 0)
 	return b, fr
 }
 
@@ -105,7 +105,7 @@ func TestHandleAgentMessageDeltaIgnored(t *testing.T) {
 
 func TestHandleNotificationUnknownMethodIsNoop(t *testing.T) {
 	b, fr := newTestBackend()
-	b.handleNotification(rpcMessage{Method: "unknown/method", Params: []byte(`{}`)})
+	b.handleNotification("unknown/method", []byte(`{}`))
 	if len(fr.events) != 0 {
 		t.Errorf("unknown method should emit nothing, got %d events", len(fr.events))
 	}
@@ -119,7 +119,7 @@ func TestHandleNotificationRoutesToHandlers(t *testing.T) {
 	b.mu.Unlock()
 
 	for _, method := range []string{"turn/started", "turn/plan/updated", "turn/diff/updated"} {
-		b.handleNotification(rpcMessage{Method: method, Params: []byte(`{"threadId":"t1"}`)})
+		b.handleNotification(method, []byte(`{"threadId":"t1"}`))
 	}
 	if len(fr.events) != 3 {
 		t.Errorf("expected 3 events from known methods, got %d", len(fr.events))

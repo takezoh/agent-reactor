@@ -35,3 +35,18 @@ jobs:
 
       - name: lint
         run: go tool golangci-lint run ./...
+
+  schema-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install codex 0.128.0
+        run: npm install -g @openai/codex@0.128.0
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Check schema drift
+        working-directory: .
+        run: make codex-schema-check

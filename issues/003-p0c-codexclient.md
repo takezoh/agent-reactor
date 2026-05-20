@@ -1,7 +1,7 @@
 # 003: codexclient と codexschema を stream/ から platform/agent/ へ抽出
 
 - **Phase**: P0c ([plans/04-phases.md#p0c-codexclient-抽出](../plans/04-phases.md))
-- **Status**: Open
+- **Status**: Closed
 - **Depends on**: [001](001-p0a-physical-move.md)
 - **Blocks**: orchestrator agent 統合 (P4)、claude-app-server shim (P5)
 
@@ -15,56 +15,56 @@
 
 ### A. codexschema 新設
 
-- [ ] `src/platform/agent/codexschema/` 新設
-- [ ] 現在 link している Codex app-server schema (version) を確認し、`codex app-server generate-json-schema --out <dir>` で取得した JSON を pin commit:
-  - [ ] `v2/ThreadStartParams.json`
-  - [ ] `v2/TurnStartParams.json`
-  - [ ] 関連 enum (AskForApproval, SandboxMode, SandboxPolicy 等)
-- [ ] Go 構造体に decode する型を生成 (手書き or codegen)
-- [ ] `codexschema/README.md` に pin している version と更新手順を明示
+- [x] `src/platform/agent/codexschema/` 新設
+- [x] 現在 link している Codex app-server schema (version) を確認し、`codex app-server generate-json-schema --out <dir>` で取得した JSON を pin commit:
+  - [x] `v2/ThreadStartParams.json`
+  - [x] `v2/TurnStartParams.json`
+  - [x] 関連 enum (AskForApproval, SandboxMode, SandboxPolicy 等)
+- [x] Go 構造体に decode する型を生成 (手書き or codegen)
+- [x] `codexschema/README.md` に pin している version と更新手順を明示
 
 ### B. codexclient 抽出
 
-- [ ] `src/platform/agent/codexclient/` 新設
-- [ ] `client/runtime/subsystem/stream/` 内のプロトコル層を抽出:
-  - [ ] stdio JSON-RPC framing (client-side)
-  - [ ] message 型 (codexschema を参照)
-  - [ ] request/response timeout (`codex.read_timeout_ms`)
-  - [ ] turn event stream の reader
-- [ ] **server-side helper も同時に提供**:
-  - [ ] incoming JSON-RPC のデコード
-  - [ ] event emission helper (`turn_completed`, `turn_failed`, etc.)
-  - [ ] claude-app-server shim から利用するための API
-- [ ] subsystem 固有 (BindFrame, ReleaseFrame, frame ID 等) は **抽出対象外**。runtime 側に残す
+- [x] `src/platform/agent/codexclient/` 新設
+- [x] `client/runtime/subsystem/stream/` 内のプロトコル層を抽出:
+  - [x] stdio JSON-RPC framing (client-side)
+  - [x] message 型 (codexschema を参照)
+  - [x] request/response timeout (`codex.read_timeout_ms`)
+  - [x] turn event stream の reader
+- [x] **server-side helper も同時に提供**:
+  - [x] incoming JSON-RPC のデコード
+  - [x] event emission helper (`turn_completed`, `turn_failed`, etc.)
+  - [x] claude-app-server shim から利用するための API
+- [x] subsystem 固有 (BindFrame, ReleaseFrame, frame ID 等) は **抽出対象外**。runtime 側に残す
 
 ### C. client/runtime/subsystem/stream/ のアダプタ化
 
-- [ ] `stream/` を `platform/agent/codexclient/` を使う薄い実装に書き換え
-- [ ] frame ↔ thread の対応付けは引き続き `stream/` 内で管理
-- [ ] sockbridge / shared codex backend の概念は `stream/` に残す
+- [x] `stream/` を `platform/agent/codexclient/` を使う薄い実装に書き換え
+- [x] frame ↔ thread の対応付けは引き続き `stream/` 内で管理
+- [x] sockbridge / shared codex backend の概念は `stream/` に残す
 
 ### D. drift detection CI
 
-- [ ] CI step を追加:
+- [x] CI step を追加:
   ```sh
   codex app-server generate-json-schema --out /tmp/codex-schema-out
   diff -r platform/agent/codexschema/<schema-dir>/ /tmp/codex-schema-out/
   ```
-- [ ] diff 検出時は CI fail させる (schema bump は明示的 PR で)
-- [ ] `Makefile` に `codex-schema-update` target を追加 (手元で pin を更新する手順)
+- [x] diff 検出時は CI fail させる (schema bump は明示的 PR で)
+- [x] `Makefile` に `codex-schema-update` target を追加 (手元で pin を更新する手順)
 
 ### E. boundary
 
-- [ ] depguard ルール:
+- [x] depguard ルール:
   - `platform/agent/codexclient/` は `platform/agent/codexschema/` `platform/logger/` のみ依存可
   - `client/*` `orchestrator/*` を import 禁止
-- [ ] roost の `runtime/isolation_test.go` 相当を更新
+- [x] roost の `runtime/isolation_test.go` 相当を更新
 
 ### F. テスト
 
-- [ ] codexclient のプロトコル framing test (round-trip)
-- [ ] server-side helper の test (claude-app-server shim から使うシナリオを模倣)
-- [ ] 既存 stream subsystem の test が通ることを確認
+- [x] codexclient のプロトコル framing test (round-trip)
+- [x] server-side helper の test (claude-app-server shim から使うシナリオを模倣)
+- [x] 既存 stream subsystem の test が通ることを確認
 
 ## Acceptance Criteria
 

@@ -15,14 +15,14 @@ const (
 	LoopbackPort = driver.CodexAppServerLoopbackPort
 )
 
-// CommandConfig is the parsed form of a "codex [flags]" launch command.
+// CommandConfig is the parsed form of a codex launch command string.
 type CommandConfig struct {
 	ServerBin  string
 	ServerArgs []string
 	Model      string
 }
 
-// ParseCommand parses a "codex [flags]" launch command string into a CommandConfig.
+// ParseCommand parses a codex launch command string into a CommandConfig.
 func ParseCommand(command string) (CommandConfig, error) {
 	fields := strings.Fields(command)
 	if len(fields) == 0 || fields[0] != DriverName {

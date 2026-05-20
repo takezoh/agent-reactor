@@ -6,68 +6,67 @@ import (
 	"strings"
 
 	"github.com/takezoh/agent-roost/client/state"
+	"github.com/takezoh/agent-roost/platform/agent/codexschema"
 )
 
-func (b *Backend) handleNotification(msg rpcMessage) {
-	switch msg.Method {
-	case "thread/started":
-		b.handleThreadStarted(msg.Params)
-	case "turn/started":
-		b.emitToThread(extractThreadID(msg.Params), state.SubsystemTurnStarted, func(p *state.SubsystemPayload) {
-			p.TurnID = extractTurnID(msg.Params)
+func (b *Backend) handleNotification(method string, params json.RawMessage) {
+	switch method {
+	case codexschema.MethodThreadStarted:
+		b.handleThreadStarted(params)
+	case codexschema.MethodTurnStarted:
+		b.emitToThread(extractThreadID(params), state.SubsystemTurnStarted, func(p *state.SubsystemPayload) {
+			p.TurnID = extractTurnID(params)
 		})
-	case "turn/completed":
-		b.handleTurnCompleted(msg.Params)
-	case "turn/plan/updated":
-		b.emitToThread(extractThreadID(msg.Params), state.SubsystemPlanUpdated, func(p *state.SubsystemPayload) {
-			p.Plan = &state.SubsystemPlan{Summary: summarizePlan(msg.Params)}
+	case codexschema.MethodTurnCompleted:
+		b.handleTurnCompleted(params)
+	case codexschema.MethodTurnPlanUpdated:
+		b.emitToThread(extractThreadID(params), state.SubsystemPlanUpdated, func(p *state.SubsystemPayload) {
+			p.Plan = &state.SubsystemPlan{Summary: summarizePlan(params)}
 		})
-	case "turn/diff/updated":
-		b.emitToThread(extractThreadID(msg.Params), state.SubsystemDiffUpdated, func(p *state.SubsystemPayload) {
-			p.Diff = &state.SubsystemDiff{Summary: summarizeDiff(msg.Params), Paths: diffPaths(msg.Params)}
+	case codexschema.MethodTurnDiffUpdated:
+		b.emitToThread(extractThreadID(params), state.SubsystemDiffUpdated, func(p *state.SubsystemPayload) {
+			p.Diff = &state.SubsystemDiff{Summary: summarizeDiff(params), Paths: diffPaths(params)}
 		})
-	case "item/started":
-		b.emitItemLifecycle("item/started", msg.Params)
-	case "item/completed":
-		b.emitItemLifecycle("item/completed", msg.Params)
-	case "thread/status/changed":
-		b.handleThreadStatusChanged(msg.Params)
-	case "item/agentMessage/delta":
-		b.handleAgentMessageDelta(msg.Params)
-	case "error":
-		slog.Error("stream backend: app-server error", "subsystem", b.subsystemID, "params", string(msg.Params))
-	case "warning", "guardianWarning", "deprecationNotice":
-		slog.Warn("stream backend: app-server notice", "method", msg.Method, "subsystem", b.subsystemID, "params", string(msg.Params))
+	case codexschema.MethodItemStarted:
+		b.emitItemLifecycle(codexschema.MethodItemStarted, params)
+	case codexschema.MethodItemCompleted:
+		b.emitItemLifecycle(codexschema.MethodItemCompleted, params)
+	case codexschema.MethodThreadStatusChanged:
+		b.handleThreadStatusChanged(params)
+	case codexschema.MethodItemAgentMessageDelta:
+		b.handleAgentMessageDelta(params)
+	case codexschema.MethodError:
+		slog.Error("stream backend: app-server error", "subsystem", b.subsystemID, "params", string(params))
+	case codexschema.MethodWarning, codexschema.MethodGuardianWarning, codexschema.MethodDeprecationNotice:
+		slog.Warn("stream backend: app-server notice", "method", method, "subsystem", b.subsystemID, "params", string(params))
 	}
 }
 
-func (b *Backend) handleRequest(msg rpcMessage) {
-	switch msg.Method {
-	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
-		threadID := extractThreadID(msg.Params)
+func (b *Backend) handleRequest(id int64, method string, params json.RawMessage) {
+	switch method {
+	case codexschema.MethodItemCommandExecutionRequestApproval, codexschema.MethodItemFileChangeRequestApproval:
+		threadID := extractThreadID(params)
 		frameID := b.frameForThread(threadID)
 		if frameID == "" {
 			return
 		}
-		approval := approvalFromParams(msg.Method, msg.Params, b.autoApprove)
+		approval := approvalFromParams(method, params, b.autoApprove)
 		b.emit(frameID, state.SubsystemApprovalRequested, b.payloadWith(frameID, func(p *state.SubsystemPayload) {
 			p.Approval = &approval
 		}))
-		result := "accept"
+		result := codexschema.ApprovalAccept
 		if b.autoApprove {
-			result = "acceptForSession"
+			result = codexschema.ApprovalAcceptForSession
 		}
-		_ = b.reply(*msg.ID, result)
+		_ = b.conn.Reply(id, result)
 		approval.Resolved = true
 		b.emit(frameID, state.SubsystemApprovalResolved, b.payloadWith(frameID, func(p *state.SubsystemPayload) {
 			p.Approval = &approval
 		}))
 	default:
 		slog.Warn("stream backend: rejecting unhandled server request",
-			"method", msg.Method, "subsystem", b.subsystemID)
-		if msg.ID != nil {
-			_ = b.replyError(*msg.ID, "method not supported by roost")
-		}
+			"method", method, "subsystem", b.subsystemID)
+		_ = b.conn.ReplyError(id, "method not supported by roost")
 	}
 }
 

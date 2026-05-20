@@ -293,11 +293,6 @@ func appendHistory(history *[]state.SubsystemTurn, role, text string) {
 	}
 }
 
-func mustJSON(v any) json.RawMessage {
-	b, _ := json.Marshal(v)
-	return b
-}
-
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if strings.TrimSpace(v) != "" {

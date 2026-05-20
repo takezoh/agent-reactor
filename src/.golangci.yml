@@ -140,6 +140,17 @@ linters:
               desc: "runtime/subsystem/ must not import tui (see ARCHITECTURE.md)"
             - pkg: github.com/takezoh/agent-roost/client/connector
               desc: "runtime/subsystem/ must not import connector (see ARCHITECTURE.md)"
+        codexclient-isolation:
+          # codexclient is a reusable platform transport — it must not reach into
+          # client/ or orchestrator/.  codexschema and logger are the only
+          # agent-roost packages it may import.
+          files:
+            - "**/platform/agent/codexclient/**"
+          deny:
+            - pkg: github.com/takezoh/agent-roost/client
+              desc: "codexclient/ must not import client/ (reusable platform layer — see plans/02-layout.md)"
+            - pkg: github.com/takezoh/agent-roost/orchestrator
+              desc: "codexclient/ must not import orchestrator/ (reusable platform layer — see plans/02-layout.md)"
 
     revive:
       rules:

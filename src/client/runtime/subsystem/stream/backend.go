@@ -5,6 +5,7 @@ package stream
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/takezoh/agent-roost/client/runtime/subsystem"
 	"github.com/takezoh/agent-roost/client/state"
+	"github.com/takezoh/agent-roost/platform/agent/codexclient"
 )
 
 const (
@@ -57,16 +58,14 @@ type Backend struct {
 	model         string
 	sandboxed     bool
 	autoApprove   bool
+	readTimeout   time.Duration
 	cmd           *exec.Cmd
-	wsConn        *websocket.Conn
+	conn          *codexclient.Conn
 	sockPath      string // UDS path dialed by daemon (host-side)
 	containerSock string // UDS path inside container
 	hostBridgeCmd *exec.Cmd
 	bridgePort    int
-	writeMu       sync.Mutex
 	mu            sync.Mutex
-	nextID        int64
-	pending       map[int64]chan rpcMessage
 	frames        map[state.FrameID]*frameBinding
 	threads       map[string]state.FrameID
 	activeLookup  func() state.FrameID
@@ -99,6 +98,7 @@ func New(
 	sockPath, containerSock string,
 	bridgePort int,
 	activeLookup func() state.FrameID,
+	readTimeout time.Duration,
 ) *Backend {
 	return &Backend{
 		runtime:       rt,
@@ -109,11 +109,11 @@ func New(
 		model:         model,
 		sandboxed:     sandboxed,
 		autoApprove:   autoApprove,
+		readTimeout:   readTimeout,
 		sockPath:      sockPath,
 		containerSock: containerSock,
 		bridgePort:    bridgePort,
 		activeLookup:  activeLookup,
-		pending:       map[int64]chan rpcMessage{},
 		frames:        map[state.FrameID]*frameBinding{},
 		threads:       map[string]state.FrameID{},
 	}
@@ -139,7 +139,7 @@ func (b *Backend) Start(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	wsConn, err := dialWebSocketUDS(b.sockPath, serverDialTimeout)
+	t, err := codexclient.DialUDS(b.sockPath, serverDialTimeout)
 	if err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
@@ -149,14 +149,14 @@ func (b *Backend) Start(ctx context.Context) error {
 		return err
 	}
 	b.cmd = cmd
-	b.wsConn = wsConn
+	b.conn = codexclient.NewConn(t, b.readTimeout)
 	go func() {
-		if err := b.runReadLoop(); err != nil {
+		if err := b.conn.Run(context.Background(), b); err != nil {
 			slog.Debug("stream backend: read loop closed", "subsystem", b.subsystemID, "err", err)
 		}
 	}()
-	if err := b.initialize(); err != nil {
-		_ = wsConn.Close(websocket.StatusInternalError, "initialize failed")
+	if err := codexclient.Initialize(b.conn); err != nil {
+		_ = b.conn.Close()
 		_ = cmd.Process.Kill()
 		return err
 	}
@@ -164,13 +164,13 @@ func (b *Backend) Start(ctx context.Context) error {
 	// (registered via ContainerBridgeSpec). Host mode: spawn here.
 	isContainer, err := b.isContainerProject(ctx)
 	if err != nil {
-		_ = wsConn.Close(websocket.StatusInternalError, "container check failed")
+		_ = b.conn.Close()
 		_ = cmd.Process.Kill()
 		return err
 	}
 	if !isContainer {
 		if err := b.startHostBridge(); err != nil {
-			_ = wsConn.Close(websocket.StatusInternalError, "host bridge failed")
+			_ = b.conn.Close()
 			_ = cmd.Process.Kill()
 			return fmt.Errorf("stream backend: host bridge: %w", err)
 		}
@@ -237,6 +237,16 @@ func (b *Backend) Stop(_ context.Context) {
 	}
 }
 
+// OnNotification implements codexclient.Handler.
+func (b *Backend) OnNotification(method string, params json.RawMessage) {
+	b.handleNotification(method, params)
+}
+
+// OnServerRequest implements codexclient.Handler.
+func (b *Backend) OnServerRequest(id int64, method string, params json.RawMessage) {
+	b.handleRequest(id, method, params)
+}
+
 func (b *Backend) isContainerProject(ctx context.Context) (bool, error) {
 	cfg, err := b.runtime.ContainerExecConfig(ctx, b.project)
 	return cfg != nil, err
@@ -299,7 +309,7 @@ func (b *Backend) bindThread(frameID state.FrameID, startDir, worktreePath strin
 	}
 	b.mu.Unlock()
 	if opts.ResumeThreadID != "" {
-		raw, err := b.resumeThread(opts.ResumeThreadID, startDir)
+		raw, err := codexclient.ResumeThread(b.conn, opts.ResumeThreadID, startDir)
 		if err != nil {
 			return "", err
 		}
@@ -318,7 +328,7 @@ func (b *Backend) bindThread(frameID state.FrameID, startDir, worktreePath strin
 		b.mu.Unlock()
 		return threadID, nil
 	}
-	if err := b.startTurn("", startDir, stdin); err != nil {
+	if err := codexclient.StartTurn(b.conn, "", startDir, stdin); err != nil {
 		return "", err
 	}
 	return "", nil
@@ -335,7 +345,7 @@ func (b *Backend) waitProcess() {
 		_ = b.hostBridgeCmd.Process.Kill()
 		_ = b.hostBridgeCmd.Wait()
 	}
-	_ = b.wsConn.Close(websocket.StatusNormalClosure, "")
+	_ = b.conn.Close()
 	b.mu.Lock()
 	frameIDs := make([]state.FrameID, 0, len(b.frames))
 	for frameID := range b.frames {

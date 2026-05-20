@@ -75,6 +75,11 @@ type Config struct {
 	// Launcher wraps agent launch plans before they reach tmux, enabling
 	// sandbox implementations. nil falls back to DirectLauncher (no-op).
 	Launcher AgentLauncher
+
+	// StreamReadTimeout overrides the codex app-server JSON-RPC read timeout.
+	// Zero uses the 15 s default in codexclient.NewConn.
+	// Maps to the codex.read_timeout_ms config key.
+	StreamReadTimeout time.Duration
 }
 
 // Runtime owns the event loop goroutine and the side-effect backends.
@@ -234,6 +239,7 @@ func (r *Runtime) registerSubsystemFactories() {
 			IsContainer:      func(project string) bool { return launcher(r.cfg).IsContainer(project) },
 			RunDirKey:        r.streamRunDirKey,
 			ActiveFrameID:    func() state.FrameID { return r.activeFrameID },
+			ReadTimeout:      r.cfg.StreamReadTimeout,
 		}),
 	}
 }

@@ -92,11 +92,6 @@ func TestNoDriverNameLiterals(t *testing.T) {
 	}
 
 	walkChecked(t, checkedDirs, func(t *testing.T, path string, data []byte) {
-		// runtime/subsystem/stream/ is the one site permitted to reference codex
-		// app-server specifics directly — it is the stream subsystem implementation.
-		if strings.Contains(filepath.ToSlash(path), "runtime/subsystem/stream/") {
-			return
-		}
 		for _, name := range forbidden {
 			// Match driver name as a whole word inside any double-quoted string literal.
 			re := regexp.MustCompile(`"[^"\n]*\b` + name + `\b[^"\n]*"`)

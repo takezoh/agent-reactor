@@ -6,7 +6,11 @@ SRC_DIR     := src
 INSTALL_DIR    := $(HOME)/.local/bin
 LIBEXEC_DIR    := $(HOME)/.local/lib/roost
 
-.PHONY: build build-experimental install clean test vet lint verify-bridge-deps
+CODEX_SCHEMA_DIR := $(SRC_DIR)/platform/agent/codexschema
+CODEX_SCHEMA_TMP := /tmp/codex-schema-gen
+
+.PHONY: build build-experimental install clean test vet lint verify-bridge-deps \
+        codex-schema-update codex-schema-check
 
 build:
 	cd $(SRC_DIR) && go build -o ../$(BINARY) ./cmd/roost
@@ -39,3 +43,39 @@ verify-bridge-deps:
 
 clean:
 	rm -f $(BINARY) $(BRIDGE) $(SOCKBRIDGE) $(NOTIFY_PS1)
+
+# codex-schema-check — verify committed bundle files match current codex output.
+# Comparison is done with sorted keys so JSON object ordering doesn't matter.
+# Requires codex and jq in PATH (use mise: `mise use codex@0.128.0`).
+codex-schema-check:
+	@echo "Generating codex JSON Schema into $(CODEX_SCHEMA_TMP)..."
+	@rm -rf $(CODEX_SCHEMA_TMP)
+	codex app-server generate-json-schema --out $(CODEX_SCHEMA_TMP)
+	@echo "Diffing committed bundles against generated output (sorted keys)..."
+	jq --sort-keys . $(CODEX_SCHEMA_DIR)/schema/codex_app_server_protocol.schemas.json > /tmp/_schema_committed.json
+	jq --sort-keys . $(CODEX_SCHEMA_TMP)/codex_app_server_protocol.schemas.json > /tmp/_schema_generated.json
+	diff /tmp/_schema_committed.json /tmp/_schema_generated.json
+	jq --sort-keys . $(CODEX_SCHEMA_DIR)/schema/codex_app_server_protocol.v2.schemas.json > /tmp/_schemav2_committed.json
+	jq --sort-keys . $(CODEX_SCHEMA_TMP)/codex_app_server_protocol.v2.schemas.json > /tmp/_schemav2_generated.json
+	diff /tmp/_schemav2_committed.json /tmp/_schemav2_generated.json
+	@echo "OK: schema bundles are in sync with codex 0.128.0"
+
+# codex-schema-update — regenerate pinned schema bundles and Go types.
+# Run this when upgrading codex. Requires codex and npx (quicktype) in PATH.
+# After running: update the version line in src/platform/agent/codexschema/README.md.
+codex-schema-update:
+	@echo "Generating codex JSON Schema into $(CODEX_SCHEMA_TMP)..."
+	@rm -rf $(CODEX_SCHEMA_TMP)
+	codex app-server generate-json-schema --out $(CODEX_SCHEMA_TMP)
+	@echo "Copying bundle files..."
+	cp $(CODEX_SCHEMA_TMP)/codex_app_server_protocol.schemas.json \
+	   $(CODEX_SCHEMA_DIR)/schema/codex_app_server_protocol.schemas.json
+	cp $(CODEX_SCHEMA_TMP)/codex_app_server_protocol.v2.schemas.json \
+	   $(CODEX_SCHEMA_DIR)/schema/codex_app_server_protocol.v2.schemas.json
+	@echo "Regenerating v1 Go types..."
+	npx quicktype --lang go --package codexschemav1 --src-lang schema \
+	    -o $(CODEX_SCHEMA_DIR)/v1/types.gen.go $(CODEX_SCHEMA_TMP)/v1/*.json
+	@echo "Regenerating v2 Go types..."
+	npx quicktype --lang go --package codexschemav2 --src-lang schema \
+	    -o $(CODEX_SCHEMA_DIR)/v2/types.gen.go $(CODEX_SCHEMA_TMP)/v2/*.json
+	@echo "Done. Update the pinned version in $(CODEX_SCHEMA_DIR)/README.md."

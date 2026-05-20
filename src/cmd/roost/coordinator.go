@@ -134,6 +134,7 @@ func buildRuntime(ctx context.Context, cfg *config.Config, client *tmux.Client, 
 		Tap:               paneTap,
 		Features:          featureSet,
 		Launcher:          agentLauncher,
+		StreamReadTimeout: time.Duration(cfg.Codex.ReadTimeoutMs) * time.Millisecond,
 	})
 	rt.SetAliases(cfg.Session.Aliases)
 	rt.SetDefaultCommand(cfg.Session.DefaultCommand)

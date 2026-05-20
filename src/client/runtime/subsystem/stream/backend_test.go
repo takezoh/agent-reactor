@@ -17,7 +17,7 @@ func (f *fakeRuntime) ContainerExecConfig(context.Context, string) (*ContainerEx
 }
 
 func TestBackendKindAndBridgePort(t *testing.T) {
-	b := New(&fakeRuntime{}, "sid", "/p", "codex", nil, "", false, false, "/sock", "/csock", 1234, nil)
+	b := New(&fakeRuntime{}, "sid", "/p", "codex", nil, "", false, false, "/sock", "/csock", 1234, nil, 0)
 	if b.Kind() != state.LaunchSubsystemStream {
 		t.Errorf("Kind = %v", b.Kind())
 	}
@@ -27,7 +27,7 @@ func TestBackendKindAndBridgePort(t *testing.T) {
 }
 
 func TestReleaseFrameAndLookup(t *testing.T) {
-	b := New(&fakeRuntime{}, "sid", "/p", "codex", nil, "", false, false, "/sock", "/csock", 0, nil)
+	b := New(&fakeRuntime{}, "sid", "/p", "codex", nil, "", false, false, "/sock", "/csock", 0, nil, 0)
 	b.mu.Lock()
 	b.frames["f1"] = &frameBinding{frameID: "f1", threadID: "t1"}
 	b.threads["t1"] = "f1"
@@ -80,7 +80,7 @@ func TestFactoryRange(t *testing.T) {
 }
 
 func TestIsContainerProject(t *testing.T) {
-	b := New(&fakeRuntime{}, "sid", "/p", "codex", nil, "", false, false, "/sock", "/csock", 0, nil)
+	b := New(&fakeRuntime{}, "sid", "/p", "codex", nil, "", false, false, "/sock", "/csock", 0, nil, 0)
 	ok, err := b.isContainerProject(context.Background())
 	if err != nil {
 		t.Fatal(err)

@@ -22,6 +22,14 @@ type Config struct {
 	Features      FeaturesConfig            `toml:"features"`
 	Notifications NotificationsConfig       `toml:"notifications"`
 	Sandbox       SandboxConfig             `toml:"sandbox"`
+	Codex         CodexConfig               `toml:"codex"`
+}
+
+// CodexConfig holds settings for the Codex app-server integration.
+type CodexConfig struct {
+	// ReadTimeoutMs is the per-request JSON-RPC read timeout in milliseconds.
+	// Zero means use the default (15 s).
+	ReadTimeoutMs int `toml:"read_timeout_ms"`
 }
 
 // SandboxConfig controls how agent processes are isolated.
