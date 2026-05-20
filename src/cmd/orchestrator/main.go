@@ -17,6 +17,7 @@ import (
 	"github.com/takezoh/agent-roost/orchestrator/wfconfig"
 	"github.com/takezoh/agent-roost/orchestrator/workflowfile"
 	"github.com/takezoh/agent-roost/orchestrator/workspace"
+	"github.com/takezoh/agent-roost/platform/agentlaunch"
 	"github.com/takezoh/agent-roost/platform/logger"
 )
 
@@ -79,7 +80,9 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	}
 
 	ws := workspace.New(cfg)
-	runner := agent.New(ws, cfg, wf.PromptTemplate)
+	// TODO(016): replace DirectDispatcher with SandboxDispatcher for devcontainer mode.
+	dispatcher := agentlaunch.DirectDispatcher{}
+	runner := agent.New(ws, cfg, wf.PromptTemplate, dispatcher)
 
 	sched := scheduler.New(absPath, cfg, scheduler.Deps{
 		RefreshTracker: tr,

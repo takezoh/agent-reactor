@@ -4,16 +4,22 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 )
 
-// realProc launches "bash -lc cmdLine" with cwd set to cwd and returns its
-// stdout (reader), stdin (writer), and a wait func. The process is tied to ctx;
-// cancelling ctx terminates it via exec.CommandContext. The caller must invoke
-// wait once stdout has been fully read to reap the process.
-func realProc(ctx context.Context, cwd, cmdLine string) (io.ReadCloser, io.WriteCloser, func(), error) {
-	cmd := exec.CommandContext(ctx, "bash", "-lc", cmdLine) //nolint:gosec
-	cmd.Dir = cwd
+// realProc launches "bash -lc command" with Dir=dir and the process environment
+// set to os.Environ() extended by env. Returns stdout, stdin, and a wait func
+// that reaps the process after stdout has been fully drained.
+func realProc(ctx context.Context, dir string, env map[string]string, command string) (io.ReadCloser, io.WriteCloser, func(), error) {
+	cmd := exec.CommandContext(ctx, "bash", "-lc", command) //nolint:gosec
+	cmd.Dir = dir
+
+	merged := os.Environ()
+	for k, v := range env {
+		merged = append(merged, k+"="+v)
+	}
+	cmd.Env = merged
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

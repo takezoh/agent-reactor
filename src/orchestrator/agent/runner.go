@@ -9,6 +9,7 @@ import (
 	"github.com/takezoh/agent-roost/orchestrator/prompt"
 	"github.com/takezoh/agent-roost/orchestrator/scheduler"
 	"github.com/takezoh/agent-roost/platform/agent/codexclient"
+	"github.com/takezoh/agent-roost/platform/agentlaunch"
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
@@ -19,6 +20,7 @@ type launchResult struct {
 	sessionReady <-chan sessionIDs
 	turnDone     <-chan turnResult
 	doneCh       <-chan struct{}
+	cleanup      func(context.Context) error
 }
 
 func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int, emit func(Event)) (scheduler.LiveSession, error) {
@@ -32,8 +34,10 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 		return scheduler.LiveSession{}, err
 	}
 
+	frameID := fmt.Sprintf("%s#%d", issue.Identifier, attempt)
+
 	workerCtx, cancel := context.WithCancel(ctx)
-	lr, err := r.launchConn(workerCtx, wsPath)
+	lr, err := r.launchConn(workerCtx, frameID, wsPath)
 	if err != nil {
 		cancel()
 		return scheduler.LiveSession{}, err
@@ -46,8 +50,8 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 		return scheduler.LiveSession{}, err
 	}
 
-	worker := &Worker{cancel: cancel, done: lr.doneCh}
-	go r.runMonitor(issue.Identifier, ids, lr.turnDone, lr.doneCh, cancel, emit)
+	worker := &Worker{cancel: cancel, done: lr.doneCh, cleanup: lr.cleanup}
+	go r.runMonitor(issue.Identifier, ids, lr.turnDone, lr.doneCh, cancel, worker, emit)
 
 	emit(Event{
 		Kind:      EventSessionStarted,
@@ -80,8 +84,20 @@ func (r *Runner) prepareWorkspace(ctx context.Context, identifier string) (strin
 	return wsPath, nil
 }
 
-func (r *Runner) launchConn(ctx context.Context, wsPath string) (*launchResult, error) {
-	stdout, stdin, wait, err := r.proc(ctx, wsPath, r.Cfg.Codex.Command)
+func (r *Runner) launchConn(ctx context.Context, frameID, wsPath string) (*launchResult, error) {
+	plan := agentlaunch.LaunchPlan{
+		Command:  r.Cfg.Codex.Command,
+		Env:      map[string]string{},
+		StartDir: wsPath,
+		// TODO(016): use actual project root for devcontainer/sandbox routing.
+		Project: r.Cfg.Workspace.Root,
+	}
+	wrapped, err := r.Dispatcher.Wrap(ctx, frameID, plan)
+	if err != nil {
+		return nil, fmt.Errorf("agent: dispatch wrap: %w", err)
+	}
+
+	stdout, stdin, wait, err := r.proc(ctx, wrapped.StartDir, wrapped.Env, wrapped.Command)
 	if err != nil {
 		return nil, err
 	}
@@ -110,6 +126,7 @@ func (r *Runner) launchConn(ctx context.Context, wsPath string) (*launchResult, 
 		sessionReady: sessionReady,
 		turnDone:     turnDone,
 		doneCh:       doneCh,
+		cleanup:      wrapped.Cleanup,
 	}, nil
 }
 
@@ -134,7 +151,7 @@ func initSession(conn *codexclient.Conn, wsPath, rendered string, sessionReady <
 	}
 }
 
-func (r *Runner) runMonitor(identifier string, ids sessionIDs, turnDone <-chan turnResult, doneCh <-chan struct{}, cancel context.CancelFunc, emit func(Event)) {
+func (r *Runner) runMonitor(identifier string, ids sessionIDs, turnDone <-chan turnResult, doneCh <-chan struct{}, cancel context.CancelFunc, worker *Worker, emit func(Event)) {
 	var result turnResult
 
 	// Enforce codex.turn_timeout_ms (§10.3): a turn that neither completes nor
@@ -182,5 +199,7 @@ func (r *Runner) runMonitor(identifier string, ids sessionIDs, turnDone <-chan t
 	// Single-turn (§16.5): stop the session/subprocess, then run after_run
 	// best-effort. cancel triggers conn.Run to return, which reaps the process.
 	cancel()
+	<-doneCh
+	worker.runCleanup()
 	r.Workspace.AfterRun(context.Background(), identifier)
 }

@@ -1,7 +1,7 @@
 # 015: orchestrator/agent — route launch through agentlaunch.Dispatcher (direct mode)
 
 - **Phase**: P4a ([plans/04-phases.md#p4-codexclient-経由--sandbox-配線](../plans/04-phases.md))
-- **Status**: Open
+- **Status**: Done
 - **Depends on**: 013 (merged; agent runner)、P0b (merged; `platform/agentlaunch`)
 - **Blocks**: 016 (devcontainer mode はこの seam を前提にする)
 
@@ -29,28 +29,28 @@ type Dispatcher interface {
 
 ### A. Dispatcher seam を Runner に追加
 
-- [ ] `Runner` に `Dispatcher agentlaunch.Dispatcher` フィールドを追加。`New(...)` の既定は `agentlaunch.DirectDispatcher{SockPath: ...}`（passthrough = 挙動不変）
-- [ ] `frameID` の採番: attempt ごとに一意な識別子（例 `<issue.Identifier>#<attempt>`）。direct mode では Wrap は frameID を使わないが 016/ログのため一貫採番する
-- [ ] `Project` の決定: direct mode では未使用。016 で project root を入れるため、いまは `cfg.Workspace.Root`（または workspace path）を入れて TODO コメントで 016 を指す
+- [x] `Runner` に `Dispatcher agentlaunch.Dispatcher` フィールドを追加。`New(...)` の既定は `agentlaunch.DirectDispatcher{SockPath: ...}`（passthrough = 挙動不変）
+- [x] `frameID` の採番: attempt ごとに一意な識別子（例 `<issue.Identifier>#<attempt>`）。direct mode では Wrap は frameID を使わないが 016/ログのため一貫採番する
+- [x] `Project` の決定: direct mode では未使用。016 で project root を入れるため、いまは `cfg.Workspace.Root`（または workspace path）を入れて TODO コメントで 016 を指す
 
 ### B. launch を Wrap 経由に変更
 
-- [ ] `launchConn`（`runner.go`）で、`r.proc(ctx, wsPath, cfg.Codex.Command)` の前に `LaunchPlan{Command: cfg.Codex.Command, Env: env, StartDir: wsPath, Project: ...}` を構築し `r.Dispatcher.Wrap(ctx, frameID, plan)` を呼ぶ
-- [ ] `proc` には **解決後の** `WrappedLaunch.Command` / `.StartDir` / `.Env` を渡す（`procFunc` を `(ctx, dir string, env map[string]string, command string)` に変更、もしくは `WrappedLaunch` を渡す）。`realProc` は `bash -lc <command>` を `Dir=StartDir`・環境 `Env` で起動
-- [ ] `WrappedLaunch.Cleanup`（非 nil のとき）を worker のティアダウンで実行 — turn 解決後の `cancel()` → reap 後に `Cleanup(ctx)` を best-effort で呼ぶ。`Worker` に cleanup を保持させ `Kill` 経路でも実行されるようにする
-- [ ] env の出所: 現状 env は未設定なので、最低限 `plan.Env` は空 map から始め、`DirectDispatcher` が `ROOST_SOCKET` 等を注入できるようにする（中身は 016 で拡張）
+- [x] `launchConn`（`runner.go`）で、`r.proc(ctx, wsPath, cfg.Codex.Command)` の前に `LaunchPlan{Command: cfg.Codex.Command, Env: env, StartDir: wsPath, Project: ...}` を構築し `r.Dispatcher.Wrap(ctx, frameID, plan)` を呼ぶ
+- [x] `proc` には **解決後の** `WrappedLaunch.Command` / `.StartDir` / `.Env` を渡す（`procFunc` を `(ctx, dir string, env map[string]string, command string)` に変更、もしくは `WrappedLaunch` を渡す）。`realProc` は `bash -lc <command>` を `Dir=StartDir`・環境 `Env` で起動
+- [x] `WrappedLaunch.Cleanup`（非 nil のとき）を worker のティアダウンで実行 — turn 解決後の `cancel()` → reap 後に `Cleanup(ctx)` を best-effort で呼ぶ。`Worker` に cleanup を保持させ `Kill` 経路でも実行されるようにする
+- [x] env の出所: 現状 env は未設定なので、最低限 `plan.Env` は空 map から始め、`DirectDispatcher` が `ROOST_SOCKET` 等を注入できるようにする（中身は 016 で拡張）
 
 ### C. cmd/orchestrator 配線
 
-- [ ] `cmd/orchestrator/main.go` で `agentlaunch.DirectDispatcher{SockPath: <orchestrator daemon sock or empty>}` を構築し `agent.New(..., dispatcher)` に渡す
-- [ ] direct mode が既定（016 でモード選択を追加）
+- [x] `cmd/orchestrator/main.go` で `agentlaunch.DirectDispatcher{SockPath: <orchestrator daemon sock or empty>}` を構築し `agent.New(..., dispatcher)` に渡す
+- [x] direct mode が既定（016 でモード選択を追加）
 
 ### D. テスト
 
-- [ ] fake `Dispatcher` を注入し、`Wrap` が `plan.Command == cfg.Codex.Command` / `plan.StartDir == wsPath` で呼ばれることを検証
-- [ ] `WrappedLaunch.Cleanup` が turn 完了後（および Kill 経路）で 1 回呼ばれることを検証
-- [ ] `WrappedLaunch.Command` / `.Env` / `.StartDir` が proc に伝播することを検証
-- [ ] 既存 013 テスト（session_started/turn_completed、timeout、before_run 失敗）が DirectDispatcher 既定で緑のまま
+- [x] fake `Dispatcher` を注入し、`Wrap` が `plan.Command == cfg.Codex.Command` / `plan.StartDir == wsPath` で呼ばれることを検証
+- [x] `WrappedLaunch.Cleanup` が turn 完了後（および Kill 経路）で 1 回呼ばれることを検証
+- [x] `WrappedLaunch.Command` / `.Env` / `.StartDir` が proc に伝播することを検証
+- [x] 既存 013 テスト（session_started/turn_completed、timeout、before_run 失敗）が DirectDispatcher 既定で緑のまま
 
 ## Acceptance Criteria
 

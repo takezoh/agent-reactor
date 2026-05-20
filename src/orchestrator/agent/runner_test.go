@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/takezoh/agent-roost/orchestrator/workspace"
 	"github.com/takezoh/agent-roost/platform/agent/codexclient"
 	"github.com/takezoh/agent-roost/platform/agent/codexschema"
+	"github.com/takezoh/agent-roost/platform/agentlaunch"
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
@@ -62,7 +64,7 @@ func (f *fakeServer) OnServerRequest(id int64, method string, _ json.RawMessage)
 
 // makeFakeProc returns a procFunc that wires runner ↔ fakeServer via io.Pipe.
 func makeFakeProc(fs *fakeServer) procFunc {
-	return func(ctx context.Context, cwd, cmdLine string) (io.ReadCloser, io.WriteCloser, func(), error) {
+	return func(ctx context.Context, dir string, env map[string]string, command string) (io.ReadCloser, io.WriteCloser, func(), error) {
 		// runner reads pr1; server reads pr2
 		pr1, pw1 := io.Pipe()
 		pr2, pw2 := io.Pipe()
@@ -102,11 +104,12 @@ func makeRunner(t *testing.T, tmpl string, proc procFunc) *Runner {
 		Workspace:      ws,
 		Cfg:            cfg,
 		PromptTemplate: tmpl,
+		Dispatcher:     agentlaunch.DirectDispatcher{},
 		proc:           proc,
 	}
 }
 
-func collectEvents(t *testing.T, r *Runner, issue tracker.Issue, attempt int) []Event {
+func collectEvents(t *testing.T, r *Runner, issue tracker.Issue) []Event {
 	t.Helper()
 	var mu sync.Mutex
 	var events []Event
@@ -117,7 +120,7 @@ func collectEvents(t *testing.T, r *Runner, issue tracker.Issue, attempt int) []
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	sess, err := r.spawnWith(ctx, issue, attempt, emit)
+	sess, err := r.spawnWith(ctx, issue, 1, emit)
 	require.NoError(t, err)
 	assert.Equal(t, testThreadID+"-"+testTurnID, sess.SessionID)
 	assert.NotNil(t, sess.Worker)
@@ -145,7 +148,7 @@ func TestSpawn_sessionStartedAndTurnCompleted(t *testing.T) {
 	r := makeRunner(t, "Work on {{ issue.identifier }}", makeFakeProc(fs))
 	iss := tracker.Issue{Identifier: "PROJ-1", Title: "Test issue"}
 
-	events := collectEvents(t, r, iss, 1)
+	events := collectEvents(t, r, iss)
 
 	require.GreaterOrEqual(t, len(events), 2)
 	assert.Equal(t, EventSessionStarted, events[0].Kind)
@@ -159,7 +162,7 @@ func TestSpawn_turnFailedEmitsEvent(t *testing.T) {
 	r := makeRunner(t, "", makeFakeProc(fs))
 	iss := tracker.Issue{Identifier: "PROJ-2"}
 
-	events := collectEvents(t, r, iss, 1)
+	events := collectEvents(t, r, iss)
 
 	require.GreaterOrEqual(t, len(events), 2)
 	assert.Equal(t, EventSessionStarted, events[0].Kind)
@@ -178,11 +181,12 @@ func TestSpawn_turnTimeoutKillsAndFails(t *testing.T) {
 		Workspace:      workspace.New(cfg),
 		Cfg:            cfg,
 		PromptTemplate: "",
+		Dispatcher:     agentlaunch.DirectDispatcher{},
 		proc:           makeFakeProc(fs),
 	}
 	iss := tracker.Issue{Identifier: "PROJ-T"}
 
-	events := collectEvents(t, r, iss, 1)
+	events := collectEvents(t, r, iss)
 
 	require.GreaterOrEqual(t, len(events), 2)
 	assert.Equal(t, EventSessionStarted, events[0].Kind)
@@ -226,10 +230,219 @@ func TestSpawn_beforeRunFailureAborts(t *testing.T) {
 		Workspace:      ws,
 		Cfg:            cfg,
 		PromptTemplate: "",
+		Dispatcher:     agentlaunch.DirectDispatcher{},
 		proc:           makeFakeProc(&fakeServer{}),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err := r.spawnWith(ctx, iss, 1, func(Event) {})
 	assert.Error(t, err, "before_run failure should abort spawn")
+}
+
+// ---- Dispatcher seam tests (Issue 015) ----
+
+// fakeDispatcher records Wrap calls and optionally returns a custom WrappedLaunch.
+type fakeDispatcher struct {
+	mu      sync.Mutex
+	calls   []fakeWrapCall
+	wrapped agentlaunch.WrappedLaunch
+}
+
+type fakeWrapCall struct {
+	frameID string
+	plan    agentlaunch.LaunchPlan
+}
+
+func (f *fakeDispatcher) Wrap(_ context.Context, frameID string, plan agentlaunch.LaunchPlan) (agentlaunch.WrappedLaunch, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, fakeWrapCall{frameID: frameID, plan: plan})
+	w := f.wrapped
+	f.mu.Unlock()
+	if w.Command == "" {
+		w.Command = plan.Command
+	}
+	if w.StartDir == "" {
+		w.StartDir = plan.StartDir
+	}
+	if w.Env == nil {
+		w.Env = plan.Env
+	}
+	return w, nil
+}
+
+func (f *fakeDispatcher) AdoptFrame(_ context.Context, _, _ string) (func(context.Context) error, []agentlaunch.Mount, error) {
+	return nil, nil, nil
+}
+func (f *fakeDispatcher) EnsureProject(_ context.Context, _ string) error { return nil }
+func (f *fakeDispatcher) IsContainer(_ string) bool                       { return false }
+
+func (f *fakeDispatcher) wrapCalls() []fakeWrapCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]fakeWrapCall, len(f.calls))
+	copy(out, f.calls)
+	return out
+}
+
+func TestSpawn_dispatcherWrapInvoked(t *testing.T) {
+	fs := &fakeServer{}
+	wsRoot := t.TempDir()
+	cfg := wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
+		Codex:     wfconfig.CodexConfig{Command: "my-codex"},
+	}
+	d := &fakeDispatcher{}
+	r := &Runner{
+		Workspace:      workspace.New(cfg),
+		Cfg:            cfg,
+		PromptTemplate: "",
+		Dispatcher:     d,
+		proc:           makeFakeProc(fs),
+	}
+	iss := tracker.Issue{Identifier: "PROJ-D1"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := r.spawnWith(ctx, iss, 2, func(Event) {})
+	require.NoError(t, err)
+
+	calls := d.wrapCalls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "PROJ-D1#2", calls[0].frameID)
+	assert.Equal(t, "my-codex", calls[0].plan.Command)
+	assert.Equal(t, wsRoot, calls[0].plan.Project)
+}
+
+func TestSpawn_wrappedFieldsPropagateToProc(t *testing.T) {
+	fs := &fakeServer{}
+	wsRoot := t.TempDir()
+	cfg := wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
+		Codex:     wfconfig.CodexConfig{Command: "original"},
+	}
+
+	var gotDir, gotCmd string
+	var gotEnv map[string]string
+	capturingProc := func(ctx context.Context, dir string, env map[string]string, command string) (io.ReadCloser, io.WriteCloser, func(), error) {
+		gotDir = dir
+		gotEnv = env
+		gotCmd = command
+		return makeFakeProc(fs)(ctx, dir, env, command)
+	}
+
+	overrideDir := t.TempDir()
+	d := &fakeDispatcher{
+		wrapped: agentlaunch.WrappedLaunch{
+			Command:  "overridden-cmd",
+			StartDir: overrideDir,
+			Env:      map[string]string{"MY_KEY": "MY_VAL"},
+		},
+	}
+	r := &Runner{
+		Workspace:      workspace.New(cfg),
+		Cfg:            cfg,
+		PromptTemplate: "",
+		Dispatcher:     d,
+		proc:           capturingProc,
+	}
+	iss := tracker.Issue{Identifier: "PROJ-D2"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := r.spawnWith(ctx, iss, 1, func(Event) {})
+	require.NoError(t, err)
+
+	assert.Equal(t, "overridden-cmd", gotCmd)
+	assert.Equal(t, overrideDir, gotDir)
+	assert.Equal(t, "MY_VAL", gotEnv["MY_KEY"])
+}
+
+func TestSpawn_cleanupCalledOnceAfterTurnCompleted(t *testing.T) {
+	fs := &fakeServer{}
+
+	var mu sync.Mutex
+	cleanupCount := 0
+	cleanup := func(_ context.Context) error {
+		mu.Lock()
+		cleanupCount++
+		mu.Unlock()
+		return nil
+	}
+
+	d := &fakeDispatcher{
+		wrapped: agentlaunch.WrappedLaunch{Cleanup: cleanup},
+	}
+	wsRoot := t.TempDir()
+	cfg := wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
+		Codex:     wfconfig.CodexConfig{Command: "unused"},
+	}
+	r := &Runner{
+		Workspace:      workspace.New(cfg),
+		Cfg:            cfg,
+		PromptTemplate: "",
+		Dispatcher:     d,
+		proc:           makeFakeProc(fs),
+	}
+	iss := tracker.Issue{Identifier: "PROJ-CL1"}
+
+	events := collectEvents(t, r, iss)
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, EventTurnCompleted, events[1].Kind)
+
+	// Wait a bit for monitor goroutine to run cleanup after emitting the event.
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	count := cleanupCount
+	mu.Unlock()
+	assert.Equal(t, 1, count, "cleanup should be called exactly once after turn completes")
+}
+
+func TestSpawn_cleanupCalledOnceOnKill(t *testing.T) {
+	fs := &fakeServer{hangTurn: true}
+
+	var mu sync.Mutex
+	cleanupCount := 0
+	cleanup := func(_ context.Context) error {
+		mu.Lock()
+		cleanupCount++
+		mu.Unlock()
+		return nil
+	}
+
+	d := &fakeDispatcher{
+		wrapped: agentlaunch.WrappedLaunch{Cleanup: cleanup},
+	}
+	wsRoot := t.TempDir()
+	cfg := wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
+		Codex:     wfconfig.CodexConfig{Command: "unused"},
+	}
+	r := &Runner{
+		Workspace:      workspace.New(cfg),
+		Cfg:            cfg,
+		PromptTemplate: "",
+		Dispatcher:     d,
+		proc:           makeFakeProc(fs),
+	}
+	iss := tracker.Issue{Identifier: "PROJ-CL2"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sess, err := r.spawnWith(ctx, iss, 1, func(Event) {})
+	require.NoError(t, err)
+
+	// Kill the worker; turn will never complete, so monitor will not run cleanup.
+	err = sess.Worker.Kill(fmt.Sprintf("test kill %s", iss.Identifier))
+	require.NoError(t, err)
+
+	// Give monitor goroutine a moment to also attempt cleanup (should be no-op via Once).
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	count := cleanupCount
+	mu.Unlock()
+	assert.Equal(t, 1, count, "cleanup should be called exactly once on Kill")
 }

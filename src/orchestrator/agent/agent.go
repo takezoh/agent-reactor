@@ -10,6 +10,7 @@ import (
 	"github.com/takezoh/agent-roost/orchestrator/scheduler"
 	"github.com/takezoh/agent-roost/orchestrator/wfconfig"
 	"github.com/takezoh/agent-roost/orchestrator/workspace"
+	"github.com/takezoh/agent-roost/platform/agentlaunch"
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
@@ -32,22 +33,24 @@ type Event struct {
 // procFunc launches the agent subprocess and returns its stdout/stdin plus a
 // wait func that reaps the process. wait must be called once the read loop has
 // drained stdout (i.e. after conn.Run returns) to avoid leaking a zombie.
-type procFunc func(ctx context.Context, cwd, cmdLine string) (stdout io.ReadCloser, stdin io.WriteCloser, wait func(), err error)
+type procFunc func(ctx context.Context, dir string, env map[string]string, command string) (stdout io.ReadCloser, stdin io.WriteCloser, wait func(), err error)
 
 // Runner builds scheduler.SpawnFunc-compatible spawn calls for the orchestrator.
 type Runner struct {
 	Workspace      *workspace.Manager
 	Cfg            wfconfig.Config
 	PromptTemplate string
+	Dispatcher     agentlaunch.Dispatcher
 	proc           procFunc
 }
 
-// New returns a Runner wired with the real exec subprocess.
-func New(ws *workspace.Manager, cfg wfconfig.Config, tmpl string) *Runner {
+// New returns a Runner wired with the real exec subprocess and DirectDispatcher.
+func New(ws *workspace.Manager, cfg wfconfig.Config, tmpl string, d agentlaunch.Dispatcher) *Runner {
 	return &Runner{
 		Workspace:      ws,
 		Cfg:            cfg,
 		PromptTemplate: tmpl,
+		Dispatcher:     d,
 		proc:           realProc,
 	}
 }
