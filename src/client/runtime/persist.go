@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +31,13 @@ func (p *FilePersist) Save(sessions []SessionSnapshot) error {
 	if err := os.MkdirAll(p.dir, 0o755); err != nil {
 		return fmt.Errorf("persist: mkdir: %w", err)
 	}
+	if len(sessions) > 0 {
+		ids := make([]string, len(sessions))
+		for i, s := range sessions {
+			ids[i] = s.ID
+		}
+		slog.Debug("persist: save", "ids", ids, "n", len(ids))
+	}
 	for _, sess := range sessions {
 		if err := p.writeOne(sess); err != nil {
 			return err
@@ -46,8 +54,10 @@ func (p *FilePersist) Delete(id string) error {
 	}
 	path := filepath.Join(p.dir, id+".json")
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		slog.Warn("persist: delete failed", "id", id, "err", err)
 		return fmt.Errorf("persist: delete %s: %w", id, err)
 	}
+	slog.Info("persist: delete", "id", id)
 	return nil
 }
 

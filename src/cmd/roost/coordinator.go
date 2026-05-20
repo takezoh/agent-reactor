@@ -46,6 +46,17 @@ func runCoordinator() error {
 		return fmt.Errorf("mkdir data dir: %w", err)
 	}
 
+	// Take the single-daemon lock before touching tmux or the sessions
+	// directory. Two coordinators against the same data dir each run their
+	// own event loop and persistence pass, fighting over ~/.roost/sessions
+	// (one rewrites session files the other has just deleted), which makes
+	// terminated sessions resurrect on every cold start.
+	lock, err := acquireDaemonLock(filepath.Join(dataDir, "roost.pid"))
+	if err != nil {
+		return err
+	}
+	defer lock.release()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

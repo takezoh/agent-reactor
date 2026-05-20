@@ -69,46 +69,71 @@ func newExitSession(id SessionID) Session {
 	}
 }
 
-// Exit code 0 == intentional exit: the frame must be evicted from
-// state and the dead tmux window must be torn down via
-// EffKillSessionWindow.
-func TestReduceFrameCommandExited_ZeroEvicts(t *testing.T) {
-	s := New()
-	id := SessionID("clean")
-	s.Sessions[id] = newExitSession(id)
+// Intentional exit codes (clean exit + standard termination signals)
+// must evict the frame from state and tear down the dead tmux window
+// via EffKillSessionWindow. Many TUI agents return a non-zero code on
+// /quit or Ctrl-C, so eviction must not be limited to ExitCode == 0
+// or those user-driven terminations linger as Stopped entries that
+// the next cold start would restore.
+//
+//   - 0:   clean exit
+//   - 129: SIGHUP  (controlling terminal closed)
+//   - 130: SIGINT  (Ctrl-C)
+//   - 137: SIGKILL (`kill -9` / OOM)
+//   - 143: SIGTERM (graceful kill)
+func TestReduceFrameCommandExited_IntentionalExitCodesEvict(t *testing.T) {
+	intentional := []int{0, 129, 130, 137, 143}
+	for _, code := range intentional {
+		t.Run(exitCodeName(code), func(t *testing.T) {
+			s := New()
+			id := SessionID("clean")
+			s.Sessions[id] = newExitSession(id)
 
-	next, effs := Reduce(s, EvFrameCommandExited{FrameID: FrameID(id), ExitCode: 0})
-	if _, ok := next.Sessions[id]; ok {
-		t.Error("exit 0 must evict the frame from state")
-	}
-	if _, ok := findEff[EffKillSessionWindow](effs); !ok {
-		t.Error("exit 0 must request EffKillSessionWindow to tear down the dead window")
+			next, effs := Reduce(s, EvFrameCommandExited{FrameID: FrameID(id), ExitCode: code})
+			if _, ok := next.Sessions[id]; ok {
+				t.Errorf("exit %d must evict the frame from state", code)
+			}
+			if _, ok := findEff[EffKillSessionWindow](effs); !ok {
+				t.Errorf("exit %d must request EffKillSessionWindow to tear down the dead window", code)
+			}
+		})
 	}
 }
 
-// Non-zero exit code == abnormal exit: the frame stays in state with
+// Crash-style exit codes (a true abnormal exit — not in the
+// intentional-termination set) must keep the frame in state with
 // status=Stopped so the user can find the dead pane and the
-// surrounding metadata on cold start.
-func TestReduceFrameCommandExited_NonZeroMarksStopped(t *testing.T) {
-	s := New()
-	id := SessionID("crashed")
-	s.Sessions[id] = newExitSession(id)
+// surrounding metadata for inspection.
+//
+//   - 1:   generic error
+//   - 2:   misuse of shell builtins / argparse error
+//   - 134: SIGABRT (assertion failure / panic)
+//   - 139: SIGSEGV (segfault)
+func TestReduceFrameCommandExited_CrashExitCodesMarkStopped(t *testing.T) {
+	crash := []int{1, 2, 134, 139}
+	for _, code := range crash {
+		t.Run(exitCodeName(code), func(t *testing.T) {
+			s := New()
+			id := SessionID("crashed")
+			s.Sessions[id] = newExitSession(id)
 
-	next, effs := Reduce(s, EvFrameCommandExited{FrameID: FrameID(id), ExitCode: 137})
+			next, effs := Reduce(s, EvFrameCommandExited{FrameID: FrameID(id), ExitCode: code})
 
-	sess, kept := next.Sessions[id]
-	if !kept {
-		t.Fatal("non-zero exit must keep the frame for inspection")
-	}
-	if len(sess.Frames) != 1 {
-		t.Fatalf("frame count = %d, want 1", len(sess.Frames))
-	}
-	st := sess.Frames[0].Driver.(frameExitState).status
-	if st != StatusStopped {
-		t.Errorf("driver status = %v, want StatusStopped", st)
-	}
-	if _, ok := findEff[EffKillSessionWindow](effs); ok {
-		t.Error("non-zero exit must NOT kill the window — the user needs the tail output")
+			sess, kept := next.Sessions[id]
+			if !kept {
+				t.Fatalf("crash exit %d must keep the frame for inspection", code)
+			}
+			if len(sess.Frames) != 1 {
+				t.Fatalf("frame count = %d, want 1", len(sess.Frames))
+			}
+			st := sess.Frames[0].Driver.(frameExitState).status
+			if st != StatusStopped {
+				t.Errorf("driver status = %v, want StatusStopped", st)
+			}
+			if _, ok := findEff[EffKillSessionWindow](effs); ok {
+				t.Errorf("crash exit %d must NOT kill the window — the user needs the tail output", code)
+			}
+		})
 	}
 }
 
@@ -123,8 +148,33 @@ func TestReduceFrameCommandExited_IdempotentAfterStopped(t *testing.T) {
 	sess.Frames[0].Driver = frameExitState{status: StatusStopped}
 	s.Sessions[id] = sess
 
-	_, effs := Reduce(s, EvFrameCommandExited{FrameID: FrameID(id), ExitCode: 137})
+	_, effs := Reduce(s, EvFrameCommandExited{FrameID: FrameID(id), ExitCode: 139})
 	if len(effs) != 0 {
 		t.Errorf("expected no effects on re-detection of stopped frame; got %d", len(effs))
+	}
+}
+
+func exitCodeName(code int) string {
+	switch code {
+	case 0:
+		return "exit0_clean"
+	case 1:
+		return "exit1_generic"
+	case 2:
+		return "exit2_misuse"
+	case 129:
+		return "exit129_SIGHUP"
+	case 130:
+		return "exit130_SIGINT"
+	case 134:
+		return "exit134_SIGABRT"
+	case 137:
+		return "exit137_SIGKILL"
+	case 139:
+		return "exit139_SIGSEGV"
+	case 143:
+		return "exit143_SIGTERM"
+	default:
+		return "exit_other"
 	}
 }

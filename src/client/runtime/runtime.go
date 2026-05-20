@@ -454,7 +454,42 @@ func (r *Runtime) dispatch(ev state.Event) {
 	for _, eff := range effects {
 		r.execute(eff)
 	}
-	r.reconcilePersist(prev, r.state.Sessions)
+	r.reconcilePersist(prev, r.state.Sessions, eventName(ev))
+}
+
+// eventName returns a short identifier for an Event, used in diagnostic
+// logs that need to attribute a state mutation back to its trigger.
+func eventName(ev state.Event) string {
+	switch e := ev.(type) {
+	case state.EvEvent:
+		return "evt:" + e.Event
+	case state.EvDriverEvent:
+		return "drvev:" + e.Event
+	case state.EvSubsystem:
+		return "subsys:" + string(e.FrameID)
+	case state.EvTmuxPaneSpawned:
+		return "tmux-spawned:" + string(e.FrameID)
+	case state.EvTmuxSpawnFailed:
+		return "tmux-spawn-failed:" + string(e.FrameID)
+	case state.EvTmuxWindowVanished:
+		return "tmux-vanished:" + string(e.FrameID)
+	case state.EvFrameCommandExited:
+		return "cmd-exit:" + string(e.FrameID)
+	case state.EvPaneDied:
+		return "pane-died:" + string(e.OwnerFrameID)
+	case state.EvTick:
+		return "tick"
+	case state.EvJobResult:
+		return "job-result"
+	case state.EvFileChanged:
+		return "file-changed:" + string(e.FrameID)
+	case state.EvPaneOsc:
+		return "pane-osc:" + string(e.FrameID)
+	case state.EvPanePrompt:
+		return "pane-prompt:" + string(e.FrameID)
+	default:
+		return ""
+	}
 }
 
 // finalPersistFlush writes the current snapshot one last time on
@@ -475,16 +510,26 @@ func (r *Runtime) finalPersistFlush() {
 // reducers that mutate sessions go through cloneSessions, which
 // returns a new map header; reducers that don't touch sessions leave
 // the reference intact and incur zero I/O here.
-func (r *Runtime) reconcilePersist(prev, next map[state.SessionID]state.Session) {
+func (r *Runtime) reconcilePersist(prev, next map[state.SessionID]state.Session, evName string) {
 	if sameSessionMap(prev, next) {
 		return
 	}
+	var added, removed []string
+	for id := range next {
+		if _, had := prev[id]; !had {
+			added = append(added, string(id))
+		}
+	}
 	for id := range prev {
 		if _, kept := next[id]; !kept {
+			removed = append(removed, string(id))
 			if err := r.cfg.Persist.Delete(string(id)); err != nil {
 				slog.Warn("runtime: persist delete failed", "id", id, "err", err)
 			}
 		}
+	}
+	if len(added) > 0 || len(removed) > 0 {
+		slog.Info("runtime: session delta", "event", evName, "added", added, "removed", removed, "now", len(next))
 	}
 	if len(next) == 0 {
 		return

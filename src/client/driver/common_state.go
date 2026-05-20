@@ -69,7 +69,9 @@ func (c *CommonState) ApplyWorktreeResolved(e state.DEvWorktreeResolved) {
 // it was at the moment of the exit (last_prompt, transcript_path,
 // branch info) for inspection on cold start.
 func (c *CommonState) ApplyCommandExited(e state.DEvCommandExited) {
-	c.Status = state.StatusStopped
+	if e.ExitCode != 0 {
+		c.Status = state.StatusStopped
+	}
 	if !e.Timestamp.IsZero() {
 		c.StatusChangedAt = e.Timestamp
 	}

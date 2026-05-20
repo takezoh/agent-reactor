@@ -144,3 +144,39 @@ func TestGeminiHandleTranscriptChangedStartsParse(t *testing.T) {
 		t.Fatalf("first effect = %T, want EffWatchFile", effs[0])
 	}
 }
+
+func TestGeminiCommandExitCodeZero(t *testing.T) {
+	d := NewGeminiDriver("/tmp/events")
+	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
+	gs := d.NewState(now).(GeminiState)
+	gs.Status = state.StatusRunning
+
+	ev := state.DEvCommandExited{
+		Timestamp: now.Add(time.Second),
+		ExitCode:  0, // 正常終了
+	}
+	next, _, _ := d.Step(gs, state.FrameContext{IsRoot: true}, ev)
+	gsNext := next.(GeminiState)
+
+	if gsNext.Status == state.StatusStopped {
+		t.Error("expected StatusStopped NOT to be set on exit code 0")
+	}
+}
+
+func TestGeminiCommandExitCodeNonZero(t *testing.T) {
+	d := NewGeminiDriver("/tmp/events")
+	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
+	gs := d.NewState(now).(GeminiState)
+	gs.Status = state.StatusRunning
+
+	ev := state.DEvCommandExited{
+		Timestamp: now.Add(time.Second),
+		ExitCode:  1, // 異常終了
+	}
+	next, _, _ := d.Step(gs, state.FrameContext{IsRoot: true}, ev)
+	gsNext := next.(GeminiState)
+
+	if gsNext.Status != state.StatusStopped {
+		t.Error("expected StatusStopped to be set on exit code 1")
+	}
+}

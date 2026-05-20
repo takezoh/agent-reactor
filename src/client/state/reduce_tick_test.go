@@ -286,6 +286,64 @@ func TestPaneDiedTopFrameReactivateBeforeKill(t *testing.T) {
 	}
 }
 
+// TestPaneDiedChildFrameWithSubsystemIDEvicts pins the contract that a
+// non-root frame carrying a SubsystemID (BindFrame completed, e.g. a
+// codex thread pushed on top via push-driver) must be evicted from
+// state when its pane dies — the same as a root frame. Historically
+// this path went through failSubsystemFrame and left the child in
+// state with Status=Stopped, surfacing as "the frame won't disappear
+// from the session list" for the user.
+func TestPaneDiedChildFrameWithSubsystemIDEvicts(t *testing.T) {
+	s := New()
+	id := SessionID("sess-child-subsys")
+	rootID := FrameID("frame-root")
+	topID := FrameID("frame-top")
+	s.Sessions[id] = Session{
+		ID:            id,
+		Project:       "/project",
+		Command:       "stub",
+		Driver:        stubDriverState{},
+		ActiveFrameID: topID,
+		Frames: []SessionFrame{
+			{ID: rootID, Project: "/project", Command: "stub", Driver: stubDriverState{}},
+			{ID: topID, Project: "/project", Command: "stub", Driver: stubDriverState{}, SubsystemID: SubsystemID("stream:container:/project")},
+		},
+	}
+	s.ActiveOccupant = OccupantFrame
+	s.ActiveSession = id
+
+	next, effs := Reduce(s, EvPaneDied{Pane: "{sessionName}:0.1", OwnerFrameID: topID})
+
+	sess, ok := next.Sessions[id]
+	if !ok {
+		t.Fatal("session must survive when root frame remains")
+	}
+	for _, f := range sess.Frames {
+		if f.ID == topID {
+			t.Errorf("child frame %q with SubsystemID must be evicted on pane death; still present", topID)
+		}
+	}
+	if len(sess.Frames) != 1 || sess.Frames[0].ID != rootID {
+		t.Errorf("frames = %v, want [root]", sess.Frames)
+	}
+
+	var sawKill, sawActivate bool
+	for _, e := range effs {
+		if ks, ok := e.(EffKillSessionWindow); ok && ks.FrameID == topID {
+			sawKill = true
+		}
+		if _, ok := e.(EffActivateSession); ok {
+			sawActivate = true
+		}
+	}
+	if !sawKill {
+		t.Error("expected EffKillSessionWindow for evicted child frame (triggers Subsystem.ReleaseFrame)")
+	}
+	if !sawActivate {
+		t.Error("expected EffActivateSession to restore parent frame to pane 0.1")
+	}
+}
+
 // TestMRUFallbackOnFrameDeath verifies that when the active child frame dies,
 // the previously active frame (via MRU) becomes the new active frame.
 func TestMRUFallbackOnFrameDeath(t *testing.T) {

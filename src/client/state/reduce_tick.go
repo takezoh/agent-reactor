@@ -132,10 +132,6 @@ func reducePaneDied(s State, e EvPaneDied) (State, []Effect) {
 		slog.Info("state: reducePaneDied bail=no-owner")
 		return s, nil
 	}
-	if next, effs, handled := failSubsystemFrame(s, ownerID, "pane exited", true); handled {
-		slog.Info("state: reducePaneDied branch=failSubsystemFrame", "owner", ownerID)
-		return next, effs
-	}
 	s, effs, ok := evictFrame(s, ownerID, true)
 	if !ok {
 		slog.Info("state: reducePaneDied evictFrame returned !ok", "owner", ownerID)
@@ -156,14 +152,38 @@ func reduceTmuxWindowVanished(s State, e EvTmuxWindowVanished) (State, []Effect)
 	return s, effs
 }
 
+// isIntentionalExit returns true when an exit code looks like a
+// user-driven termination (clean exit or kill via a standard signal)
+// rather than a genuine crash. Intentional exits evict the frame
+// outright so the session list does not accumulate user-terminated
+// entries that the next cold start would otherwise restore.
+//
+// The codes recognised here:
+//   - 0:   clean exit (script finished, agent typed /quit cleanly)
+//   - 129: SIGHUP  — controlling terminal closed
+//   - 130: SIGINT  — Ctrl-C
+//   - 137: SIGKILL — explicit `kill -9` / OOM kill
+//   - 143: SIGTERM — graceful termination signal
+//
+// Any other code is treated as an abnormal exit (crash, panic,
+// non-zero return from a failing tool) and keeps the frame as
+// Stopped so the tail output remains available for inspection.
+func isIntentionalExit(code int) bool {
+	switch code {
+	case 0, 129, 130, 137, 143:
+		return true
+	}
+	return false
+}
+
 // reduceFrameCommandExited routes a command-exit signal based on its
-// exit code. ExitCode == 0 is an intentional exit (the user typed
-// /quit, the script finished, etc.) and triggers full eviction —
-// the dead tmux pane is also closed via EffKillSessionWindow.
-// A non-zero ExitCode is an abnormal exit: the frame is kept in
-// state with driver status=Stopped so the user can still find it in
-// the session list, and the dead pane is left attached so the tail
-// output (stack trace, error message) remains visible.
+// exit code. Codes recognised by isIntentionalExit (clean exit or
+// standard termination signal) trigger full eviction — the dead tmux
+// pane is also closed via EffKillSessionWindow. Other codes are
+// treated as crashes: the frame is kept in state with driver
+// status=Stopped so the user can still find it in the session list,
+// and the dead pane is left attached so the tail output (stack trace,
+// error message) remains visible.
 //
 // The reducer is idempotent — reconcileWindows may re-detect the
 // same dead pane on subsequent ticks. Once a frame's driver reports
@@ -180,7 +200,7 @@ func reduceFrameCommandExited(s State, e EvFrameCommandExited) (State, []Effect)
 		return s, nil
 	}
 
-	if e.ExitCode == 0 {
+	if isIntentionalExit(e.ExitCode) {
 		next, effs, _ := evictFrame(s, e.FrameID, true)
 		return next, effs
 	}

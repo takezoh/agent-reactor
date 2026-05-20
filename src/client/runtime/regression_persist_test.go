@@ -366,3 +366,166 @@ func TestRegressionRunFlushesPendingMutationsOnCancel(t *testing.T) {
 			"the eviction did not reach disk before Run returned (H3). final=%v", ids)
 	}
 }
+
+// TestRegressionEvictedSessionStaysEvictedAfterPaneEvents reproduces the
+// "session restored every cold start" bug.
+//
+// Observed: a daemon evicted session "doomed" via EvPaneDied (log shows
+// "reducePaneDied evictFrame ok"), Persist.Delete fired, file removed.
+// Then while the daemon kept running, sessions/doomed.json was written
+// again — Persist.Save received "doomed" in its session list — meaning
+// state.Sessions had re-acquired the session despite the eviction. The
+// only Save path is r.snapshotSessions(), so re-acquisition is the
+// only consistent explanation. No log line attributes this re-add to
+// any specific event (the new diagnostic added in this commit will catch
+// the trigger on the next reproduction).
+//
+// The bug must be in some event path that runs AFTER eviction and re-
+// inserts the session. The eviction reducer removes the session from a
+// cloned map; legitimate adders are reduceCreateSession / forkSession
+// (new random ID, cannot collide) and the bootstrap path (only on
+// startup). All findFrame-gated paths return early when the session is
+// missing. Subsystem and panetap events for the dead frame are the
+// remaining suspects — particularly because executeUnregisterPane
+// early-returns when sessionPanes was already cleared by executeKill
+// SessionWindow, so the panetap for an evicted frame leaks and keeps
+// emitting EvPaneOsc / EvPanePrompt events with the dead FrameID.
+//
+// This test pre-loads "doomed" + a peer "keeper", evicts "doomed" via
+// EvPaneDied (same path the broken daemon took), then fires the events
+// the leaked tap can emit (EvPaneOsc, EvPanePrompt) and verifies the
+// session remains absent from state, no Save call includes its ID, and
+// Persist.Delete was called exactly once.
+func TestRegressionEvictedSessionStaysEvictedAfterPaneEvents(t *testing.T) {
+	tmux := newFakeTmux()
+	persist := &recordingPersist{}
+	r := New(Config{
+		SessionName:      "roost-test",
+		TickInterval:     50 * time.Millisecond,
+		FastTickInterval: 25 * time.Millisecond,
+		Tmux:             tmux,
+		Persist:          persist,
+	})
+
+	drv := state.GetDriver("shell")
+	now := time.Now()
+	for _, id := range []state.SessionID{"keeper", "doomed"} {
+		r.state.Sessions[id] = state.Session{
+			ID:      id,
+			Project: "/p/" + string(id),
+			Command: "shell",
+			Driver:  drv.NewState(now),
+			Frames: []state.SessionFrame{{
+				ID:      state.FrameID(id),
+				Project: "/p/" + string(id),
+				Command: "shell",
+				Driver:  drv.NewState(now),
+			}},
+		}
+	}
+	r.sessionPanes["doomed"] = "%doomed"
+	r.sessionPanes["keeper"] = "%keeper"
+	r.state.ActiveSession = "doomed"
+	r.state.ActiveOccupant = state.OccupantFrame
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.Run(ctx) }()
+
+	// Wait for event loop to be live before injecting.
+	r.Enqueue(state.EvEvent{ConnID: 0, ReqID: "warmup", Event: "list-sessions"})
+	time.Sleep(80 * time.Millisecond)
+
+	// Evict via the same path the broken daemon took.
+	r.Enqueue(state.EvPaneDied{
+		Pane:         "{sessionName}:0.1",
+		OwnerFrameID: "doomed",
+	})
+
+	// Wait for the eviction's Persist.Delete to land.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		persist.mu.Lock()
+		gotDelete := false
+		for _, d := range persist.deletes {
+			if d == "doomed" {
+				gotDelete = true
+				break
+			}
+		}
+		persist.mu.Unlock()
+		if gotDelete {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Now fire the events a leaked panetap would still emit for the
+	// dead frame. If any of these re-inserts the session, subsequent
+	// Save calls will include "doomed".
+	r.Enqueue(state.EvPaneOsc{
+		FrameID: "doomed",
+		Cmd:     0,
+		Title:   "ghost title",
+		Now:     time.Now(),
+	})
+	r.Enqueue(state.EvPaneOsc{
+		FrameID: "doomed",
+		Cmd:     9,
+		Title:   "ghost notification",
+		Body:    "body",
+		Now:     time.Now(),
+	})
+	exit := 0
+	r.Enqueue(state.EvPanePrompt{
+		FrameID:  "doomed",
+		Phase:    state.PromptPhaseComplete,
+		ExitCode: &exit,
+		Now:      time.Now(),
+	})
+	r.Enqueue(state.EvFileChanged{
+		FrameID: "doomed",
+		Path:    "/tmp/ghost",
+	})
+
+	// Let several ticks fire so any periodic Save catches state mutations.
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+	<-r.Done()
+
+	persist.mu.Lock()
+	defer persist.mu.Unlock()
+	// "doomed" must have been deleted.
+	deleted := false
+	for _, d := range persist.deletes {
+		if d == "doomed" {
+			deleted = true
+			break
+		}
+	}
+	if !deleted {
+		t.Errorf("Persist.Delete(\"doomed\") never called: deletes=%v", persist.deletes)
+	}
+
+	// "doomed" must NOT appear in the final Save's session list.
+	for _, snap := range persist.last {
+		if snap.ID == "doomed" {
+			t.Errorf("final Save still contained evicted session 'doomed' (last=%v)", snapshotIDs(persist.last))
+			break
+		}
+	}
+
+	// And it must NOT appear in any Save the runtime produced after eviction
+	// — sample by checking the in-memory state at shutdown.
+	if _, alive := r.state.Sessions["doomed"]; alive {
+		t.Errorf("state.Sessions still has 'doomed' after eviction + ghost events")
+	}
+}
+
+func snapshotIDs(snaps []SessionSnapshot) []string {
+	out := make([]string, len(snaps))
+	for i, s := range snaps {
+		out[i] = s.ID
+	}
+	return out
+}

@@ -30,7 +30,7 @@ func evictFrame(s State, frameID FrameID, killWindow bool) (State, []Effect, boo
 }
 
 func evictRootFrame(s State, sessID SessionID, sess Session, killWindow bool) (State, []Effect, bool) {
-	_, allRemoved := truncateFrames(sess, 0)
+	allRemoved := truncateFrames(sess, 0)
 	s.Sessions = cloneSessions(s.Sessions)
 	delete(s.Sessions, sessID)
 	var effs []Effect
