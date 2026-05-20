@@ -176,7 +176,7 @@ func TestHandleRetryFire_NoSlots(t *testing.T) {
 	for i := range 3 {
 		id := string(rune('a' + i))
 		iss := makeIssue(id, "In Progress")
-		_ = st.Dispatch(iss, 1, LiveSession{})
+		_ = st.Dispatch(iss, 1, LiveSession{}, time.Now())
 	}
 	tr := &fakeTracker{issues: []tracker.Issue{makeIssue("1", "In Progress")}}
 	spawn := &fakeSpawn{}

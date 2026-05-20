@@ -3,6 +3,7 @@ package scheduler
 import (
 	"errors"
 	"maps"
+	"time"
 
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
@@ -31,27 +32,43 @@ func (s *State) Claim(issue tracker.Issue, attempt int) error {
 }
 
 // MarkRunning promotes an already-claimed issue to running after spawn succeeds (SPEC §16.4).
-func (s *State) MarkRunning(issueID string, issue tracker.Issue, attempt int, session LiveSession) {
+// startedAt is recorded for stall detection (§8.5 Part A).
+func (s *State) MarkRunning(issueID string, issue tracker.Issue, attempt int, session LiveSession, startedAt time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.running[issueID] = RunAttempt{
-		Issue:   issue,
-		Session: session,
-		Attempt: attempt,
-		Phase:   PhasePreparingWorkspace,
+		Issue:     issue,
+		Session:   session,
+		Attempt:   attempt,
+		Phase:     PhasePreparingWorkspace,
+		StartedAt: startedAt,
 	}
 }
 
-// Dispatch records a new running attempt for issue (SPEC §16.4). It is a convenience
-// wrapper around Claim + MarkRunning for callers that have the session ready upfront.
+// Dispatch is a convenience wrapper around Claim + MarkRunning for callers that have
+// the session ready upfront (SPEC §16.4).
 // Returns ErrDuplicateDispatch if the issue is already claimed or running.
-func (s *State) Dispatch(issue tracker.Issue, attempt int, session LiveSession) error {
+func (s *State) Dispatch(issue tracker.Issue, attempt int, session LiveSession, startedAt time.Time) error {
 	if err := s.Claim(issue, attempt); err != nil {
 		return err
 	}
-	s.MarkRunning(issue.ID, issue, attempt, session)
+	s.MarkRunning(issue.ID, issue, attempt, session, startedAt)
 	return nil
+}
+
+// UpdateIssueSnapshot replaces the Issue snapshot for a running attempt (SPEC §8.5 Part B).
+// No-op if issueID is not in running.
+func (s *State) UpdateIssueSnapshot(issueID string, issue tracker.Issue) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	run, ok := s.running[issueID]
+	if !ok {
+		return
+	}
+	run.Issue = issue
+	s.running[issueID] = run
 }
 
 // WorkerExitNormal records a clean worker exit and returns a continuation RetryEntry (SPEC §7.3).

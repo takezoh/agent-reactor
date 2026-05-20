@@ -15,6 +15,7 @@ import (
 	"github.com/takezoh/agent-roost/orchestrator/tracker"
 	"github.com/takezoh/agent-roost/orchestrator/wfconfig"
 	"github.com/takezoh/agent-roost/orchestrator/workflowfile"
+	"github.com/takezoh/agent-roost/orchestrator/workspace"
 	"github.com/takezoh/agent-roost/platform/logger"
 )
 
@@ -71,13 +72,19 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 
 	tr, err := tracker.New(cfg)
 	if err != nil {
-		fmt.Fprintf(stderr, "orchestrator: tracker init: %v\n", err)
+		fmt.Fprintf(stderr, "orchestrator: tracker: %v\n", err)
 		slog.Error("tracker init failed", "err", err)
 		return 1
 	}
 
-	deps := scheduler.Deps{Tracker: tr}
-	if err := scheduler.New(absPath, cfg, deps).Run(ctx); err != nil {
+	ws := workspace.New(cfg)
+
+	sched := scheduler.New(absPath, cfg, scheduler.Deps{
+		RefreshTracker: tr,
+		Workspace:      ws,
+	})
+
+	if err := sched.Run(ctx); err != nil {
 		fmt.Fprintf(stderr, "orchestrator: scheduler: %v\n", err)
 		slog.Error("scheduler error", "err", err)
 		return 1

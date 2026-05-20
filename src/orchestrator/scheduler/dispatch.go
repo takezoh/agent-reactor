@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/takezoh/agent-roost/orchestrator/wfconfig"
 	"github.com/takezoh/agent-roost/platform/tracker"
@@ -69,7 +70,7 @@ func dispatchOnce(ctx context.Context, cands []tracker.Issue, st *State, clk Clo
 			continue
 		}
 
-		st.MarkRunning(iss.ID, iss, 1, session)
+		st.MarkRunning(iss.ID, iss, 1, session, time.Now())
 		globalAvail--
 		perStateUsed[norm]++
 		slog.Info("dispatched", "issue_id", iss.ID, "identifier", iss.Identifier)
@@ -134,6 +135,6 @@ func handleRetryFire(ctx context.Context, req retryFireReq, tr CandidateSource, 
 		return
 	}
 
-	st.MarkRunning(req.IssueID, *found, req.Attempt, session)
+	st.MarkRunning(req.IssueID, *found, req.Attempt, session, time.Now())
 	slog.Info("retry-fire: dispatched", "issue_id", req.IssueID, "identifier", found.Identifier, "attempt", req.Attempt)
 }

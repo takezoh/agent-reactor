@@ -6,9 +6,24 @@ import (
 	"path/filepath"
 	"time"
 
+	ptrackerv "github.com/takezoh/agent-roost/platform/tracker"
+
 	"github.com/takezoh/agent-roost/orchestrator/wfconfig"
 	"github.com/takezoh/agent-roost/orchestrator/workflowfile"
 )
+
+// schedulerTrackerAPI is the tracker surface used by reconcile and startup cleanup.
+// Satisfied by *orchestrator/tracker.Tracker; fakes implement it in tests.
+type schedulerTrackerAPI interface {
+	RefreshStates(ctx context.Context, ids []string) ([]ptrackerv.Issue, error)
+	TerminalIssues(ctx context.Context) ([]ptrackerv.Issue, error)
+}
+
+// schedulerWorkspaceAPI is the workspace surface used by reconcile and startup cleanup.
+// Satisfied by *orchestrator/workspace.Manager; fakes implement it in tests.
+type schedulerWorkspaceAPI interface {
+	Remove(ctx context.Context, identifier string) error
+}
 
 // Deps bundles injectable dependencies for the Scheduler (SPEC §16.2).
 // Nil fields receive safe defaults:
@@ -17,10 +32,12 @@ import (
 //
 // Tracker and Spawn may be nil; in that case dispatch is skipped with a warning.
 type Deps struct {
-	Tracker   CandidateSource
-	Spawn     SpawnFunc
-	Reconcile ReconcileFunc
-	Clock     Clock
+	Tracker        CandidateSource
+	Spawn          SpawnFunc
+	Reconcile      ReconcileFunc
+	Clock          Clock
+	RefreshTracker schedulerTrackerAPI
+	Workspace      schedulerWorkspaceAPI
 }
 
 // Scheduler runs the polling loop per SPEC §16.2.
@@ -31,6 +48,8 @@ type Scheduler struct {
 	deps         Deps
 	clock        Clock
 	retryFire    chan retryFireReq
+	tracker      schedulerTrackerAPI
+	workspace    schedulerWorkspaceAPI
 }
 
 // New returns a Scheduler. cfg.Polling.IntervalMS determines the tick interval.
@@ -52,18 +71,20 @@ func New(workflowPath string, cfg wfconfig.Config, deps Deps) *Scheduler {
 		deps:         deps,
 		clock:        clk,
 		retryFire:    make(chan retryFireReq, 64),
+		tracker:      deps.RefreshTracker,
+		workspace:    deps.Workspace,
 	}
 }
 
 // Run starts the scheduler loop and blocks until ctx is cancelled.
-// Startup: validate config → reconcile → immediate tick → poll at interval.
+// Startup: startup cleanup → reconcile → immediate tick → poll at interval.
 func (s *Scheduler) Run(ctx context.Context) error {
 	slog.Info("scheduler starting", "interval_ms", s.interval.Milliseconds())
 	if s.deps.Spawn == nil {
 		slog.Warn("scheduler: no spawn func wired, running in poll-only mode")
 	}
 
-	// Startup: reconcile then immediate tick.
+	s.StartupCleanup(ctx)
 	s.runReconcile(ctx)
 	s.tickOnce(ctx)
 
@@ -91,14 +112,16 @@ func (s *Scheduler) runReconcile(ctx context.Context) {
 
 // tickOnce runs one poll cycle per SPEC §8.1.
 func (s *Scheduler) tickOnce(ctx context.Context) {
-	// §8.1: reconcile always runs.
+	// §8.1 step 1: injected reconcile runs before dispatch.
 	s.runReconcile(ctx)
 
 	cfg, ok := s.reloadConfig()
 	if !ok {
-		// dispatch skipped; reconcile already ran above.
 		return
 	}
+
+	// P3d: active-run reconciliation (stall + tracker state refresh).
+	s.reconcile(ctx, cfg)
 
 	if s.deps.Tracker == nil || s.deps.Spawn == nil {
 		slog.Info("tick: tracker or spawn not wired, skipping dispatch")

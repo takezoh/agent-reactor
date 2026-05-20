@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
@@ -17,7 +18,7 @@ func TestStateDispatch_AddsToRunningAndClaimed(t *testing.T) {
 	issue := testIssue("id1", "PROJ-1")
 	session := LiveSession{SessionID: "s1"}
 
-	if err := s.Dispatch(issue, 1, session); err != nil {
+	if err := s.Dispatch(issue, 1, session, time.Now()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -42,10 +43,10 @@ func TestStateDispatch_DuplicateRejected(t *testing.T) {
 	issue := testIssue("id1", "PROJ-1")
 	session := LiveSession{SessionID: "s1"}
 
-	if err := s.Dispatch(issue, 1, session); err != nil {
+	if err := s.Dispatch(issue, 1, session, time.Now()); err != nil {
 		t.Fatalf("first dispatch: %v", err)
 	}
-	err := s.Dispatch(issue, 2, session)
+	err := s.Dispatch(issue, 2, session, time.Now())
 	if !errors.Is(err, ErrDuplicateDispatch) {
 		t.Errorf("expected ErrDuplicateDispatch, got %v", err)
 	}
@@ -56,7 +57,7 @@ func TestStateDispatch_ClearsPriorRetry(t *testing.T) {
 	issue := testIssue("id1", "PROJ-1")
 	s.EnqueueRetry(RetryEntry{IssueID: "id1", Kind: RetryBackoff})
 
-	if err := s.Dispatch(issue, 2, LiveSession{}); err != nil {
+	if err := s.Dispatch(issue, 2, LiveSession{}, time.Now()); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
 
@@ -69,7 +70,7 @@ func TestStateDispatch_ClearsPriorRetry(t *testing.T) {
 func TestStateWorkerExitNormal_RemovesRunningAndReturnsContinuation(t *testing.T) {
 	s := NewState()
 	issue := testIssue("id1", "PROJ-1")
-	if err := s.Dispatch(issue, 1, LiveSession{}); err != nil {
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -93,7 +94,7 @@ func TestStateWorkerExitNormal_RemovesRunningAndReturnsContinuation(t *testing.T
 func TestStateWorkerExitAbnormal_RemovesRunningAndReturnsBackoff(t *testing.T) {
 	s := NewState()
 	issue := testIssue("id2", "PROJ-2")
-	if err := s.Dispatch(issue, 1, LiveSession{}); err != nil {
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -121,7 +122,7 @@ func TestStateWorkerExitAbnormal_RemovesRunningAndReturnsBackoff(t *testing.T) {
 func TestStateReleaseClaim_RemovesFromAllMaps(t *testing.T) {
 	s := NewState()
 	issue := testIssue("id3", "PROJ-3")
-	if err := s.Dispatch(issue, 1, LiveSession{}); err != nil {
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	s.EnqueueRetry(RetryEntry{IssueID: "id3"})
@@ -143,7 +144,7 @@ func TestStateReleaseClaim_RemovesFromAllMaps(t *testing.T) {
 func TestStateSnapshot_IsDeepCopy(t *testing.T) {
 	s := NewState()
 	issue := testIssue("id4", "PROJ-4")
-	if err := s.Dispatch(issue, 1, LiveSession{}); err != nil {
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -185,7 +186,7 @@ func TestStateMarkRunning_PromotesToRunning(t *testing.T) {
 	if err := s.Claim(issue, 2); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	s.MarkRunning(issue.ID, issue, 2, session)
+	s.MarkRunning(issue.ID, issue, 2, session, time.Now())
 
 	snap := s.Snapshot()
 	if _, ok := snap.Claimed["id11"]; !ok {
@@ -223,7 +224,7 @@ func TestStateConcurrentDispatch_NoDuplicate(t *testing.T) {
 	for i := range goroutines {
 		go func(idx int) {
 			defer wg.Done()
-			results[idx] = s.Dispatch(issue, 1, LiveSession{})
+			results[idx] = s.Dispatch(issue, 1, LiveSession{}, time.Now())
 		}(i)
 	}
 	wg.Wait()
@@ -238,5 +239,35 @@ func TestStateConcurrentDispatch_NoDuplicate(t *testing.T) {
 	}
 	if successes != 1 {
 		t.Errorf("expected exactly 1 successful Dispatch, got %d", successes)
+	}
+}
+
+func TestUpdateIssueSnapshot_UpdatesRunningIssue(t *testing.T) {
+	s := NewState()
+	issue := testIssue("id6", "PROJ-6")
+	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	updated := testIssue("id6", "PROJ-6")
+	updated.State = "In Review"
+	s.UpdateIssueSnapshot("id6", updated)
+
+	snap := s.Snapshot()
+	run, ok := snap.Running["id6"]
+	if !ok {
+		t.Fatal("expected id6 in running")
+	}
+	if run.Issue.State != "In Review" {
+		t.Errorf("got state %q, want In Review", run.Issue.State)
+	}
+}
+
+func TestUpdateIssueSnapshot_NoopForUnknownID(t *testing.T) {
+	s := NewState()
+	s.UpdateIssueSnapshot("unknown", testIssue("unknown", "X-1"))
+	snap := s.Snapshot()
+	if len(snap.Running) != 0 {
+		t.Error("expected running to remain empty")
 	}
 }
