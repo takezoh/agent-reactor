@@ -31,7 +31,10 @@ type Adapter interface {
 ### B. Linear 実装 (§11.2)
 
 - [ ] `src/platform/tracker/linear/` 新設 (`package linear`)
-- [ ] `New(endpoint, apiKey, projectSlug string) *Client` — active/terminal state set は引数で受ける (orchestrator が wfconfig から渡す)
+- [ ] `New(endpoint, apiKey, projectSlug string, activeStates []string) *Client`
+  - **active states の注入経路 (確定)**: §11.1 の `FetchCandidateIssues()` は引数なしで「**configured** active states」を使うため、active states は接続レベル設定として `New` に束ねる。`FetchCandidateIssues(ctx)` は `c.activeStates` を使用
+  - **terminal states は `New` に持たせない**: `FetchIssuesByStates(ctx, stateNames)` は汎用の「指定 state で取得」op。terminal cleanup 時に orchestrator/tracker (009) が `cfg.Tracker.TerminalStates` を引数で渡す
+  - `wfconfig.Config` は import しない (platform ↛ orchestrator 境界)。設定値は plain な引数で受ける
 - [ ] GraphQL over HTTP POST (`{query, variables}`):
   - [ ] `Authorization` header に token
   - [ ] candidate query は `project: { slugId: { eq: $projectSlug } }` で project filter

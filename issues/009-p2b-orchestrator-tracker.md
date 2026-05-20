@@ -16,15 +16,15 @@
 - [ ] `src/orchestrator/tracker/` 新設 (`package tracker`)
 - [ ] `New(cfg wfconfig.Config) (Tracker, error)`:
   - [ ] `cfg.Tracker.Kind` を検証 (`linear` 以外は `unsupported_tracker_kind`)
-  - [ ] `cfg.Tracker.{Endpoint, APIKey, ProjectSlug}` を `platform/tracker/linear.New` に渡す
+  - [ ] `cfg.Tracker.{Endpoint, APIKey, ProjectSlug, ActiveStates}` を `platform/tracker/linear.New(endpoint, apiKey, projectSlug, activeStates)` に渡す (active states は adapter に束ねる — 008 B 参照)
   - [ ] `api_key` 空なら `missing_tracker_api_key`、`project_slug` 空なら `missing_tracker_project_slug` (preflight=007 と整合する error 分類を再利用)
-- [ ] `cfg.Tracker.{ActiveStates, TerminalStates}` を保持し、候補/クリーンアップ呼び出し時に適用
+- [ ] `cfg.Tracker.TerminalStates` は wrapper 側で保持し、`TerminalIssues` 呼び出し時に引数で渡す (adapter には持たせない)
 
 ### B. 業務オペレーション
 
-- [ ] `Candidates(ctx)` → active states で `FetchCandidateIssues`
-- [ ] `RefreshStates(ctx, ids)` → `FetchIssueStatesByIDs` (reconciliation 用、空 ids は空返し)
-- [ ] `TerminalIssues(ctx)` → terminal states で `FetchIssuesByStates` (startup cleanup 用)
+- [ ] `Candidates(ctx)` → `FetchCandidateIssues(ctx)` (adapter が束ねた active states を使用)
+- [ ] `RefreshStates(ctx, ids)` → `FetchIssueStatesByIDs(ctx, ids)` (reconciliation 用、空 ids は空返し)
+- [ ] `TerminalIssues(ctx)` → `FetchIssuesByStates(ctx, cfg.Tracker.TerminalStates)` (startup cleanup 用)
 
 ### C. エラー伝播 (§11.4)
 
