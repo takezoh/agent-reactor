@@ -1,7 +1,7 @@
 # 012: scheduler — poll-and-dispatch tick (eligibility / sort / concurrency / retry)
 
 - **Phase**: P3b ([plans/04-phases.md#p3-scheduler-core](../plans/04-phases.md))
-- **Status**: Open
+- **Status**: Done
 - **Depends on**: [011](011-p3a-scheduler-state.md) (state machine)、009 (merged; tracker `Candidates`)
 - **Blocks**: M1 (最小単線通電) — 013 と合わせて end-to-end が通る
 
@@ -13,46 +13,46 @@ SPEC §8.1–§8.4 / §16.2 の poll-and-dispatch を実装し、007 の stub lo
 
 ### A. tick sequence (§8.1)
 
-- [ ] tick: ① reconcile (014 の関数を呼ぶ。未実装段階は no-op 注入) → ② preflight 再検証 (007) → ③ `tracker.Candidates` → ④ sort → ⑤ slots がある限り dispatch → ⑥ observability 通知 (P7 まではログ)
-- [ ] per-tick validation 失敗時は **reconcile は実行しつつ dispatch を skip** (§8.1)
-- [ ] startup: config validate → startup cleanup (014) → 即時 tick → 以後 `polling.interval_ms` 間隔
+- [x] tick: ① reconcile (014 の関数を呼ぶ。未実装段階は no-op 注入) → ② preflight 再検証 (007) → ③ `tracker.Candidates` → ④ sort → ⑤ slots がある限り dispatch → ⑥ observability 通知 (P7 まではログ)
+- [x] per-tick validation 失敗時は **reconcile は実行しつつ dispatch を skip** (§8.1)
+- [x] startup: config validate → startup cleanup (014) → 即時 tick → 以後 `polling.interval_ms` 間隔
 
 ### B. candidate eligibility (§8.2)
 
-- [ ] `id`/`identifier`/`title`/`state` が揃う
-- [ ] state が `active_states` かつ not `terminal_states`
-- [ ] running/claimed に未登録
-- [ ] global / per-state スロットに空き
-- [ ] **blocker rule**: state == `Todo` のとき、非 terminal な blocker が1つでもあれば dispatch しない
+- [x] `id`/`identifier`/`title`/`state` が揃う
+- [x] state が `active_states` かつ not `terminal_states`
+- [x] running/claimed に未登録
+- [x] global / per-state スロットに空き
+- [x] **blocker rule**: state == `Todo` のとき、非 terminal な blocker が1つでもあれば dispatch しない
 
 ### C. sorting (§8.2)
 
-- [ ] ① priority 昇順 (null は最後) ② created_at 古い順 ③ identifier 辞書順 tie-break (stable)
+- [x] ① priority 昇順 (null は最後) ② created_at 古い順 ③ identifier 辞書順 tie-break (stable)
 
 ### D. concurrency (§8.3)
 
-- [ ] global: `available = max(max_concurrent_agents - running_count, 0)`
-- [ ] per-state: `max_concurrent_agents_by_state[state]` (正規化 key) があればそれ、無ければ global
-- [ ] running map の現在 state 別カウントで判定
+- [x] global: `available = max(max_concurrent_agents - running_count, 0)`
+- [x] per-state: `max_concurrent_agents_by_state[state]` (正規化 key) があればそれ、無ければ global
+- [x] running map の現在 state 別カウントで判定
 
 ### E. retry / backoff (§8.4)
 
-- [ ] continuation retry: 固定 `1000ms`
-- [ ] failure retry: `delay = min(10000 * 2^(attempt-1), agent.max_retry_backoff_ms)`
-- [ ] retry timer 発火時 (§8.4 手順): active candidate を再取得 → 当該 issue を探す → 不在なら claim release → eligible なら slots 次第で dispatch、無ければ `no available orchestrator slots` で requeue → active でないなら release
+- [x] continuation retry: 固定 `1000ms`
+- [x] failure retry: `delay = min(10000 * 2^(attempt-1), agent.max_retry_backoff_ms)`
+- [x] retry timer 発火時 (§8.4 手順): active candidate を再取得 → 当該 issue を探す → 不在なら claim release → eligible なら slots 次第で dispatch、無ければ `no available orchestrator slots` で requeue → active でないなら release
 
 ### F. worker-spawn 注入
 
-- [ ] dispatch は `spawn func(issue, attempt) (scheduler.Worker, error)` を注入で受ける (013 の agent runner を後で配線)。spawn 失敗時は §16.4 通り retry スケジュール
-- [ ] `cmd/orchestrator` の loop を本 tick に配線 (007 stub から差し替え)
+- [x] dispatch は `spawn func(issue, attempt) (scheduler.Worker, error)` を注入で受ける (013 の agent runner を後で配線)。spawn 失敗時は §16.4 通り retry スケジュール
+- [x] `cmd/orchestrator` の loop を本 tick に配線 (007 stub から差し替え)
 
 ### G. テスト (§17.4)
 
-- [ ] eligibility 全条件 (active/terminal、running/claimed 重複、blocker-Todo rule)
-- [ ] sort 順 (priority/created_at/identifier、null priority 最後)
-- [ ] global/per-state concurrency の slot 計算
-- [ ] backoff 計算 (attempt ごと、max cap)、continuation 1s
-- [ ] retry 発火時の dispatch / requeue / release 分岐 (fake tracker + fake spawn)
+- [x] eligibility 全条件 (active/terminal、running/claimed 重複、blocker-Todo rule)
+- [x] sort 順 (priority/created_at/identifier、null priority 最後)
+- [x] global/per-state concurrency の slot 計算
+- [x] backoff 計算 (attempt ごと、max cap)、continuation 1s
+- [x] retry 発火時の dispatch / requeue / release 分岐 (fake tracker + fake spawn)
 
 ## Acceptance Criteria
 
