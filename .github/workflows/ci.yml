@@ -33,6 +33,11 @@ jobs:
       - name: build
         run: go build -o ../roost .
 
+      - name: build orchestrator + claude-app-server
+        run: |
+          go build -o ../orchestrator ./cmd/orchestrator
+          go build -o ../claude-app-server ./cmd/claude-app-server
+
       - name: lint
         run: go tool golangci-lint run ./...
 

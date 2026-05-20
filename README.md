@@ -12,6 +12,14 @@ Agent Roost is a tmux-based control surface for running Claude, Codex, Gemini, a
 - **Keep agents running after you disconnect.** Built on tmux, so closing the UI or dropping the connection doesn't stop the work.
 - **Run each agent in its own sandbox.** Optional per-project devcontainer with brokered AWS / gcloud / SSH credentials and a policy-gated host-exec channel. Long-lived secrets stay on the host; the container only sees short-lived tokens or stdio.
 
+## Binaries
+
+This module builds three binaries from a single Go module:
+
+- **`roost`** — the tmux control surface (interactive TUI for managing agent sessions)
+- **`orchestrator`** — the scheduling brain that reads `WORKFLOW.md`, dispatches work to codex agents, and reconciles state (P1+ implementation)
+- **`claude-app-server`** — a stdio JSON-RPC shim that wraps a Claude agent as a drop-in Codex app-server (P5 implementation)
+
 ## Requirements
 
 - Go 1.26+
