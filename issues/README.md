@@ -40,7 +40,7 @@
 |---|---|---|---|---|
 | [008](008-p2a-linear-tracker.md) | `platform/tracker` Linear GraphQL adapter | P2a | Open | P0 (merged) |
 | [009](009-p2b-orchestrator-tracker.md) | `orchestrator/tracker` config wrapper | P2b | Open | 008, 006 |
-| [010](010-p2c-workspace-manager.md) | `orchestrator/workspace` manager + hooks + safety | P2c | Open | 006 |
+| [010](010-p2c-workspace-manager.md) | `orchestrator/workspace` manager + hooks + safety | P2c | Done | 006 |
 
 ## 依存関係グラフ
 
