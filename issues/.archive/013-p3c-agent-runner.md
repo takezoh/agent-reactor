@@ -1,7 +1,7 @@
 # 013: orchestrator/agent — agent runner (prompt + raw codex single turn + events)
 
 - **Phase**: P3c ([plans/04-phases.md#p3-scheduler-core](../plans/04-phases.md))
-- **Status**: Closed
+- **Status**: Done (2026-05-20)
 - **Depends on**: 010 (merged; workspace)、P0c (merged; `platform/agent/codexclient`)、008 (merged; `tracker.Issue`)
 - **Blocks**: M1 (最小単線通電) — 012 と合わせて end-to-end が通る
 
