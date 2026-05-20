@@ -93,6 +93,7 @@ src/ 直下に並んでいるパッケージを以下に振り分ける:
 
 ## References
 
+- [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md) §3 (System Overview / Main Components) — orchestrator / agent / tracker のコンポーネント分離を可能にする物理基盤。P0a 自体は SPEC 非規定の準備作業
 - [plans/02-layout.md](../plans/02-layout.md) — ターゲットの完成形
 - [plans/04-phases.md#p0a-物理移動](../plans/04-phases.md)
 - [ARCHITECTURE.md](../ARCHITECTURE.md) — 現状の層構造

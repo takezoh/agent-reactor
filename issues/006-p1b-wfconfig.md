@@ -56,6 +56,6 @@ SPEC §5.3 / §6.1 / §6.4 の typed config を `orchestrator/wfconfig/` に実�
 
 ## References
 
-- Symphony SPEC §5.3, §6.1, §6.4, §17.1
+- [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md) §5.3, §6.1, §6.4, §17.1
 - [plans/04-phases.md#p1](../plans/04-phases.md)
 - [005](005-p1a-workflowfile.md) — 入力となる loader

@@ -98,6 +98,7 @@ type Dispatcher interface {
 
 ## References
 
+- [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md) §10.1 (Launch Contract — `bash -lc` を workspace dir で起動), §10.7 (Agent Runner Contract), §9 (Workspace Management) — agent をサンドボックス内で起動する基盤
 - [plans/02-layout.md#共有実装候補の判定表](../plans/02-layout.md)
 - [plans/04-phases.md#p0b-agentlaunch-抽出](../plans/04-phases.md)
 - `src/platform/agentlaunch/` (実装)

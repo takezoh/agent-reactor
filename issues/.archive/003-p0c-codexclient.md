@@ -84,6 +84,6 @@
 - [plans/02-layout.md](../plans/02-layout.md)
 - [plans/03-agent.md#codex-stdio-protocol-の取り扱い](../plans/03-agent.md)
 - [plans/04-phases.md#p0c-codexclient-抽出](../plans/04-phases.md)
-- Symphony SPEC §5.3.6 §10
+- [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md) §10 (Agent Runner Protocol), §5.3.6 (`codex` config)
 - `client/runtime/subsystem/stream/` (現状実装)
 - `docs/state-monitoring.md` の codex 関連記述

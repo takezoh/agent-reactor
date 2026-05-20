@@ -63,6 +63,6 @@ log するだけ。実際の poll/dispatch は P3 で肉付けする。
 
 ## References
 
-- Symphony SPEC §6.3, §16.2, §17.1, §17.7
+- [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md) §6.3, §16.2, §17.1, §17.7
 - [plans/04-phases.md#p1](../plans/04-phases.md)
 - [006](006-p1b-wfconfig.md) — 入力となる typed config

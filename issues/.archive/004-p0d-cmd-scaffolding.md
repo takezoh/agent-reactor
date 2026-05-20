@@ -73,6 +73,7 @@ build-all: build build-orchestrator build-claude-app-server
 
 ## References
 
+- [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md) §10.1 (Launch Contract), §10.4 (Emitted Runtime Events — claude-app-server の initialize/capability 応答), §6.3 (Dispatch Preflight — orchestrator の WORKFLOW.md チェック)
 - [plans/02-layout.md](../plans/02-layout.md)
 - [plans/04-phases.md#p0d-cmd-整備](../plans/04-phases.md)
 - [AGENTS.md](../AGENTS.md) — 既存 build コマンド規約

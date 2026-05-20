@@ -62,6 +62,6 @@ type Workflow struct {
 
 ## References
 
-- Symphony SPEC §5.1, §5.2, §5.5, §17.1
+- [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md) §5.1, §5.2, §5.5, §17.1
 - [plans/04-phases.md#p1](../plans/04-phases.md)
 - [plans/06-orchestrator-migration.md](../plans/06-orchestrator-migration.md) — `orchestrator/workflowfile/` の位置付け

@@ -20,6 +20,8 @@
 ## References
 ```
 
+**SPEC 参照は必須**: 全 issue は `References` に該当する [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md) のセクション (§番号付き) を含める。SPEC が source of truth であり、実装判断はここに帰着させる。直接の SPEC 要件が無い基盤作業でも、それが実現する SPEC コンポーネント (例: §3 System Overview) を明示する。
+
 全体の進捗は [plans/roadmap.md](../plans/roadmap.md) を参照。
 
 ## 直近 issue 一覧 (P1 batch)
