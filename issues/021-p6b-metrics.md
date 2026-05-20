@@ -19,22 +19,27 @@ SPEC §13.5 が要請する token/runtime 集計と、§8.5 Part A の stall 検
 
 ### B. token / runtime 集計 (§13.5)
 
-- [ ] `platform/metrics/` 新設: input/output/total tokens の集計。**absolute thread totals 優先・delta フォールバック**（§13.5 の優先順位）を判別
+§13.5 の「delta」混在を以下に分離して扱う（[plans/05-conformance.md](../plans/05-conformance.md) と一致）:
+
+- [ ] `platform/metrics/` 新設: **absolute thread totals のみ**を集計に使う。`last_token_usage` 等の **delta 形式 payload は無視**（SPEC「Ignore delta-style payloads」= conformance「delta フォールバック禁止」）。絶対値を出さない agent への delta 合算フォールバックは**持たない**
+- [ ] **二重計上回避の bookkeeping は実装必須**: 絶対値は累積報告されるため、`last_reported_total` との **差分を取って aggregate に積み**、`last_reported` を更新する（SPEC「track deltas relative to last reported totals to avoid double-counting」）。これは禁止される delta-fallback とは別物
 - [ ] runtime seconds 集計（turn/session の経過）
 - [ ] rate-limit snapshot（codex/claude が返す場合）の保持
-- [ ] codex の `turn/completed` usage（および claude は 019 が emit）を取り込み `RunAttempt.Total*Tokens` に反映
+- [ ] codex の `turn/completed` usage を取り込み `RunAttempt.Total*Tokens` に反映。**claude は per-turn usage を shim(019)が absolute に積み上げて emit する責務**（orchestrator は常に absolute を受ける前提）
 
 ### C. テスト (§17.5)
 
 - [ ] event 受信で LastCodexTimestamp が進む → stall 検知が活動基準になる
-- [ ] absolute totals と delta フォールバックの判別が正しい
+- [ ] 同じ累積 absolute total を複数回報告しても **二重計上されない**（last-reported 差分追跡が効く）
+- [ ] `last_token_usage` 等の delta 形式 payload は集計に**混入しない**（無視される）
 - [ ] usage event から input/output/total が集計される
 
 ## Acceptance Criteria
 
 - stall 検知が「最終 codex 活動からの経過」で動く（dispatch 基準でない）
-- token（input/output/total）と runtime が正確に集計され RunAttempt/observability に載る
-- agent 非依存（codex / claude いずれの usage event でも集計できる）
+- token は **absolute thread totals のみ**から集計し、last-reported 差分追跡で**二重計上しない**。delta 形式 payload は無視（conformance「delta フォールバック禁止」と一致）
+- runtime が正確に集計され RunAttempt/observability に載る
+- orchestrator は常に absolute を受ける前提（claude の per-turn → absolute 積み上げは shim 019 の責務）。集計コード自体は agent 非依存
 - `go test ./platform/metrics/ ./orchestrator/...` 緑、lint 緑
 
 ## References

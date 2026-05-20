@@ -19,8 +19,8 @@
 
 ### B. token usage (§13.5)
 
-- [ ] 017 の usage 抽出を使い、`result` から input/output/total を取り出し turn 完了時に **absolute thread totals** として emit（codexschema の usage を載せる経路。helper が無ければ `EmitNotification` で補う）
-- [ ] orchestrator 側 RunAttempt の `TotalInputTokens`/`TotalOutputTokens`（P6 で本格集計）に載る形を確認（本 issue は emit までで可）
+- [ ] 017 の usage 抽出を使い `result` から per-turn の input/output/total を取り出す。claude は per-turn 報告なので、**shim 内で running cumulative thread total に積み上げ**、turn 完了時に **cumulative absolute total** として emit（codex の累積 absolute と同一セマンティクスにそろえる。021 の metrics が last-reported 差分で二重計上回避できる前提）。codexschema の usage を載せる経路。helper が無ければ `EmitNotification` で補う
+- [ ] orchestrator 側 RunAttempt の `TotalInputTokens`/`TotalOutputTokens`（P6=021 で本格集計）に載る形を確認（本 issue は emit までで可）
 
 ### C. approval / sandbox posture (§10.5 / §15)
 

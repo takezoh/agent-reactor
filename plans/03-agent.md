@@ -115,7 +115,7 @@ result.usage.output_tokens  → output_tokens
 result.usage.total_tokens   → total_tokens (= input + output、なければ算出)
 ```
 
-absolute thread totals として emit する (SPEC §13.5 の優先順位: absolute → delta フォールバック)。
+per-turn の usage を **running cumulative thread total に積み上げ**、cumulative absolute total として emit する（codex の累積 absolute と同一セマンティクス）。SPEC §13.5 は absolute thread totals を使い `last_token_usage` 等の delta 形式 payload は無視する方針（delta フォールバックは持たない）。orchestrator 側 metrics(021) は last-reported との差分で二重計上を回避する。
 
 ### 実装規模
 
