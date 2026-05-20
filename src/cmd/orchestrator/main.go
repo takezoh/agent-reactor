@@ -17,7 +17,6 @@ import (
 	"github.com/takezoh/agent-roost/orchestrator/wfconfig"
 	"github.com/takezoh/agent-roost/orchestrator/workflowfile"
 	"github.com/takezoh/agent-roost/orchestrator/workspace"
-	"github.com/takezoh/agent-roost/platform/agentlaunch"
 	"github.com/takezoh/agent-roost/platform/logger"
 )
 
@@ -79,9 +78,21 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 		return 1
 	}
 
+	dispatcher, dispatcherCleanup, err := buildDispatcher(ctx, cfg.Workspace.Root)
+	if err != nil {
+		fmt.Fprintf(stderr, "orchestrator: dispatcher: %v\n", err)
+		slog.Error("dispatcher build failed", "err", err)
+		return 1
+	}
+	defer dispatcherCleanup()
+
+	if err := ensureProject(ctx, dispatcher, cfg.Workspace.Root); err != nil {
+		fmt.Fprintf(stderr, "orchestrator: %v\n", err)
+		slog.Error("ensure project failed", "err", err)
+		return 1
+	}
+
 	ws := workspace.New(cfg)
-	// TODO(016): replace DirectDispatcher with SandboxDispatcher for devcontainer mode.
-	dispatcher := agentlaunch.DirectDispatcher{}
 	runner := agent.New(ws, cfg, wf.PromptTemplate, dispatcher)
 
 	sched := scheduler.New(absPath, cfg, scheduler.Deps{

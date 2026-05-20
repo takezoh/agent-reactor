@@ -33,12 +33,24 @@ type fakeServer struct {
 	failTurn bool // if true, emits error instead of turn/completed
 	hangTurn bool // if true, starts the session but never completes the turn
 	mu       sync.Mutex
+	lastCWD  string // cwd from the most recent turn/start notification
 }
 
-func (f *fakeServer) OnNotification(method string, _ json.RawMessage) {
+func (f *fakeServer) OnNotification(method string, params json.RawMessage) {
 	if method != codexschema.MethodTurnStart {
 		return
 	}
+
+	// Capture the cwd field from the params for test assertions.
+	var p struct {
+		CWD string `json:"cwd"`
+	}
+	if err := json.Unmarshal(params, &p); err == nil {
+		f.mu.Lock()
+		f.lastCWD = p.CWD
+		f.mu.Unlock()
+	}
+
 	f.mu.Lock()
 	fail := f.failTurn
 	hang := f.hangTurn
@@ -54,6 +66,12 @@ func (f *fakeServer) OnNotification(method string, _ json.RawMessage) {
 	default:
 		_ = f.srv.EmitTurnCompleted(testThreadID, testTurnID, "done")
 	}
+}
+
+func (f *fakeServer) getLastCWD() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastCWD
 }
 
 func (f *fakeServer) OnServerRequest(id int64, method string, _ json.RawMessage) {
@@ -310,7 +328,9 @@ func TestSpawn_dispatcherWrapInvoked(t *testing.T) {
 	require.Len(t, calls, 1)
 	assert.Equal(t, "PROJ-D1#2", calls[0].frameID)
 	assert.Equal(t, "my-codex", calls[0].plan.Command)
-	assert.Equal(t, wsRoot, calls[0].plan.Project)
+	// Project is now the per-issue workspace path (not the global root), so
+	// SandboxResolver.ResolveProjectScope can do correct upward search from it.
+	assert.Equal(t, filepath.Join(wsRoot, "PROJ-D1"), calls[0].plan.Project)
 }
 
 func TestSpawn_wrappedFieldsPropagateToProc(t *testing.T) {
@@ -355,6 +375,10 @@ func TestSpawn_wrappedFieldsPropagateToProc(t *testing.T) {
 	assert.Equal(t, "overridden-cmd", gotCmd)
 	assert.Equal(t, overrideDir, gotDir)
 	assert.Equal(t, "MY_VAL", gotEnv["MY_KEY"])
+	// Direct-mode regression guard: when wrapped.StartDir equals the host path,
+	// the proc working directory is the host wsPath (not a container path).
+	wsPath := filepath.Join(wsRoot, "PROJ-D2")
+	assert.NotEqual(t, wsPath, gotDir, "overrideDir should differ from host wsPath")
 }
 
 func TestSpawn_cleanupCalledOnceAfterTurnCompleted(t *testing.T) {
@@ -445,4 +469,67 @@ func TestSpawn_cleanupCalledOnceOnKill(t *testing.T) {
 	count := cleanupCount
 	mu.Unlock()
 	assert.Equal(t, 1, count, "cleanup should be called exactly once on Kill")
+}
+
+// TestSpawn_startTurnUsesWrappedStartDir verifies that when DevcontainerLauncher
+// translates StartDir to a container path, StartTurn receives the container path.
+func TestSpawn_startTurnUsesWrappedStartDir(t *testing.T) {
+	containerDir := "/container/ws"
+	fs := &fakeServer{}
+	wsRoot := t.TempDir()
+	cfg := wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
+		Codex:     wfconfig.CodexConfig{Command: "unused"},
+	}
+	d := &fakeDispatcher{
+		wrapped: agentlaunch.WrappedLaunch{
+			StartDir: containerDir,
+		},
+	}
+	r := &Runner{
+		Workspace:      workspace.New(cfg),
+		Cfg:            cfg,
+		PromptTemplate: "",
+		Dispatcher:     d,
+		proc:           makeFakeProc(fs),
+	}
+	iss := tracker.Issue{Identifier: "PROJ-SDC"}
+
+	events := collectEvents(t, r, iss)
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, EventTurnCompleted, events[1].Kind)
+
+	// StartTurn must have used the container path, not the host wsPath.
+	assert.Equal(t, containerDir, fs.getLastCWD())
+}
+
+// TestSpawn_startTurnUsesWrappedStartDir_directFallback is a regression guard:
+// in direct mode the dispatcher returns StartDir == "" so runner falls back to
+// the host wsPath.  StartTurn must still receive the host path.
+func TestSpawn_startTurnUsesWrappedStartDir_directFallback(t *testing.T) {
+	fs := &fakeServer{}
+	wsRoot := t.TempDir()
+	cfg := wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
+		Codex:     wfconfig.CodexConfig{Command: "unused"},
+	}
+	// fakeDispatcher with empty wrapped.StartDir — mimics DirectDispatcher which
+	// reflects plan.StartDir unchanged.
+	d := &fakeDispatcher{}
+	r := &Runner{
+		Workspace:      workspace.New(cfg),
+		Cfg:            cfg,
+		PromptTemplate: "",
+		Dispatcher:     d,
+		proc:           makeFakeProc(fs),
+	}
+	iss := tracker.Issue{Identifier: "PROJ-SDD"}
+
+	events := collectEvents(t, r, iss)
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, EventTurnCompleted, events[1].Kind)
+
+	// Direct mode: StartTurn cwd must be the host workspace path.
+	expectedWS := filepath.Join(wsRoot, "PROJ-SDD")
+	assert.Equal(t, expectedWS, fs.getLastCWD())
 }

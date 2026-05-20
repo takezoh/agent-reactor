@@ -17,6 +17,7 @@ const spawnTimeout = 30 * time.Second
 
 type launchResult struct {
 	conn         *codexclient.Conn
+	startDir     string // container-translated working dir (or host wsPath for direct mode)
 	sessionReady <-chan sessionIDs
 	turnDone     <-chan turnResult
 	doneCh       <-chan struct{}
@@ -43,7 +44,7 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 		return scheduler.LiveSession{}, err
 	}
 
-	ids, err := initSession(lr.conn, wsPath, rendered, lr.sessionReady, lr.doneCh)
+	ids, err := initSession(lr.conn, lr.startDir, rendered, lr.sessionReady, lr.doneCh)
 	if err != nil {
 		cancel()
 		<-lr.doneCh
@@ -89,8 +90,7 @@ func (r *Runner) launchConn(ctx context.Context, frameID, wsPath string) (*launc
 		Command:  r.Cfg.Codex.Command,
 		Env:      map[string]string{},
 		StartDir: wsPath,
-		// TODO(016): use actual project root for devcontainer/sandbox routing.
-		Project: r.Cfg.Workspace.Root,
+		Project:  wsPath,
 	}
 	wrapped, err := r.Dispatcher.Wrap(ctx, frameID, plan)
 	if err != nil {
@@ -123,6 +123,7 @@ func (r *Runner) launchConn(ctx context.Context, frameID, wsPath string) (*launc
 
 	return &launchResult{
 		conn:         conn,
+		startDir:     wrapped.StartDir,
 		sessionReady: sessionReady,
 		turnDone:     turnDone,
 		doneCh:       doneCh,
