@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takezoh/agent-roost/client/config"
+	"github.com/takezoh/agent-roost/platform/config"
 	"github.com/takezoh/agent-roost/platform/internal/globutil"
 )
 

@@ -68,8 +68,6 @@ func MergeSandbox(user SandboxConfig, project *SandboxConfig) SandboxConfig {
 	return out
 }
 
-// mergeMCPServerMap merges user and project server maps.
-// Project entries override user entries on the same alias; others are kept.
 func mergeMCPServerMap(user, project map[string]MCPProxyServer) map[string]MCPProxyServer {
 	if len(user) == 0 && len(project) == 0 {
 		return nil
@@ -91,8 +89,6 @@ func appendSlice(base, extra []string) []string {
 	return append(append([]string(nil), base...), extra...)
 }
 
-// mergeOverlays concatenates user and project overlay entries, deduplicating by Target.
-// Project entries take precedence over user entries with the same Target.
 func mergeOverlays(user, project []OverlayEntry) []OverlayEntry {
 	seen := make(map[string]struct{}, len(user)+len(project))
 	out := make([]OverlayEntry, 0, len(user)+len(project))

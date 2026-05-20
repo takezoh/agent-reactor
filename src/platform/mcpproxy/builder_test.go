@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/takezoh/agent-roost/client/config"
+	"github.com/takezoh/agent-roost/platform/config"
 )
 
 func TestSpecBuilderBasics(t *testing.T) {

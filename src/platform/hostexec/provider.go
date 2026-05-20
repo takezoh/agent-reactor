@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/takezoh/agent-roost/client/config"
+	"github.com/takezoh/agent-roost/platform/config"
 	"github.com/takezoh/credproxy/container"
 	credproxylib "github.com/takezoh/credproxy/credproxy"
 )

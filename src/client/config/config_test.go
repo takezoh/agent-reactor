@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	platformconfig "github.com/takezoh/agent-roost/platform/config"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -65,12 +67,12 @@ level = "debug"
 
 func TestExpandPath(t *testing.T) {
 	home, _ := os.UserHomeDir()
-	got := ExpandPath("~/foo")
+	got := platformconfig.ExpandPath("~/foo")
 	want := filepath.Join(home, "foo")
 	if got != want {
 		t.Errorf("ExpandPath(~/foo) = %q, want %q", got, want)
 	}
-	if got := ExpandPath("/abs/path"); got != "/abs/path" {
+	if got := platformconfig.ExpandPath("/abs/path"); got != "/abs/path" {
 		t.Errorf("ExpandPath(/abs/path) = %q, want /abs/path", got)
 	}
 }
@@ -82,7 +84,7 @@ func TestListProjects(t *testing.T) {
 	os.MkdirAll(filepath.Join(tmp, ".hidden"), 0o755)
 	os.WriteFile(filepath.Join(tmp, "README"), []byte("hi"), 0o644)
 
-	cfg := &Config{Projects: ProjectsConfig{ProjectRoots: []string{tmp}}}
+	cfg := &Config{Projects: platformconfig.ProjectsConfig{ProjectRoots: []string{tmp}}}
 	projects := cfg.ListProjects()
 	if len(projects) != 2 {
 		t.Fatalf("len(projects) = %d, want 2; got %v", len(projects), projects)
@@ -102,7 +104,7 @@ func TestListProjects_WithProjectPaths(t *testing.T) {
 	os.MkdirAll(direct, 0o755)
 	nonexistent := filepath.Join(tmp, "does-not-exist")
 
-	cfg := &Config{Projects: ProjectsConfig{ProjectPaths: []string{direct, nonexistent}}}
+	cfg := &Config{Projects: platformconfig.ProjectsConfig{ProjectPaths: []string{direct, nonexistent}}}
 	projects := cfg.ListProjects()
 	if len(projects) != 1 {
 		t.Fatalf("len(projects) = %d, want 1; got %v", len(projects), projects)
@@ -118,7 +120,7 @@ func TestListProjects_RootsAndPaths(t *testing.T) {
 	direct := filepath.Join(tmp, "direct-proj")
 	os.MkdirAll(direct, 0o755)
 
-	cfg := &Config{Projects: ProjectsConfig{
+	cfg := &Config{Projects: platformconfig.ProjectsConfig{
 		ProjectRoots: []string{filepath.Join(tmp, "roots")},
 		ProjectPaths: []string{direct},
 	}}
@@ -421,7 +423,7 @@ func TestSandboxConfig_Validate_Isolation(t *testing.T) {
 		{"cluster", true},
 	}
 	for _, tc := range cases {
-		s := SandboxConfig{Isolation: tc.isolation}
+		s := platformconfig.SandboxConfig{Isolation: tc.isolation}
 		err := s.Validate()
 		if tc.wantErr && err == nil {
 			t.Errorf("isolation=%q: expected error, got nil", tc.isolation)

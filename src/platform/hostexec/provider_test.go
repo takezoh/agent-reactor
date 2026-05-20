@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takezoh/agent-roost/client/config"
+	"github.com/takezoh/agent-roost/platform/config"
 )
 
 func newTestSpecBuilder(t *testing.T, wsDir string) (*SpecBuilder, string) {

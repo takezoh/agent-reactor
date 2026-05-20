@@ -9,7 +9,7 @@ import (
 
 type sandboxCacheEntry struct {
 	resolved     SandboxConfig
-	settingsPath string // "" when no .roost/settings.toml was found
+	settingsPath string
 	mtime        time.Time
 }
 
@@ -64,7 +64,6 @@ func (r *SandboxResolver) Resolve(projectPath string) SandboxConfig {
 		if err == nil && info.ModTime().Equal(entry.mtime) {
 			return entry.resolved
 		}
-		// File changed or disappeared; fall through to re-read.
 	}
 
 	settingsPath := findProjectSettings(projectPath)

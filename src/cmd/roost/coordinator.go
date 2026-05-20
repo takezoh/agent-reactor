@@ -19,6 +19,9 @@ import (
 	"github.com/takezoh/agent-roost/client/runtime"
 	"github.com/takezoh/agent-roost/client/runtime/worker"
 	"github.com/takezoh/agent-roost/client/state"
+	"github.com/takezoh/agent-roost/platform/agentlaunch"
+	platformconfig "github.com/takezoh/agent-roost/platform/config"
+	"github.com/takezoh/agent-roost/platform/credproxy"
 	"github.com/takezoh/agent-roost/platform/features"
 	libnotify "github.com/takezoh/agent-roost/platform/lib/notify"
 	"github.com/takezoh/agent-roost/platform/lib/tmux"
@@ -101,7 +104,7 @@ func buildRuntime(ctx context.Context, cfg *config.Config, client *tmux.Client, 
 	paneTap := runtime.NewTmuxPipePaneTap(tmuxBackend.PipePane, tapDir)
 
 	featureSet := features.FromConfig(cfg.Features.Enabled, features.All())
-	sbResolver := config.NewSandboxResolver(cfg.Sandbox)
+	sbResolver := platformconfig.NewSandboxResolver(cfg.Sandbox)
 	agentLauncher, err := newAgentLauncher(ctx, cfg.Sandbox, sbResolver, cfg.Projects, dataDir, sockPath)
 	if err != nil {
 		return nil, "", "", err
@@ -316,12 +319,12 @@ func shouldKeepRuntimeAliveAfterAttach(err error, sessionExists bool) bool {
 }
 
 // newAgentLauncher returns the AgentLauncher for the configured sandbox mode.
-// Returns a SandboxDispatcher that routes each launch to direct or devcontainer
-// based on the effective config for that project (user scope + optional project scope).
-func newAgentLauncher(ctx context.Context, sb config.SandboxConfig, resolver *config.SandboxResolver, projects config.ProjectsConfig, dataDir, sockPath string) (runtime.AgentLauncher, error) {
-	d := &runtime.SandboxDispatcher{
+// Routes each launch to direct or devcontainer based on the effective config
+// for that project (user scope + optional project scope).
+func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, resolver *platformconfig.SandboxResolver, projects platformconfig.ProjectsConfig, dataDir, sockPath string) (runtime.AgentLauncher, error) {
+	d := &agentlaunch.SandboxDispatcher{
 		Resolver: resolver,
-		Direct:   runtime.DirectLauncher{SockPath: sockPath},
+		Direct:   agentlaunch.DirectDispatcher{SockPath: sockPath},
 	}
 	if sb.Mode == "devcontainer" {
 		if _, err := exec.LookPath("docker"); err != nil {
@@ -338,25 +341,29 @@ func newAgentLauncher(ctx context.Context, sb config.SandboxConfig, resolver *co
 		} else if currentHost == "" {
 			slog.Info("sandbox: using default docker socket (rootless not detected)")
 		}
-		runner, err := runtime.StartCredProxy(ctx, dataDir, func(project string) config.SandboxConfig {
+		runner, err := credproxy.Start(ctx, dataDir, func(project string) platformconfig.SandboxConfig {
 			return resolver.Resolve(project)
+		}, credproxy.Paths{
+			RunDir:  agentlaunch.ContainerRunDir,
+			BinPath: agentlaunch.ContainerBinaryPath,
+			MCPSock: agentlaunch.ContainerMCPSockPath,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("sandbox: start in-process credproxy: %w", err)
 		}
-		overlayFn := runtime.BuildContainerOverlay(func(project string) config.SandboxConfig {
+		overlayFn := agentlaunch.BuildContainerOverlay(func(project string) platformconfig.SandboxConfig {
 			return resolver.Resolve(project)
 		}, projects, runner, dataDir, statedriver.SetupSubcmds())
 		mgr := sandboxdc.New(overlayFn)
-		d.Devcontainer = runtime.NewDevcontainerLauncher(mgr,
-			func(project string) config.SandboxConfig { return resolver.Resolve(project) },
-			func(project string) *config.SandboxConfig { return resolver.ResolveProjectScope(project) },
+		d.Devcontainer = agentlaunch.NewDevcontainerLauncher(mgr,
+			func(project string) platformconfig.SandboxConfig { return resolver.Resolve(project) },
+			func(project string) *platformconfig.SandboxConfig { return resolver.ResolveProjectScope(project) },
 			runner,
 			dataDir,
 		)
 		slog.Info("sandbox: devcontainer backend enabled")
 	}
-	return d, nil
+	return runtime.NewDispatcherAdapter(d), nil
 }
 
 // resolveShellDisplayFromValues picks the display name (basename) for the

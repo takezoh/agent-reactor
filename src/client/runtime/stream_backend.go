@@ -52,15 +52,14 @@ func (r *Runtime) ContainerExecConfig(ctx context.Context, project string) (*cst
 	if dl == nil {
 		return nil, fmt.Errorf("runtime: unsupported container launcher for stream backend")
 	}
-	inst, err := dl.mgr.EnsureInstance(ctx, project, "", dl.StartOptionsFor(project))
+	info, err := dl.GetContainerExecInfo(ctx, project)
 	if err != nil {
 		return nil, err
 	}
-	cs := inst.Internal
 	return &cstream.ContainerExecConfig{
-		ContainerID: cs.ContainerID(),
-		User:        cs.EffectiveUser(),
-		WorkDir:     cs.WorkspaceTarget(),
-		PreExec:     cs.PreExec(),
+		ContainerID: info.ContainerID,
+		User:        info.User,
+		WorkDir:     info.WorkDir,
+		PreExec:     info.PreExec,
 	}, nil
 }

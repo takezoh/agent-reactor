@@ -14,7 +14,6 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/takezoh/agent-roost/client/state"
 	"github.com/takezoh/agent-roost/platform/sandbox"
 )
 
@@ -425,7 +424,7 @@ func (m *Manager) runPostCreate(containerID string, spec *DevcontainerSpec) {
 // frameCtx carries per-frame values (workDir, env) the launcher resolved at
 // launch time; in shared mode this is the only path by which per-frame state
 // reaches docker exec (the container-scoped spec stays user-scope only).
-func (m *Manager) BuildLaunchCommand(inst *sandbox.Instance[*ContainerState], plan state.LaunchPlan, frameCtx sandbox.FrameContext, env map[string]string) (string, map[string]string, error) {
+func (m *Manager) BuildLaunchCommand(inst *sandbox.Instance[*ContainerState], launchSpec sandbox.LaunchSpec, frameCtx sandbox.FrameContext, env map[string]string) (string, map[string]string, error) {
 	cs := inst.Internal
 	if cs == nil {
 		return "", nil, fmt.Errorf("devcontainer: nil ContainerState for %s", inst.ProjectPath)
@@ -436,9 +435,9 @@ func (m *Manager) BuildLaunchCommand(inst *sandbox.Instance[*ContainerState], pl
 	spec := cs.spec
 	cs.mu.Unlock()
 
-	workDir := resolveWorkDir(spec, frameCtx.WorkDir, plan.StartDir, inst.ProjectPath)
+	workDir := resolveWorkDir(spec, frameCtx.WorkDir, launchSpec.StartDir, inst.ProjectPath)
 
-	command := plan.Command
+	command := launchSpec.Command
 	if command == "shell" {
 		command = "sh -c " + shellEscape(`exec "$(getent passwd "$(id -un)" | cut -d: -f7)" -l`)
 	}

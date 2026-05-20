@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/takezoh/agent-roost/client/config"
-	appruntime "github.com/takezoh/agent-roost/client/runtime"
+	"github.com/takezoh/agent-roost/platform/config"
 )
 
 func TestNewAgentLauncher_direct(t *testing.T) {
@@ -21,13 +20,8 @@ func TestNewAgentLauncher_direct(t *testing.T) {
 			t.Errorf("mode=%q: unexpected error: %v", mode, err)
 			continue
 		}
-		d, ok := l.(*appruntime.SandboxDispatcher)
-		if !ok {
-			t.Errorf("mode=%q: expected *SandboxDispatcher, got %T", mode, l)
-			continue
-		}
-		if d.Devcontainer != nil {
-			t.Errorf("mode=%q: expected Devcontainer=nil for direct mode, got %T", mode, d.Devcontainer)
+		if l.IsContainer("/any/project") {
+			t.Errorf("mode=%q: expected IsContainer=false for direct mode", mode)
 		}
 	}
 }

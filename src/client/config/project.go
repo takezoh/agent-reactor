@@ -8,21 +8,17 @@ import (
 	"unicode"
 
 	"github.com/BurntSushi/toml"
+
+	platformconfig "github.com/takezoh/agent-roost/platform/config"
 )
 
 // ProjectConfig holds the contents of a project-level .roost/settings.toml.
-// All fields have zero values that represent sensible defaults, so a missing
-// file is not an error.
 type ProjectConfig struct {
-	Workspace ProjectWorkspaceConfig `toml:"workspace"`
-	// Sandbox, when non-nil, overrides the user-scope sandbox config for this project.
-	// Only fields explicitly set in the project file are meaningful; missing scalars
-	// are empty strings and should be treated as "no override" in merge logic.
-	Sandbox *SandboxConfig `toml:"sandbox"`
+	Workspace ProjectWorkspaceConfig        `toml:"workspace"`
+	Sandbox   *platformconfig.SandboxConfig `toml:"sandbox"`
 }
 
-// ProjectWorkspaceConfig is the [workspace] table inside a project settings
-// file.
+// ProjectWorkspaceConfig is the [workspace] table inside a project settings file.
 type ProjectWorkspaceConfig struct {
 	Name string `toml:"name"`
 }
@@ -36,7 +32,6 @@ const MaxWorkspaceNameLen = 64
 
 // LoadProjectFrom reads the file at path as a project-level settings.toml.
 // A missing file is not an error; it returns a zero-value *ProjectConfig.
-// Parse errors are returned as-is.
 func LoadProjectFrom(path string) (*ProjectConfig, error) {
 	cfg := &ProjectConfig{}
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
@@ -53,9 +48,7 @@ func LoadProjectFrom(path string) (*ProjectConfig, error) {
 	return cfg, nil
 }
 
-// LoadProject resolves the project settings file for the given project
-// directory by walking up the filesystem until it finds a .roost/settings.toml
-// or reaches the root. A non-existing file returns a zero-value *ProjectConfig.
+// LoadProject resolves the project settings file for the given project directory.
 func LoadProject(projectDir string) (*ProjectConfig, error) {
 	path := findProjectSettings(projectDir)
 	if path == "" {
@@ -64,8 +57,7 @@ func LoadProject(projectDir string) (*ProjectConfig, error) {
 	return LoadProjectFrom(path)
 }
 
-// WorkspaceName returns the configured workspace name, or DefaultWorkspaceName
-// when the name is empty or contains only whitespace.
+// WorkspaceName returns the configured workspace name, or DefaultWorkspaceName.
 func (pc *ProjectConfig) WorkspaceName() string {
 	name := strings.TrimSpace(pc.Workspace.Name)
 	if name == "" {
@@ -74,10 +66,7 @@ func (pc *ProjectConfig) WorkspaceName() string {
 	return name
 }
 
-// Validate reports an error when the workspace name is invalid. An empty name
-// (meaning "use default") is always valid. Invalid conditions:
-//   - contains ASCII control characters
-//   - exceeds MaxWorkspaceNameLen runes
+// Validate reports an error when the workspace name is invalid.
 func (pc *ProjectConfig) Validate() error {
 	name := strings.TrimSpace(pc.Workspace.Name)
 	if name == "" {
@@ -96,9 +85,6 @@ func (pc *ProjectConfig) Validate() error {
 }
 
 // findProjectSettings walks up from dir searching for .roost/settings.toml.
-// Returns the absolute path of the first match, or "" if none found.
-// This is intentionally a pure filesystem walk — it does not shell out to git —
-// so the config package stays free of lib/git dependency.
 func findProjectSettings(dir string) string {
 	dir = filepath.Clean(dir)
 	for {

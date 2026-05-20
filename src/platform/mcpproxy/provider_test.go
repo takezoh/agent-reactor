@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/takezoh/agent-roost/client/config"
+	"github.com/takezoh/agent-roost/platform/config"
 )
 
 func TestWriteMCPJSON_noProject(t *testing.T) {

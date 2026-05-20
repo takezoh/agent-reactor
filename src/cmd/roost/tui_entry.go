@@ -15,6 +15,7 @@ import (
 	"github.com/takezoh/agent-roost/client/tools"
 	"github.com/takezoh/agent-roost/client/tui"
 	"github.com/takezoh/agent-roost/client/tui/glyphs"
+	platformconfig "github.com/takezoh/agent-roost/platform/config"
 	"github.com/takezoh/agent-roost/platform/features"
 	"github.com/takezoh/agent-roost/platform/lib/git"
 	"github.com/takezoh/agent-roost/platform/lib/openurl"
@@ -210,9 +211,9 @@ func runPalette(args []string) error { //nolint:funlen
 	})
 	roots := make([]string, len(cfg.Projects.ProjectRoots))
 	for i, r := range cfg.Projects.ProjectRoots {
-		roots[i] = config.ExpandPath(r)
+		roots[i] = platformconfig.ExpandPath(r)
 	}
-	sbResolver := config.NewSandboxResolver(cfg.Sandbox)
+	sbResolver := platformconfig.NewSandboxResolver(cfg.Sandbox)
 	ctx := &tools.ToolContext{
 		Client: client,
 		Config: tools.ToolConfig{

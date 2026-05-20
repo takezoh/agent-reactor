@@ -177,12 +177,6 @@ linters:
       # client/driver/vt is a generic VT terminal emulator sub-package, not a tool-specific driver
       - linters: [depguard]
         text: "client/driver/vt.*is not allowed from list 'runtime-no-driver'"
-      # platform/sandbox, platform/hostexec, and platform/mcpproxy reference client/config and
-      # client/state for roost-specific types (HostExecConfig, FrameID, LaunchPlan, McpProxyConfig).
-      # These will move to platform/ in P0b when the config split is completed.
-      - linters: [depguard]
-        path: "platform/(sandbox|hostexec|mcpproxy)/"
-
 formatters:
   enable:
     - gofmt

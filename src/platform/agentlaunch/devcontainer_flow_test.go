@@ -1,4 +1,4 @@
-package runtime
+package agentlaunch
 
 import (
 	"context"
@@ -6,20 +6,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takezoh/agent-roost/client/config"
-	"github.com/takezoh/agent-roost/client/state"
+	"github.com/takezoh/agent-roost/platform/config"
 	"github.com/takezoh/agent-roost/platform/sandbox"
 	sandboxdc "github.com/takezoh/agent-roost/platform/sandbox/devcontainer"
 )
 
 // mockMgr is a sandbox.Manager[*sandboxdc.ContainerState] that lets tests
-// drive WrapLaunch / AdoptFrame / EnsureProject without a real docker daemon.
+// drive Wrap / AdoptFrame / EnsureProject without a real docker daemon.
 type mockMgr struct {
 	inst              *sandbox.Instance[*sandboxdc.ContainerState]
 	ensureErr         error
 	ensureCalls       int
 	buildErr          error
-	buildPlan         state.LaunchPlan
+	buildSpec         sandbox.LaunchSpec
 	buildFrameCtx     sandbox.FrameContext
 	acquireCalls      int
 	releaseCalls      int
@@ -27,7 +26,7 @@ type mockMgr struct {
 	destroyCalls      int
 }
 
-func (m *mockMgr) EnsureInstance(_ context.Context, projectPath, _ string, opts sandbox.StartOptions) (*sandbox.Instance[*sandboxdc.ContainerState], error) {
+func (m *mockMgr) EnsureInstance(_ context.Context, projectPath, _ string, _ sandbox.StartOptions) (*sandbox.Instance[*sandboxdc.ContainerState], error) {
 	m.ensureCalls++
 	if m.ensureErr != nil {
 		return nil, m.ensureErr
@@ -35,14 +34,14 @@ func (m *mockMgr) EnsureInstance(_ context.Context, projectPath, _ string, opts 
 	if m.inst == nil {
 		m.inst = &sandbox.Instance[*sandboxdc.ContainerState]{
 			ProjectPath: projectPath,
-			Internal:    nil, // not used by mock paths we exercise
+			Internal:    nil,
 		}
 	}
 	return m.inst, nil
 }
 
-func (m *mockMgr) BuildLaunchCommand(_ *sandbox.Instance[*sandboxdc.ContainerState], plan state.LaunchPlan, frameCtx sandbox.FrameContext, _ map[string]string) (string, map[string]string, error) {
-	m.buildPlan = plan
+func (m *mockMgr) BuildLaunchCommand(_ *sandbox.Instance[*sandboxdc.ContainerState], spec sandbox.LaunchSpec, frameCtx sandbox.FrameContext, _ map[string]string) (string, map[string]string, error) {
+	m.buildSpec = spec
 	m.buildFrameCtx = frameCtx
 	if m.buildErr != nil {
 		return "", nil, m.buildErr
@@ -74,10 +73,10 @@ func newLauncherForTest(t *testing.T, mgr *mockMgr, isolation string) *Devcontai
 	}
 }
 
-func TestWrapLaunch_RejectsEmptyProject(t *testing.T) {
+func TestWrap_RejectsEmptyProject(t *testing.T) {
 	mgr := &mockMgr{}
 	l := newLauncherForTest(t, mgr, "")
-	_, err := l.WrapLaunch("frame-1", state.LaunchPlan{Project: ""}, nil)
+	_, err := l.Wrap(context.Background(), "frame-1", LaunchPlan{Project: ""})
 	if err == nil {
 		t.Errorf("expected error for empty project")
 	}
@@ -86,10 +85,10 @@ func TestWrapLaunch_RejectsEmptyProject(t *testing.T) {
 	}
 }
 
-func TestWrapLaunch_PropagatesEnsureError(t *testing.T) {
+func TestWrap_PropagatesEnsureError(t *testing.T) {
 	mgr := &mockMgr{ensureErr: errors.New("docker down")}
 	l := newLauncherForTest(t, mgr, "")
-	_, err := l.WrapLaunch("frame-1", state.LaunchPlan{Project: "/workspace/myapp"}, nil)
+	_, err := l.Wrap(context.Background(), "frame-1", LaunchPlan{Project: "/workspace/myapp"})
 	if err == nil || !strings.Contains(err.Error(), "ensure instance") {
 		t.Errorf("expected ensure-instance error wrap, got: %v", err)
 	}
@@ -98,13 +97,13 @@ func TestWrapLaunch_PropagatesEnsureError(t *testing.T) {
 	}
 }
 
-func TestWrapLaunch_HappyPath_AcquireFrameAndCleanup(t *testing.T) {
+func TestWrap_HappyPath_AcquireFrameAndCleanup(t *testing.T) {
 	mgr := &mockMgr{}
 	l := newLauncherForTest(t, mgr, "")
-	plan := state.LaunchPlan{Project: "/workspace/myapp", StartDir: "/workspace/myapp"}
-	wl, err := l.WrapLaunch("frame-1", plan, map[string]string{"E": "1"})
+	plan := LaunchPlan{Project: "/workspace/myapp", StartDir: "/workspace/myapp"}
+	wl, err := l.Wrap(context.Background(), "frame-1", plan)
 	if err != nil {
-		t.Fatalf("WrapLaunch: %v", err)
+		t.Fatalf("Wrap: %v", err)
 	}
 	if mgr.ensureCalls != 1 {
 		t.Errorf("ensureCalls = %d, want 1", mgr.ensureCalls)
@@ -116,9 +115,8 @@ func TestWrapLaunch_HappyPath_AcquireFrameAndCleanup(t *testing.T) {
 		t.Fatalf("Cleanup callback was not registered")
 	}
 
-	// Cleanup invokes ReleaseFrame; when refCount=0 it must also Destroy.
 	mgr.releaseReturnZero = true
-	if err := wl.Cleanup(); err != nil {
+	if err := wl.Cleanup(context.Background()); err != nil {
 		t.Errorf("Cleanup: %v", err)
 	}
 	if mgr.releaseCalls != 1 {
@@ -129,14 +127,14 @@ func TestWrapLaunch_HappyPath_AcquireFrameAndCleanup(t *testing.T) {
 	}
 }
 
-func TestWrapLaunch_CleanupSkipsDestroyWhenRefCountPositive(t *testing.T) {
+func TestWrap_CleanupSkipsDestroyWhenRefCountPositive(t *testing.T) {
 	mgr := &mockMgr{releaseReturnZero: false}
 	l := newLauncherForTest(t, mgr, "")
-	wl, err := l.WrapLaunch("frame-1", state.LaunchPlan{Project: "/p"}, nil)
+	wl, err := l.Wrap(context.Background(), "frame-1", LaunchPlan{Project: "/p"})
 	if err != nil {
-		t.Fatalf("WrapLaunch: %v", err)
+		t.Fatalf("Wrap: %v", err)
 	}
-	if err := wl.Cleanup(); err != nil {
+	if err := wl.Cleanup(context.Background()); err != nil {
 		t.Errorf("Cleanup: %v", err)
 	}
 	if mgr.destroyCalls != 0 {
@@ -144,17 +142,16 @@ func TestWrapLaunch_CleanupSkipsDestroyWhenRefCountPositive(t *testing.T) {
 	}
 }
 
-func TestWrapLaunch_PassesFrameIDAndWorkDirThroughCtx(t *testing.T) {
+func TestWrap_PassesFrameIDAndWorkDirThroughCtx(t *testing.T) {
 	mgr := &mockMgr{}
 	l := newLauncherForTest(t, mgr, "")
-	plan := state.LaunchPlan{Project: "/p", StartDir: "/p/sub"}
-	if _, err := l.WrapLaunch("frame-abc", plan, nil); err != nil {
-		t.Fatalf("WrapLaunch: %v", err)
+	plan := LaunchPlan{Project: "/p", StartDir: "/p/sub"}
+	if _, err := l.Wrap(context.Background(), "frame-abc", plan); err != nil {
+		t.Fatalf("Wrap: %v", err)
 	}
 	if mgr.buildFrameCtx.FrameID != "frame-abc" {
 		t.Errorf("frameCtx.FrameID = %q, want frame-abc", mgr.buildFrameCtx.FrameID)
 	}
-	// WorkDir is populated from plan.StartDir when pathmap has no entry (mock instance has no mounts).
 	if mgr.buildFrameCtx.WorkDir != "/p/sub" {
 		t.Errorf("frameCtx.WorkDir = %q, want /p/sub", mgr.buildFrameCtx.WorkDir)
 	}
@@ -208,9 +205,4 @@ func TestAdoptFrame_PropagatesEnsureError(t *testing.T) {
 	}
 }
 
-// Ensure that the sandbox.Manager interface contract is honored — if the
-// signature ever shifts (e.g. a new method added) this won't compile.
 var _ sandbox.Manager[*sandboxdc.ContainerState] = (*mockMgr)(nil)
-
-// Suppress unused-import flags for sandboxdc.SharedContainerKey if needed.
-var _ = sandboxdc.SharedContainerKey

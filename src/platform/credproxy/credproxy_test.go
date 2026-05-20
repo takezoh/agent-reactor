@@ -1,4 +1,4 @@
-package runtime
+package credproxy
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	credproxylib "github.com/takezoh/credproxy/credproxy"
 )
 
-// stubProvider is a test-only container.Provider that returns fixed Spec values.
 type stubProvider struct {
 	name string
 	spec container.Spec
@@ -23,8 +22,8 @@ func (s *stubProvider) ContainerSpec(_ context.Context, _ string) (container.Spe
 	return s.spec, s.err
 }
 
-func TestCredProxyRunner_ContainerSpec_MergesProviders(t *testing.T) {
-	r := &CredProxyRunner{
+func TestRunner_ContainerSpec_MergesProviders(t *testing.T) {
+	r := &Runner{
 		providers: []container.Provider{
 			&stubProvider{name: "p1", spec: container.Spec{
 				Env:    map[string]string{"KEY_A": "val_a"},
@@ -52,8 +51,8 @@ func TestCredProxyRunner_ContainerSpec_MergesProviders(t *testing.T) {
 	}
 }
 
-func TestCredProxyRunner_ContainerSpec_SkipsFailingProvider(t *testing.T) {
-	r := &CredProxyRunner{
+func TestRunner_ContainerSpec_SkipsFailingProvider(t *testing.T) {
+	r := &Runner{
 		providers: []container.Provider{
 			&stubProvider{name: "good", spec: container.Spec{
 				Env: map[string]string{"KEY_OK": "ok"},
@@ -71,8 +70,8 @@ func TestCredProxyRunner_ContainerSpec_SkipsFailingProvider(t *testing.T) {
 	}
 }
 
-func TestCredProxyRunner_ContainerSpec_EmptyProviders(t *testing.T) {
-	r := &CredProxyRunner{}
+func TestRunner_ContainerSpec_EmptyProviders(t *testing.T) {
+	r := &Runner{}
 	out, err := r.ContainerSpec(context.Background(), "/project")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

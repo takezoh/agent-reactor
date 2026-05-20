@@ -1,173 +1,28 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	platformconfig "github.com/takezoh/agent-roost/platform/config"
 )
 
 type Config struct {
-	DataDir       string                    `toml:"data_dir"`
-	Theme         string                    `toml:"theme"`
-	Log           LogConfig                 `toml:"log"`
-	Tmux          TmuxConfig                `toml:"tmux"`
-	Monitor       MonitorConfig             `toml:"monitor"`
-	Session       SessionConfig             `toml:"session"`
-	Projects      ProjectsConfig            `toml:"projects"`
-	Driver        CommonDriverConfig        `toml:"driver"`
-	Drivers       map[string]map[string]any `toml:"drivers"`
-	Features      FeaturesConfig            `toml:"features"`
-	Notifications NotificationsConfig       `toml:"notifications"`
-	Sandbox       SandboxConfig             `toml:"sandbox"`
-}
-
-// SandboxConfig controls how agent processes are isolated.
-// mode = "direct" runs agents with no extra sandboxing (default).
-// mode = "devcontainer" runs each project via @devcontainers/cli.
-// isolation = "project" (default) gives each project its own container.
-// isolation = "shared" mounts all configured project roots and paths into one shared container.
-type SandboxConfig struct {
-	Mode         string             `toml:"mode"`
-	Isolation    string             `toml:"isolation"`
-	Devcontainer DevcontainerConfig `toml:"devcontainer"`
-	Proxy        ProxyConfig        `toml:"proxy"`
-}
-
-// IsSandboxed reports whether the sandbox mode is an active isolation backend.
-// Both "" and "direct" mean no sandboxing.
-func (s SandboxConfig) IsSandboxed() bool {
-	return s.Mode != "" && s.Mode != "direct"
-}
-
-// Validate rejects unknown sandbox modes/isolation values and deprecated proxy config at startup.
-func (s SandboxConfig) Validate() error {
-	switch s.Mode {
-	case "", "direct", "devcontainer":
-	default:
-		return fmt.Errorf("sandbox.mode=%q is unknown; valid values: direct, devcontainer", s.Mode)
-	}
-	switch s.Isolation {
-	case "", "project", "shared":
-	default:
-		return fmt.Errorf("sandbox.isolation=%q is unknown; valid values: project, shared", s.Isolation)
-	}
-	return s.Proxy.GCP.Validate()
-}
-
-// DevcontainerConfig holds settings for the devcontainer sandbox mode.
-type DevcontainerConfig struct {
-	// Path, when non-empty, is the devcontainer.json directory to use instead of
-	// auto-discovery (<project>/.devcontainer → ~/.devcontainer). ~ is expanded.
-	// At user scope this is the shared container's devcontainer directory.
-	// At project scope this overrides the project's devcontainer path and implies
-	// project-level isolation even when the user has set isolation=shared.
-	Path string `toml:"path"`
-
-	// ExtraCreateArgs are appended verbatim to "docker create".
-	ExtraCreateArgs []string `toml:"extra_create_args"`
-
-	// EnvScript is a path to a script that prints KEY=VALUE lines (dotenv format)
-	// to stdout. It receives the project path as its first argument.
-	EnvScript string `toml:"env_script"`
-
-	// AllowProjectEnvScript lists project paths whose project-scope env_script
-	// is permitted to run.
-	AllowProjectEnvScript []string `toml:"allow_project_env_script"`
-
-	// HostPathMountPrefix, when non-empty, makes the auto-mounted project workspace
-	// appear at "<prefix><host-path>" inside the container instead of the default
-	// "<host-path>" (host-mirroring). Has no effect if devcontainer.json explicitly
-	// sets workspaceFolder or workspaceMount. Must be an absolute path or empty.
-	HostPathMountPrefix string `toml:"host_path_mount_prefix"`
-}
-
-// ProxyConfig holds the in-process credential proxy provider settings.
-// Each provider self-gates on its own sub-fields — the proxy server itself
-// runs whenever sandbox.mode = "devcontainer", and providers with empty
-// configuration are no-ops. The proxy runs in-process; no external daemon
-// is required.
-type ProxyConfig struct {
-	AWSProfiles []string       `toml:"aws_profiles"` // AWS profile names to expose in the container via credential_process
-	GCP         GCPConfig      `toml:"gcp"`
-	SSHAgent    SSHAgentConfig `toml:"ssh_agent"`
-	HostExec    HostExecConfig `toml:"host_exec"`
-	MCPProxy    MCPProxyConfig `toml:"mcp_proxy"`
-}
-
-// MCPProxyConfig lists MCP servers to run on the host with stdio proxied into
-// the container. Each server runs as a host process; the container receives
-// only JSON-RPC messages (no credentials).
-// Servers is a map keyed by alias (server name), matching Claude Code's
-// mcpServers object structure. Example TOML:
-//
-//	[sandbox.proxy.mcp_proxy.servers.observability]
-//	command = "npx"
-//	args    = ["-y", "@google-cloud/observability-mcp"]
-//	allow   = ["list_*"]
-type MCPProxyConfig struct {
-	Servers map[string]MCPProxyServer `toml:"servers"`
-}
-
-// MCPProxyServer defines one MCP server to proxy.
-// command/args/env match Claude Code's mcpServers entry format.
-// Deny is checked before allow; neither matching is default-deny.
-type MCPProxyServer struct {
-	Command string            `toml:"command"`
-	Args    []string          `toml:"args"`
-	Env     map[string]string `toml:"env"`
-	Allow   []string          `toml:"allow"`
-	Deny    []string          `toml:"deny"`
-}
-
-// HostExecConfig configures host binaries exposed to containers via the host-exec broker.
-// The broker executes host binaries on behalf of container processes; the container never
-// receives credentials or tokens. Commands are filtered by deny/allow glob patterns matching
-// the full shell command string (e.g. "gh pr *").
-// Leading KEY=VALUE env assignments in patterns are stripped before matching and binary name
-// extraction, so "GH_TOKEN=x gh pr *" is equivalent to "gh pr *".
-// The binary name is derived from the first non-env-assignment token of the allow patterns.
-type HostExecConfig struct {
-	Allow   []string       `toml:"allow"`   // glob patterns that permit a command; first non-env-assignment token is the binary name
-	Deny    []string       `toml:"deny"`    // glob patterns that deny a command; checked before allow
-	Overlay []OverlayEntry `toml:"overlay"` // per-path shim bind-mounts with optional allow/deny
-}
-
-// OverlayEntry bind-mounts a host-exec shim at a specific container path.
-// Each entry gets a unique broker alias derived from its target, so basename collisions across
-// entries are impossible.
-type OverlayEntry struct {
-	Target string   `toml:"target"` // container path (project-relative or absolute)
-	Allow  []string `toml:"allow"`  // glob patterns for allowed commands; empty = allow all
-	Deny   []string `toml:"deny"`   // glob patterns for denied commands; checked before allow
-}
-
-// SSHAgentConfig controls SSH agent injection into containers.
-// An ephemeral ssh-agent is spawned with only the listed keys loaded.
-type SSHAgentConfig struct {
-	Keys []string `toml:"keys"`
-}
-
-// GCPConfig holds per-project gcloud CLI credential settings.
-// Account and Active are required when any GCP field is set.
-// ServiceAccount selects SA mode (impersonation); omitting it selects user-account mode.
-// Only short-lived access tokens (≤1h) reach the container; refresh tokens never do.
-type GCPConfig struct {
-	ServiceAccount    string   `toml:"service_account"`     // SA email to impersonate; omit for user-account mode
-	Account           string   `toml:"account"`             // required
-	Active            string   `toml:"active"`              // required; default project in the container
-	Projects          []string `toml:"projects"`            // SA mode only
-	EnableUserAccount bool     `toml:"enable_user_account"` // deprecated; errors if true
-}
-
-// Validate returns an error if the config uses the removed enable_user_account field.
-func (g GCPConfig) Validate() error {
-	if g.EnableUserAccount {
-		return fmt.Errorf("sandbox.proxy.gcp: enable_user_account has been removed; delete it and use account + active instead")
-	}
-	return nil
+	DataDir       string                        `toml:"data_dir"`
+	Theme         string                        `toml:"theme"`
+	Log           LogConfig                     `toml:"log"`
+	Tmux          TmuxConfig                    `toml:"tmux"`
+	Monitor       MonitorConfig                 `toml:"monitor"`
+	Session       SessionConfig                 `toml:"session"`
+	Projects      platformconfig.ProjectsConfig `toml:"projects"`
+	Driver        CommonDriverConfig            `toml:"driver"`
+	Drivers       map[string]map[string]any     `toml:"drivers"`
+	Features      FeaturesConfig                `toml:"features"`
+	Notifications NotificationsConfig           `toml:"notifications"`
+	Sandbox       platformconfig.SandboxConfig  `toml:"sandbox"`
 }
 
 // CommonDriverConfig holds settings that apply to all drivers.
@@ -177,13 +32,11 @@ type CommonDriverConfig struct {
 }
 
 // FeaturesConfig holds the runtime feature-flag table from the TOML config.
-// Each key in Enabled is a [features.Flag] identifier; true enables the flag.
 type FeaturesConfig struct {
 	Enabled map[string]bool `toml:"enabled"`
 }
 
-// LogConfig controls slog handler verbosity. Level values: "debug", "info",
-// "warn", "error". Unknown / empty values fall back to info in logger.Init.
+// LogConfig controls slog handler verbosity.
 type LogConfig struct {
 	Level string `toml:"level"`
 }
@@ -209,21 +62,13 @@ type SessionConfig struct {
 	Aliases        map[string]string `toml:"aliases"`
 }
 
-// ResolveAlias expands a command string through the alias map. Unknown
-// commands are returned unchanged. Aliases are matched against the entire
-// trimmed input string, not parsed tokens, so "clw" maps but "clw foo" does
-// not (matching shell alias semantics where the alias name is the first word).
+// ResolveAlias expands a command string through the alias map.
 func (s SessionConfig) ResolveAlias(command string) string {
 	command = strings.TrimSpace(command)
 	if expanded, ok := s.Aliases[command]; ok {
 		return expanded
 	}
 	return command
-}
-
-type ProjectsConfig struct {
-	ProjectRoots []string `toml:"project_roots"`
-	ProjectPaths []string `toml:"project_paths"`
 }
 
 func LoadFrom(path string) (*Config, error) {
@@ -244,10 +89,6 @@ func LoadFrom(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// resolvePager returns the effective pager command. Priority:
-//  1. value from config (if non-empty)
-//  2. $PAGER environment variable
-//  3. "less" as the universal fallback
 func resolvePager(configured string) string {
 	if configured != "" {
 		return configured
@@ -283,15 +124,15 @@ func DefaultConfig() *Config {
 			Commands:       []string{"shell"},
 			PushCommands:   []string{"shell"},
 		},
-		Projects: ProjectsConfig{},
-		Sandbox: SandboxConfig{
+		Projects: platformconfig.ProjectsConfig{},
+		Sandbox: platformconfig.SandboxConfig{
 			Mode: "direct",
 		},
 	}
 }
 
 func ConfigDirPath() string {
-	return filepath.Join(ExpandPath("~"), ".roost")
+	return filepath.Join(platformconfig.ExpandPath("~"), ".roost")
 }
 
 func EnsureConfigDir() string {
@@ -304,45 +145,12 @@ func (c *Config) ListProjects() []string {
 	return c.Projects.ListProjects()
 }
 
-// ListProjects returns all project directories: non-hidden subdirs of each
-// ProjectRoot, plus each explicit ProjectPath that exists as a directory.
-func (p *ProjectsConfig) ListProjects() []string {
-	var projects []string
-	for _, root := range p.ProjectRoots {
-		root = ExpandPath(root)
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-				projects = append(projects, filepath.Join(root, e.Name()))
-			}
-		}
-	}
-	for _, path := range p.ProjectPaths {
-		path = ExpandPath(path)
-		if info, err := os.Stat(path); err == nil && info.IsDir() {
-			projects = append(projects, path)
-		}
-	}
-	return projects
-}
-
 func (c *Config) ResolveDataDir() string {
 	if v := os.Getenv("ROOST_DATA_DIR"); v != "" {
-		return ExpandPath(v)
+		return platformconfig.ExpandPath(v)
 	}
 	if c.DataDir != "" {
-		return ExpandPath(c.DataDir)
+		return platformconfig.ExpandPath(c.DataDir)
 	}
 	return ConfigDirPath()
-}
-
-func ExpandPath(p string) string {
-	if strings.HasPrefix(p, "~") {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, p[1:])
-	}
-	return p
 }

@@ -8,9 +8,17 @@ package sandbox
 
 import (
 	"context"
-
-	"github.com/takezoh/agent-roost/client/state"
 )
+
+// FrameID identifies a tmux frame within a sandbox session.
+type FrameID string
+
+// LaunchSpec carries the minimal launch parameters that BuildLaunchCommand
+// needs. Callers construct it from their own plan types at the boundary.
+type LaunchSpec struct {
+	Command  string
+	StartDir string
+}
 
 // Instance represents a running sandbox for one project directory.
 // I is the backend-specific internal state type (e.g. *docker.ContainerState).
@@ -40,7 +48,7 @@ type StartOptions struct {
 // shared container host frames from different projects without leaking the
 // first frame's project state into every later one.
 type FrameContext struct {
-	FrameID state.FrameID     // identifies the frame this command is for
+	FrameID FrameID           // identifies the frame this command is for
 	WorkDir string            // container-side cwd (pathmap で解決済み); empty falls back to spec
 	Env     map[string]string // per-frame -e KEY=VAL; wins over spec.RemoteEnv on conflict
 	Mounts  []string          // per-frame -v / --mount (将来用、当面空)
@@ -57,10 +65,10 @@ type Manager[I any] interface {
 	EnsureInstance(ctx context.Context, projectPath, image string, opts StartOptions) (*Instance[I], error)
 
 	// BuildLaunchCommand generates the shell command string and environment to
-	// run plan inside the sandbox instance. frameCtx carries per-frame values
+	// run spec inside the sandbox instance. frameCtx carries per-frame values
 	// (workDir, env) the launcher resolved at launch time. The returned command
 	// is passed to TmuxBackend.SpawnWindow.
-	BuildLaunchCommand(inst *Instance[I], plan state.LaunchPlan, frameCtx FrameContext, env map[string]string) (command string, outEnv map[string]string, err error)
+	BuildLaunchCommand(inst *Instance[I], spec LaunchSpec, frameCtx FrameContext, env map[string]string) (command string, outEnv map[string]string, err error)
 
 	// AcquireFrame increments the ref-count for the instance.
 	// Must be called before the frame is spawned.

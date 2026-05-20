@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"path"
+
+	platformconfig "github.com/takezoh/agent-roost/platform/config"
 )
 
 // NotificationsConfig is the [notifications] table from settings.toml.
@@ -109,7 +111,7 @@ func matchGlob(pattern, value string) bool {
 	if pattern == "" || pattern == "*" {
 		return true
 	}
-	ok, _ := path.Match(ExpandPath(pattern), value)
+	ok, _ := path.Match(platformconfig.ExpandPath(pattern), value)
 	return ok
 }
 

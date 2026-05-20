@@ -1,4 +1,4 @@
-package runtime
+package agentlaunch
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/takezoh/agent-roost/client/config"
+	"github.com/takezoh/agent-roost/platform/config"
 	sandboxdc "github.com/takezoh/agent-roost/platform/sandbox/devcontainer"
 	"github.com/takezoh/credproxy/container"
 )
@@ -19,7 +19,7 @@ func TestResolveWorkspaceFallback(t *testing.T) {
 	}{
 		{"/home/u/proj", "", "/home/u/proj"},
 		{"/home/u/proj", "/mnt", "/mnt/home/u/proj"},
-		{"/home/u/proj", "/mnt/", "/mnt/home/u/proj"}, // trailing slash normalised
+		{"/home/u/proj", "/mnt/", "/mnt/home/u/proj"},
 		{"", "", ""},
 		{"", "/mnt", "/mnt"},
 	}
@@ -44,10 +44,6 @@ func TestBuildMounts_RegistersWorkspaceAndRunDir(t *testing.T) {
 	}
 }
 
-// Regression guard: when devcontainer.json omits workspaceFolder, buildMounts
-// must still receive a non-empty container target (via WorkspaceTarget fallback)
-// so pathmap can translate hook payload paths back to host. Empty container
-// target would silently break TRANSCRIPT/EVENTS routing.
 func TestBuildMounts_RejectsEmptyWorkspaceContainer(t *testing.T) {
 	ms := buildMounts("/host/myapp", "", "/host/run", nil)
 	for _, m := range ms {
@@ -57,10 +53,6 @@ func TestBuildMounts_RejectsEmptyWorkspaceContainer(t *testing.T) {
 	}
 }
 
-// Regression guard for the empty-TRANSCRIPT bug: user-declared bind mounts
-// (e.g. ~/.claude/projects from extra_create_args) must end up in pathmap so
-// transcript_path translation succeeds. Without these mounts, hook payloads
-// get cleared at the IPC boundary and the TRANSCRIPT tab stays empty.
 func TestBuildMounts_IncludesUserBindMounts(t *testing.T) {
 	binds := []sandboxdc.BindMount{
 		{Source: "/home/take/.claude/projects", Target: "/home/ubuntu/.claude/projects"},
@@ -86,8 +78,6 @@ func TestBuildMounts_IncludesUserBindMounts(t *testing.T) {
 	}
 }
 
-// When both host and container workspace paths are empty, no workspace mount
-// should be emitted; only the run-dir mount remains.
 func TestBuildMounts_OmitsWorkspaceWhenBothPathsEmpty(t *testing.T) {
 	ms := buildMounts("", "", "/host/run", nil)
 	if len(ms) != 1 {
@@ -98,7 +88,6 @@ func TestBuildMounts_OmitsWorkspaceWhenBothPathsEmpty(t *testing.T) {
 	}
 }
 
-// When hostRunDir is empty (e.g. dataDir not configured), run-dir mount is skipped.
 func TestBuildMounts_OmitsRunDirWhenEmpty(t *testing.T) {
 	ms := buildMounts("/host/myapp", "/workspaces/myapp", "", nil)
 	for _, m := range ms {
@@ -138,12 +127,10 @@ func TestBuildOverlayEnv_ContainerPaths(t *testing.T) {
 	}
 }
 
-// Workspace and run-dir mounts that would be emitted twice (once from defaults,
-// once from user binds) must be deduplicated.
 func TestBuildMounts_DeduplicatesWorkspaceAndRunDir(t *testing.T) {
 	binds := []sandboxdc.BindMount{
-		{Source: "/host/myapp", Target: "/workspaces/myapp"}, // duplicate of workspace
-		{Source: "/host/run", Target: ContainerRunDir},       // duplicate of run dir
+		{Source: "/host/myapp", Target: "/workspaces/myapp"},
+		{Source: "/host/run", Target: ContainerRunDir},
 		{Source: "/home/take/.claude/projects", Target: "/home/ubuntu/.claude/projects"},
 	}
 	ms := buildMounts("/host/myapp", "/workspaces/myapp", "/host/run", binds)
@@ -170,7 +157,6 @@ func TestSharedWorkspaceBindMounts_EnumeratesProjects(t *testing.T) {
 	}
 	binds := sharedWorkspaceBindMounts(projects, "")
 
-	// Should include proj-a, proj-b, and direct; skip .hidden.
 	bySource := map[string]string{}
 	for _, b := range binds {
 		bySource[b.Source] = b.Target
@@ -207,8 +193,6 @@ func TestSharedWorkspaceBindMounts_WithPrefix(t *testing.T) {
 }
 
 func TestSharedWorkspaceBindMounts_ProjectMode_ReturnsNothing(t *testing.T) {
-	// In project mode, BuildOverlayFunc does not call sharedWorkspaceBindMounts.
-	// Verify that the function itself returns nothing when projects is empty.
 	binds := sharedWorkspaceBindMounts(config.ProjectsConfig{}, "")
 	if len(binds) != 0 {
 		t.Errorf("expected no binds for empty config, got %v", binds)
@@ -238,14 +222,10 @@ func TestEffectiveOverlayProject(t *testing.T) {
 	}
 }
 
-// RunDirKey returns the run-dir key the Manager will use for projectPath.
-// Shared launches must collapse onto SharedContainerKey so the host-side run
-// dir aligns with the container-side mount.
 func TestRunDirKey(t *testing.T) {
 	cases := []struct {
 		name        string
 		isolation   string
-		hasDC       bool // simulate .devcontainer present?
 		projectPath string
 		want        string
 	}{
@@ -302,10 +282,6 @@ func TestStartOptionsFor_PropagatesIsolation(t *testing.T) {
 	}
 }
 
-// Cold-start window propagation: BeginColdStart must stamp ColdStart=true
-// on every StartOptions returned during the window, EndColdStart must
-// restore the default (false). Pins the coordinator → launcher → Manager
-// contract for "Cold Start で古い稼働中のコンテナを見つけた場合は再作成する".
 func TestColdStart_PropagatesToStartOptions(t *testing.T) {
 	l := &DevcontainerLauncher{
 		resolveSandbox: func(string) config.SandboxConfig {
@@ -332,23 +308,17 @@ func TestColdStart_PropagatesToStartOptions(t *testing.T) {
 	}
 }
 
-// ColdStartAware interface conformance: the coordinator switches into
-// cold-start mode via type assertion, so DevcontainerLauncher must satisfy
-// ColdStartAware. A direct interface assignment catches the regression at
-// compile time as well.
 func TestDevcontainerLauncher_ImplementsColdStartAware(t *testing.T) {
 	var _ ColdStartAware = (*DevcontainerLauncher)(nil)
 }
 
 func TestResolveStartOptions_ProjectScopeForcesProject(t *testing.T) {
-	// project-scope sandbox config explicitly says isolation=project; even if
-	// the user-scope is "shared" the launcher must stay project-mode.
 	l := &DevcontainerLauncher{
 		resolveSandbox: func(string) config.SandboxConfig {
-			return config.SandboxConfig{Isolation: "shared"} // user level
+			return config.SandboxConfig{Isolation: "shared"}
 		},
 		resolveProjectScope: func(string) *config.SandboxConfig {
-			return &config.SandboxConfig{Isolation: "project"} // project override
+			return &config.SandboxConfig{Isolation: "project"}
 		},
 	}
 	opts := l.resolveStartOptions("/workspace/myapp")
@@ -358,8 +328,6 @@ func TestResolveStartOptions_ProjectScopeForcesProject(t *testing.T) {
 }
 
 func TestResolveStartOptions_ProjectScopeDevcontainerPath(t *testing.T) {
-	// Specifying [sandbox.devcontainer] path at project scope is treated as an
-	// explicit project-mode signal: that project has its own container.
 	l := &DevcontainerLauncher{
 		resolveSandbox: func(string) config.SandboxConfig {
 			return config.SandboxConfig{Isolation: "shared"}
@@ -379,8 +347,6 @@ func TestResolveStartOptions_ProjectScopeDevcontainerPath(t *testing.T) {
 	}
 }
 
-// stubHelperBinaries places dummy roost-bridge / sockbridge next to the test
-// executable so InstallBinaryInRunDir succeeds without a real build artifact.
 func stubHelperBinaries(t *testing.T) {
 	t.Helper()
 	exe, err := os.Executable()
@@ -400,19 +366,11 @@ func stubHelperBinaries(t *testing.T) {
 	}
 }
 
-// ResolveFrameContext must call the credproxy / env-script with the actual
-// project in project mode and with "" in shared mode (project scope is
-// intentionally not merged when isolation=shared).
 func TestResolveFrameContext_ProjectMode_UsesProjectPath(t *testing.T) {
 	l := &DevcontainerLauncher{
 		resolveSandbox:      func(string) config.SandboxConfig { return config.SandboxConfig{} },
 		resolveProjectScope: func(string) *config.SandboxConfig { return nil },
-		// no devcontainer.json discovery → resolveStartOptions falls through to
-		// "not shared" because resolveSandbox returns empty isolation. So this
-		// is treated as project mode.
 	}
-	// proxy nil means resolveOverlaySpecs returns zero spec, but we can still
-	// observe that the function does not error and FrameID is propagated.
 	ctx, err := l.ResolveFrameContext(context.Background(), "/workspace/credproxy", "frame-1")
 	if err != nil {
 		t.Fatalf("ResolveFrameContext: %v", err)
@@ -423,16 +381,10 @@ func TestResolveFrameContext_ProjectMode_UsesProjectPath(t *testing.T) {
 }
 
 func TestResolveFrameContext_SharedMode_DropsProject(t *testing.T) {
-	// In shared mode resolveStartOptions returns SharedMode=true and
-	// ResolveFrameContext must use "" (user scope) for env-script & credproxy.
-	// We verify by capturing the project key passed to resolveSandbox.
 	var lastKey string
 	l := &DevcontainerLauncher{
 		resolveSandbox: func(p string) config.SandboxConfig {
 			lastKey = p
-			if p == "" {
-				return config.SandboxConfig{Isolation: "shared"}
-			}
 			return config.SandboxConfig{Isolation: "shared"}
 		},
 		resolveProjectScope: func(string) *config.SandboxConfig { return nil },
@@ -446,23 +398,15 @@ func TestResolveFrameContext_SharedMode_DropsProject(t *testing.T) {
 	}
 }
 
-// Regression guard for "bash: executable file not found" in shared mode:
-// hostexec provider emits PATH="<shims>:$PATH" expecting the container-create
-// pipeline to expand $PATH against the image env. Routing that same value
-// through frameCtx would land the literal "$PATH" into docker exec -e, and
-// docker's "last -e wins" rule would clobber the already-expanded
-// spec.RemoteEnv["PATH"], leaving the container unable to find /bin/bash.
-// frameScopeEnv must drop both the PATH key and any value that still contains
-// an unresolved $-placeholder.
 func TestFrameScopeEnv_DropsContainerScopeAndPlaceholders(t *testing.T) {
 	in := map[string]string{
 		"PATH":               "/opt/roost/run/hostexec-shims:$PATH",
 		"ROOST_SOCKET":       "/opt/roost/run/roost.sock",
 		"ROOST_DATA_DIR":     "/opt/roost/run",
 		"SSH_AUTH_SOCK":      "/opt/roost/run/agent.sock",
-		"AWS_PROFILE":        "prod",                       // per-frame credential, must pass
-		"GCP_PROJECT":        "my-proj",                    // per-frame credential, must pass
-		"NESTED_PLACEHOLDER": "${SOME_OTHER}/bin:/usr/bin", // unresolved, drop
+		"AWS_PROFILE":        "prod",
+		"GCP_PROJECT":        "my-proj",
+		"NESTED_PLACEHOLDER": "${SOME_OTHER}/bin:/usr/bin",
 	}
 	out := frameScopeEnv(in)
 
@@ -480,11 +424,6 @@ func TestFrameScopeEnv_DropsContainerScopeAndPlaceholders(t *testing.T) {
 	}
 }
 
-// Regression guard: in project mode, ResolveFrameContext must pass the actual
-// project (not "") to env-script and credproxy so per-project credentials
-// resolve correctly. Project mode keeps the legacy behavior where every frame
-// shares the same project, so this is straight-forward — but if shared-mode
-// logic ever bled into project mode it would show up here.
 func TestResolveFrameContext_ProjectMode_PassesProjectPath(t *testing.T) {
 	var lastKey string
 	l := &DevcontainerLauncher{
@@ -504,7 +443,6 @@ func TestResolveFrameContext_ProjectMode_PassesProjectPath(t *testing.T) {
 }
 
 func TestResolveFrameContext_EmptyProjectPath(t *testing.T) {
-	// Host launches that accidentally hit the devcontainer launcher must not panic.
 	l := &DevcontainerLauncher{
 		resolveSandbox:      func(string) config.SandboxConfig { return config.SandboxConfig{} },
 		resolveProjectScope: func(string) *config.SandboxConfig { return nil },
@@ -518,13 +456,8 @@ func TestResolveFrameContext_EmptyProjectPath(t *testing.T) {
 	}
 }
 
-// Regression guard for BUG #4–#7: in shared mode the overlay must not be
-// stamped with the first-frame project, because every later frame's docker
-// exec would otherwise pick up that project's env/credentials/bridges.
 func TestBuildContainerOverlay_SharedMode_UsesUserScope(t *testing.T) {
 	stubHelperBinaries(t)
-	// resolveSandbox captures which key is requested. Project mode must
-	// pass the project; shared mode must pass "".
 	var lastConfigKey string
 	resolveSandbox := func(key string) config.SandboxConfig {
 		lastConfigKey = key
@@ -548,9 +481,6 @@ func TestBuildContainerOverlay_SharedMode_UsesUserScope(t *testing.T) {
 	}
 }
 
-// Regression guard: the WorkspaceFolderFallback baked into the shared spec
-// must NOT be the first frame's project — otherwise spec.WorkspaceTarget()
-// returns that path and every later frame's docker exec lands there.
 func TestBuildContainerOverlay_SharedMode_WorkspaceFallbackIsEmpty(t *testing.T) {
 	stubHelperBinaries(t)
 	resolveSandbox := func(string) config.SandboxConfig {
@@ -566,8 +496,7 @@ func TestBuildContainerOverlay_SharedMode_WorkspaceFallbackIsEmpty(t *testing.T)
 		t.Fatalf("overlay: %v", err)
 	}
 	if ov.WorkspaceFolderFallback != "" {
-		t.Errorf("shared mode WorkspaceFolderFallback = %q, want \"\" (per-frame pathmap handles it)",
-			ov.WorkspaceFolderFallback)
+		t.Errorf("shared mode WorkspaceFolderFallback = %q, want \"\"", ov.WorkspaceFolderFallback)
 	}
 }
 

@@ -1,4 +1,8 @@
-package runtime
+// Package credproxy provides an in-process credential proxy server that
+// fans out to per-provider SpecBuilders (AWS SSO, GCP, SSH agent, hostexec,
+// MCP proxy). Container paths are accepted as parameters so this package
+// does not depend on platform/agentlaunch.
+package credproxy
 
 import (
 	"context"
@@ -10,7 +14,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/takezoh/agent-roost/client/config"
+	"github.com/takezoh/agent-roost/platform/config"
 	"github.com/takezoh/agent-roost/platform/hostexec"
 	"github.com/takezoh/agent-roost/platform/mcpproxy"
 	"github.com/takezoh/credproxy/container"
@@ -20,10 +24,16 @@ import (
 	"github.com/takezoh/credproxy/providers/sshagent"
 )
 
-// CredProxyRunner holds an in-process credential proxy server and a set of
-// provider-specific SpecBuilders. Each provider encapsulates all knowledge of
-// its credential system; this runner fans out ContainerSpec calls and merges results.
-type CredProxyRunner struct {
+// Paths holds the container-side paths that providers need. Callers supply
+// these from platform/agentlaunch constants so credproxy stays independent.
+type Paths struct {
+	RunDir  string
+	BinPath string
+	MCPSock string
+}
+
+// Runner holds an in-process credential proxy server and provider SpecBuilders.
+type Runner struct {
 	srv       *credproxylib.Server
 	providers []container.Provider
 
@@ -31,9 +41,9 @@ type CredProxyRunner struct {
 	tokens map[string]string // projectPath → bearer token
 }
 
-// ProjectToken returns the bearer token for projectPath, generating and registering
-// a new one if none exists yet. Safe for concurrent use.
-func (r *CredProxyRunner) ProjectToken(projectPath string) (string, error) {
+// ProjectToken returns the bearer token for projectPath, generating and
+// registering a new one if none exists. Safe for concurrent use.
+func (r *Runner) ProjectToken(projectPath string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if t, ok := r.tokens[projectPath]; ok {
@@ -49,18 +59,18 @@ func (r *CredProxyRunner) ProjectToken(projectPath string) (string, error) {
 	return token, nil
 }
 
-// StartCredProxy starts an in-process credential proxy and registers all built-in
-// providers. resolveSandbox provides per-project SandboxConfig; it is called
-// lazily inside each provider's ContainerSpec.
-func StartCredProxy(ctx context.Context, dataDir string, resolveSandbox func(string) config.SandboxConfig) (*CredProxyRunner, error) {
+// Start starts an in-process credential proxy and registers all built-in
+// providers. resolveSandbox provides per-project SandboxConfig; paths carries
+// the container-side paths the providers need.
+func Start(ctx context.Context, dataDir string, resolveSandbox func(string) config.SandboxConfig, paths Paths) (*Runner, error) {
 	runBase := dataDir + "/run"
 	if err := os.MkdirAll(runBase, 0o700); err != nil {
 		return nil, fmt.Errorf("credproxy: create run dir: %w", err)
 	}
 	sockPath := filepath.Join(runBase, "credproxy.sock")
 
-	runner := &CredProxyRunner{tokens: make(map[string]string)}
-	providers := buildProviders(ctx, runBase, sockPath, resolveSandbox, runner.ProjectToken)
+	runner := &Runner{tokens: make(map[string]string)}
+	providers := buildProviders(ctx, runBase, sockPath, resolveSandbox, runner.ProjectToken, paths)
 
 	var routes []credproxylib.Route
 	for _, p := range providers {
@@ -102,9 +112,10 @@ func buildProviders(
 	runBase, sockPath string,
 	resolveSandbox func(string) config.SandboxConfig,
 	tokenFor func(string) (string, error),
+	paths Paths,
 ) []container.Provider {
-	cred := buildCredProviders(ctx, runBase, sockPath, resolveSandbox, tokenFor)
-	tool := buildToolProviders(ctx, runBase, resolveSandbox)
+	cred := buildCredProviders(ctx, runBase, sockPath, resolveSandbox, tokenFor, paths)
+	tool := buildToolProviders(ctx, runBase, resolveSandbox, paths)
 	return append(cred, tool...)
 }
 
@@ -113,20 +124,21 @@ func buildCredProviders(
 	runBase, sockPath string,
 	resolveSandbox func(string) config.SandboxConfig,
 	tokenFor func(string) (string, error),
+	paths Paths,
 ) []container.Provider {
 	aws := awssso.NewSpecBuilder(
 		awssso.Config{
 			HostRunBase:       runBase,
 			HostSockPath:      sockPath,
-			ContainerRunDir:   ContainerRunDir,
-			ContainerSockPath: ContainerRunDir + "/credproxy.sock",
+			ContainerRunDir:   paths.RunDir,
+			ContainerSockPath: paths.RunDir + "/credproxy.sock",
 		},
 		func(p string) []string { return resolveSandbox(p).Proxy.AWSProfiles },
 		tokenFor,
 	)
 	gcp := gcloudcli.NewSpecBuilder(
 		ctx,
-		gcloudcli.Config{RunBase: runBase, ContainerRunDir: ContainerRunDir},
+		gcloudcli.Config{RunBase: runBase, ContainerRunDir: paths.RunDir},
 		func(p string) gcloudcli.GCPConfig {
 			g := resolveSandbox(p).Proxy.GCP
 			return gcloudcli.GCPConfig{Account: g.Account, ServiceAccount: g.ServiceAccount, Active: g.Active, Projects: g.Projects}
@@ -134,7 +146,7 @@ func buildCredProviders(
 	)
 	ssh := sshagent.NewSpecBuilder(
 		ctx,
-		sshagent.Config{RunBase: runBase, ContainerRunDir: ContainerRunDir},
+		sshagent.Config{RunBase: runBase, ContainerRunDir: paths.RunDir},
 		func(p string) []string { return resolveSandbox(p).Proxy.SSHAgent.Keys },
 	)
 	return []container.Provider{aws, gcp, ssh}
@@ -144,16 +156,21 @@ func buildToolProviders(
 	ctx context.Context,
 	runBase string,
 	resolveSandbox func(string) config.SandboxConfig,
+	paths Paths,
 ) []container.Provider {
 	wsFolderFor := func(p string) string {
-		return resolveWorkspaceFallback(p, resolveSandbox(p).Devcontainer.HostPathMountPrefix)
+		dc := resolveSandbox(p).Devcontainer
+		if dc.HostPathMountPrefix == "" {
+			return p
+		}
+		return dc.HostPathMountPrefix + p
 	}
 	he := hostexec.NewSpecBuilder(ctx,
-		hostexec.Config{RunBase: runBase, ContainerRunDir: ContainerRunDir, ContainerBinPath: ContainerBinaryPath, WorkspaceFolderFor: wsFolderFor},
+		hostexec.Config{RunBase: runBase, ContainerRunDir: paths.RunDir, ContainerBinPath: paths.BinPath, WorkspaceFolderFor: wsFolderFor},
 		func(p string) config.HostExecConfig { return resolveSandbox(p).Proxy.HostExec },
 	)
 	mcp := mcpproxy.NewSpecBuilder(ctx,
-		mcpproxy.Config{RunBase: runBase, ContainerSockPath: ContainerMCPSockPath, ContainerBinPath: ContainerBinaryPath, WorkspaceFolderFor: wsFolderFor},
+		mcpproxy.Config{RunBase: runBase, ContainerSockPath: paths.MCPSock, ContainerBinPath: paths.BinPath, WorkspaceFolderFor: wsFolderFor},
 		func(p string) config.MCPProxyConfig { return resolveSandbox(p).Proxy.MCPProxy },
 	)
 	return []container.Provider{he, mcp}
@@ -161,7 +178,7 @@ func buildToolProviders(
 
 // ContainerSpec fans out to all providers and merges their Env, Mounts, and BridgeSpecs.
 // Provider errors are logged as warnings and do not abort the other providers.
-func (r *CredProxyRunner) ContainerSpec(ctx context.Context, projectPath string) (container.Spec, error) {
+func (r *Runner) ContainerSpec(ctx context.Context, projectPath string) (container.Spec, error) {
 	out := container.Spec{Env: map[string]string{}}
 	for _, p := range r.providers {
 		s, err := p.ContainerSpec(ctx, projectPath)

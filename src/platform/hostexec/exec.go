@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/takezoh/agent-roost/client/config"
+	"github.com/takezoh/agent-roost/platform/config"
 	"golang.org/x/term"
 )
 

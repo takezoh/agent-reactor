@@ -1,4 +1,4 @@
-package runtime
+package agentlaunch
 
 import (
 	"context"
@@ -10,9 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/takezoh/agent-roost/client/config"
-	cstream "github.com/takezoh/agent-roost/client/runtime/subsystem/stream"
-	"github.com/takezoh/agent-roost/client/state"
+	"github.com/takezoh/agent-roost/platform/config"
+	"github.com/takezoh/agent-roost/platform/credproxy"
 	"github.com/takezoh/agent-roost/platform/pathmap"
 	"github.com/takezoh/agent-roost/platform/sandbox"
 	sandboxdc "github.com/takezoh/agent-roost/platform/sandbox/devcontainer"
@@ -20,31 +19,28 @@ import (
 )
 
 // DevcontainerLauncher wraps launches inside per-project devcontainers.
-// It implements AgentLauncher by delegating to a sandbox.Manager[*devcontainer.ContainerState].
+// It implements Dispatcher by delegating to a sandbox.Manager[*devcontainer.ContainerState].
 type DevcontainerLauncher struct {
 	mgr                 sandbox.Manager[*sandboxdc.ContainerState]
 	resolveSandbox      func(projectPath string) config.SandboxConfig
 	resolveProjectScope func(projectPath string) *config.SandboxConfig
-	proxy               *CredProxyRunner // nil when proxy disabled
+	proxy               *credproxy.Runner // nil when proxy disabled
 	dataDir             string
-	coldStart           atomic.Bool // toggled by coordinator's cold-start path
+	coldStart           atomic.Bool
 }
 
-// BeginColdStart marks the launcher as being in cold-start mode (implements
-// ColdStartAware). EnsureProject / WrapLaunch calls issued in this window
-// discard any pre-existing container so a fresh one is provisioned —
-// covering daemon crashes / SIGKILL where DestroyInstance never ran.
+// BeginColdStart marks the launcher as being in cold-start mode.
 func (l *DevcontainerLauncher) BeginColdStart() { l.coldStart.Store(true) }
-func (l *DevcontainerLauncher) EndColdStart()   { l.coldStart.Store(false) }
 
-// NewDevcontainerLauncher creates an AgentLauncher that runs agents inside devcontainers.
-// dataDir is the daemon's data directory (e.g. ~/.roost); it contains the run/ subtree.
-// resolveProjectScope returns the raw project-scope SandboxConfig (nil if absent).
+// EndColdStart clears cold-start mode.
+func (l *DevcontainerLauncher) EndColdStart() { l.coldStart.Store(false) }
+
+// NewDevcontainerLauncher creates a Dispatcher that runs agents inside devcontainers.
 func NewDevcontainerLauncher(
 	mgr sandbox.Manager[*sandboxdc.ContainerState],
 	resolveSandbox func(string) config.SandboxConfig,
 	resolveProjectScope func(string) *config.SandboxConfig,
-	proxy *CredProxyRunner,
+	proxy *credproxy.Runner,
 	dataDir string,
 ) *DevcontainerLauncher {
 	return &DevcontainerLauncher{
@@ -58,19 +54,18 @@ func NewDevcontainerLauncher(
 
 const containerEnsureTimeout = 120 * time.Second
 
-// WrapLaunch ensures the project devcontainer is running and returns a launch
-// spec that runs the agent via "docker exec".
-// The image must already be built ("roost build <project>").
-func (l *DevcontainerLauncher) WrapLaunch(frameID state.FrameID, plan state.LaunchPlan, env map[string]string) (WrappedLaunch, error) {
+// Wrap ensures the project devcontainer is running and returns a launch spec
+// that runs the agent via "docker exec".
+func (l *DevcontainerLauncher) Wrap(ctx context.Context, frameID string, plan LaunchPlan) (WrappedLaunch, error) {
 	if plan.Project == "" {
 		return WrappedLaunch{}, fmt.Errorf("devcontainer launcher: plan.Project is empty for frame %s", frameID)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), containerEnsureTimeout)
+	ensureCtx, cancel := context.WithTimeout(ctx, containerEnsureTimeout)
 	defer cancel()
 
 	opts := l.resolveStartOptions(plan.Project)
-	inst, err := l.mgr.EnsureInstance(ctx, plan.Project, "", opts)
+	inst, err := l.mgr.EnsureInstance(ensureCtx, plan.Project, "", opts)
 	if err != nil {
 		return WrappedLaunch{}, fmt.Errorf("devcontainer launcher: ensure instance: %w", err)
 	}
@@ -87,14 +82,10 @@ func (l *DevcontainerLauncher) WrapLaunch(frameID state.FrameID, plan state.Laun
 	if inst.Internal.IsShared() {
 		wsHost, wsContainer = "", ""
 	}
-	mounts := buildMounts(wsHost, wsContainer, runDir, inst.Internal.BindMounts())
+	pm := buildMounts(wsHost, wsContainer, runDir, inst.Internal.BindMounts())
 
-	// Resolve startDir to its container-side path via the pathmap before handing
-	// it to BuildLaunchCommand. Pass it through FrameContext so shared containers
-	// (which have no canonical project root) get the right `docker exec -w`
-	// without the spec needing to know anything about the frame's project.
 	workDir := plan.StartDir
-	if containerPath, ok := mounts.ToContainer(plan.StartDir); ok {
+	if containerPath, ok := pm.ToContainer(plan.StartDir); ok {
 		workDir = containerPath
 	}
 	frameCtx, err := l.ResolveFrameContext(ctx, plan.Project, frameID)
@@ -103,7 +94,7 @@ func (l *DevcontainerLauncher) WrapLaunch(frameID state.FrameID, plan state.Laun
 	}
 	frameCtx.WorkDir = workDir
 
-	cmd, outEnv, err := l.mgr.BuildLaunchCommand(inst, plan, frameCtx, env)
+	cmd, outEnv, err := l.mgr.BuildLaunchCommand(inst, sandbox.LaunchSpec{Command: plan.Command, StartDir: plan.StartDir}, frameCtx, plan.Env)
 	if err != nil {
 		return WrappedLaunch{}, fmt.Errorf("devcontainer launcher: build command: %w", err)
 	}
@@ -113,14 +104,12 @@ func (l *DevcontainerLauncher) WrapLaunch(frameID state.FrameID, plan state.Laun
 		StartDir:         workDir,
 		Env:              outEnv,
 		Cleanup:          l.makeCleanup(frameID, inst),
-		Subsystem:        plan.Subsystem,
-		Stream:           plan.Stream,
 		ContainerSockDir: runDir,
-		Mounts:           mounts,
+		Mounts:           toMounts(pm),
 	}, nil
 }
 
-// runDirKey returns the key to use for the per-container run directory.
+// runDirKey returns the key for the per-container run directory.
 func (l *DevcontainerLauncher) runDirKey(projectPath string, opts sandbox.StartOptions) string {
 	if opts.SharedMode {
 		return sandboxdc.SharedContainerKey
@@ -128,25 +117,17 @@ func (l *DevcontainerLauncher) runDirKey(projectPath string, opts sandbox.StartO
 	return projectPath
 }
 
-// RunDirKey returns the run-dir key (instance key) for projectPath, resolving
-// shared vs project isolation. Callers outside WrapLaunch use this to align
-// the per-frame run directory with the container the launcher will actually
-// produce.
+// RunDirKey returns the run-dir key for projectPath (shared vs project isolation).
 func (l *DevcontainerLauncher) RunDirKey(projectPath string) string {
 	return l.runDirKey(projectPath, l.resolveStartOptions(projectPath))
 }
 
-// StartOptionsFor exposes the resolved StartOptions for projectPath so callers
-// that interact with the underlying Manager directly (e.g. stream backend) use
-// the same shared/project decision as WrapLaunch.
+// StartOptionsFor exposes the resolved StartOptions so callers that interact
+// with the underlying Manager use the same shared/project decision as Wrap.
 func (l *DevcontainerLauncher) StartOptionsFor(projectPath string) sandbox.StartOptions {
 	return l.resolveStartOptions(projectPath)
 }
 
-// resolveStartOptions determines whether to use shared or project isolation for
-// projectPath, and builds the corresponding sandbox.StartOptions.
-// ColdStart is propagated from the launcher's mode flag so any container
-// found during this call is discarded and reprovisioned.
 func (l *DevcontainerLauncher) resolveStartOptions(projectPath string) sandbox.StartOptions {
 	opts := l.startOptionsForIsolation(projectPath)
 	opts.ColdStart = l.coldStart.Load()
@@ -154,13 +135,11 @@ func (l *DevcontainerLauncher) resolveStartOptions(projectPath string) sandbox.S
 }
 
 func (l *DevcontainerLauncher) startOptionsForIsolation(projectPath string) sandbox.StartOptions {
-	// Project has its own .devcontainer — always project isolation (cheap check first).
 	if _, err := sandboxdc.ProjectBaseDC(projectPath); err == nil {
 		return sandbox.StartOptions{}
 	}
 
 	projScope := l.resolveProjectScope(projectPath)
-	// Project opts out of shared mode or specifies its own devcontainer path.
 	if projScope != nil && (projScope.Isolation == "project" || projScope.Devcontainer.Path != "") {
 		return sandbox.StartOptions{DevcontainerDir: config.ExpandPath(projScope.Devcontainer.Path)}
 	}
@@ -176,10 +155,9 @@ func (l *DevcontainerLauncher) startOptionsForIsolation(projectPath string) sand
 	}
 }
 
+func (l *DevcontainerLauncher) IsContainer(_ string) bool { return true }
+
 // buildMounts constructs the pathmap.Mounts for a devcontainer instance.
-// Without the user-declared bind mounts here, driver-specific data paths that
-// are bind-mounted into the container get cleared at the IPC boundary and
-// driver tab views silently empty.
 func buildMounts(hostProject, containerWS, hostRunDir string, userBinds []sandboxdc.BindMount) pathmap.Mounts {
 	type key = [2]string
 	seen := map[key]bool{}
@@ -203,7 +181,17 @@ func buildMounts(hostProject, containerWS, hostRunDir string, userBinds []sandbo
 	return ms
 }
 
-func (l *DevcontainerLauncher) IsContainer(_ string) bool { return true }
+// toMounts converts pathmap.Mounts to the pure []Mount type.
+func toMounts(pm pathmap.Mounts) []Mount {
+	if len(pm) == 0 {
+		return nil
+	}
+	out := make([]Mount, len(pm))
+	for i, m := range pm {
+		out[i] = Mount{Host: m.Host, Container: m.Container}
+	}
+	return out
+}
 
 // EnsureProject ensures the devcontainer for projectPath is running.
 func (l *DevcontainerLauncher) EnsureProject(ctx context.Context, projectPath string) error {
@@ -218,7 +206,7 @@ func (l *DevcontainerLauncher) EnsureProject(ctx context.Context, projectPath st
 }
 
 // AdoptFrame reclaims an existing devcontainer for a pre-running frame.
-func (l *DevcontainerLauncher) AdoptFrame(ctx context.Context, frameID state.FrameID, projectPath string) (func() error, pathmap.Mounts, error) {
+func (l *DevcontainerLauncher) AdoptFrame(ctx context.Context, frameID, projectPath string) (func(context.Context) error, []Mount, error) {
 	if projectPath == "" {
 		return nil, nil, nil
 	}
@@ -235,46 +223,35 @@ func (l *DevcontainerLauncher) AdoptFrame(ctx context.Context, frameID state.Fra
 	if inst.Internal.IsShared() {
 		wsHost, wsContainer = "", ""
 	}
-	mounts := buildMounts(wsHost, wsContainer, runDir, inst.Internal.BindMounts())
-	return l.makeCleanup(frameID, inst), mounts, nil
+	pm := buildMounts(wsHost, wsContainer, runDir, inst.Internal.BindMounts())
+	return l.makeCleanup(frameID, inst), toMounts(pm), nil
 }
 
-func (l *DevcontainerLauncher) makeCleanup(frameID state.FrameID, inst *sandbox.Instance[*sandboxdc.ContainerState]) func() error {
-	return func() error {
+func (l *DevcontainerLauncher) makeCleanup(frameID string, inst *sandbox.Instance[*sandboxdc.ContainerState]) func(context.Context) error {
+	return func(ctx context.Context) error {
 		shouldDestroy := l.mgr.ReleaseFrame(inst)
 		slog.Debug("devcontainer launcher: frame released",
 			"frame", frameID, "project", inst.ProjectPath, "destroy", shouldDestroy)
 		if !shouldDestroy {
 			return nil
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		return l.mgr.DestroyInstance(ctx, inst)
 	}
 }
 
 // BuildContainerOverlay returns the OverlayFunc applied once per container at
-// EnsureInstance time. Its output ends up baked into the container-scoped
-// DevcontainerSpec, so it must carry only container-scope state: workspace
-// bind-mounts, postCreate bridges, container-level env defaults.
-//
-// Per-frame state (per-project credential / env-script results that vary across
-// frames inside a shared container) is resolved later by ResolveFrameContext
-// and emitted as docker exec -e at launch time — NOT through this overlay.
-//
-// effectiveOverlayProject keeps the shared-mode invariant: for SharedContainerKey
-// the project is dropped to "" so project-scope sandbox config is not merged.
-// For project-mode containers the actual project is used (= existing behavior).
-//
-// dataDir is the daemon's data directory (e.g. ~/.roost). postCreateSubcmds
-// are driver-specific setup commands; the caller injects them so runtime stays
-// driver-agnostic. projects supplies the workspace list for shared containers.
-func BuildContainerOverlay(resolveSandbox func(string) config.SandboxConfig, projects config.ProjectsConfig, proxy *CredProxyRunner, dataDir string, postCreateSubcmds []string) sandboxdc.OverlayFunc {
+// EnsureInstance time. It bakes container-scope state into the DevcontainerSpec:
+// workspace bind-mounts, postCreate bridges, and container-level env defaults.
+func BuildContainerOverlay(
+	resolveSandbox func(string) config.SandboxConfig,
+	projects config.ProjectsConfig,
+	proxy *credproxy.Runner,
+	dataDir string,
+	postCreateSubcmds []string,
+) sandboxdc.OverlayFunc {
 	return func(instanceKey, projectPath, dcDir string) (sandboxdc.SpecOverlay, error) {
-		// Shared containers run all projects in one image: per-project env,
-		// credentials, bridges, and workspace fallback would otherwise be
-		// frozen to whichever project triggered the overlay first and leak
-		// into every later frame. Resolve everything at user scope instead.
 		overlayProject := effectiveOverlayProject(instanceKey, projectPath)
 		sb := resolveSandbox(overlayProject)
 		dc := sb.Devcontainer
@@ -284,7 +261,6 @@ func BuildContainerOverlay(resolveSandbox func(string) config.SandboxConfig, pro
 			return sandboxdc.SpecOverlay{}, err
 		}
 
-		// Use instanceKey for run dir so all projects in shared mode share one run dir.
 		runDir, err := EnsureProjectRunDir(filepath.Join(dataDir, "run"), instanceKey)
 		if err != nil {
 			return sandboxdc.SpecOverlay{}, fmt.Errorf("devcontainer: ensure run dir: %w", err)
@@ -303,11 +279,9 @@ func BuildContainerOverlay(resolveSandbox func(string) config.SandboxConfig, pro
 			fmt.Sprintf("type=bind,source=%s,target=%s", runDir, ContainerRunDir),
 		}, proxySpec.Mounts...)
 
-		// codex backend's sockbridge is registered alongside provider
-		// bridges so postCreate starts them all in one place.
 		bridges := make([]container.BridgeSpec, 0, len(proxySpec.BridgeSpecs)+1)
 		bridges = append(bridges, proxySpec.BridgeSpecs...)
-		bridges = append(bridges, cstream.ContainerBridgeSpec(ContainerRunDir))
+		bridges = append(bridges, ContainerBridgeSpec(ContainerRunDir))
 		postCreate := buildPostCreate(binPath, postCreateSubcmds, bridges)
 
 		var extraWorkspaces []sandboxdc.BindMount
@@ -326,11 +300,6 @@ func BuildContainerOverlay(resolveSandbox func(string) config.SandboxConfig, pro
 	}
 }
 
-// effectiveOverlayProject returns the project context that BuildOverlayFunc
-// should hand to env-script, credproxy, and workspace-fallback resolution.
-// Project-mode containers use the frame's actual project. Shared containers
-// must use "" so the resolved values stay at user scope — otherwise the first
-// frame's project pins them onto the shared spec for every later frame.
 func effectiveOverlayProject(instanceKey, projectPath string) string {
 	if instanceKey == sandboxdc.SharedContainerKey {
 		return ""
@@ -354,9 +323,6 @@ func sharedWorkspaceBindMounts(projects config.ProjectsConfig, prefix string) []
 	return out
 }
 
-// resolveWorkspaceFallback returns the container-side path to use when
-// devcontainer.json doesn't specify workspaceFolder or workspaceMount.
-// Empty prefix mirrors the host path as-is; non-empty prefix prepends it.
 func resolveWorkspaceFallback(projectPath, prefix string) string {
 	if prefix == "" {
 		return projectPath
@@ -364,18 +330,9 @@ func resolveWorkspaceFallback(projectPath, prefix string) string {
 	return path.Join(prefix, projectPath)
 }
 
-// ResolveFrameContext computes per-frame env by invoking env-script and
-// credproxy for the frame's project at launch time.
-//
-// In shared mode the project parameter is dropped (user scope only) — project
-// scope sandbox config is intentionally not merged when isolation=shared, so
-// every shared-container frame sees the same user-scope credential set.
-//
-// In project mode the actual project path is used so per-project credentials
-// (AWS profile, GCP active, hostexec policy, …) resolve correctly. The result
-// is fed to BuildLaunchCommand via sandbox.FrameContext.Env and emitted as
-// docker exec -e — it never touches the container-scoped DevcontainerSpec.
-func (l *DevcontainerLauncher) ResolveFrameContext(ctx context.Context, projectPath string, frameID state.FrameID) (sandbox.FrameContext, error) {
+// ResolveFrameContext computes per-frame env by invoking env-script and credproxy.
+// frameID is plain string; callers that hold a typed FrameID should convert with string().
+func (l *DevcontainerLauncher) ResolveFrameContext(ctx context.Context, projectPath string, frameID string) (sandbox.FrameContext, error) {
 	opts := l.resolveStartOptions(projectPath)
 	effectiveProject := projectPath
 	if opts.SharedMode {
@@ -388,21 +345,11 @@ func (l *DevcontainerLauncher) ResolveFrameContext(ctx context.Context, projectP
 		return sandbox.FrameContext{}, err
 	}
 	return sandbox.FrameContext{
-		FrameID: frameID,
+		FrameID: sandbox.FrameID(frameID),
 		Env:     frameScopeEnv(proxySpec.Env),
 	}, nil
 }
 
-// frameScopeEnv returns the subset of proxy-supplied env that is safe to emit
-// as docker exec -e per frame. Container-scope keys (PATH, ROOST_*, anything
-// whose value still contains $-placeholders the container resolves at create
-// time) MUST be excluded — otherwise docker exec receives both the spec's
-// expanded value and the raw placeholder string, and the "last -e wins" rule
-// of docker hands the broken raw string to the container (e.g. PATH=...:$PATH
-// with $PATH literal, making /bin/bash unreachable).
-//
-// Per-frame credentials (AWS_PROFILE, GCP_PROJECT, custom OIDC tokens, …)
-// flow through unchanged.
 func frameScopeEnv(proxyEnv map[string]string) map[string]string {
 	out := make(map[string]string, len(proxyEnv))
 	for k, v := range proxyEnv {
@@ -410,8 +357,6 @@ func frameScopeEnv(proxyEnv map[string]string) map[string]string {
 			continue
 		}
 		if strings.Contains(v, "$") {
-			// Placeholder is meant for spec.RemoteEnv container-time expansion.
-			// Leaving it in frameCtx would emit the raw $… into docker exec -e.
 			continue
 		}
 		out[k] = v
@@ -419,9 +364,6 @@ func frameScopeEnv(proxyEnv map[string]string) map[string]string {
 	return out
 }
 
-// isContainerScopeEnvKey identifies env keys whose value does not vary across
-// frames in the same container. These are owned by BuildContainerOverlay and
-// must not be re-emitted from frameCtx (see frameScopeEnv).
 func isContainerScopeEnvKey(k string) bool {
 	switch k {
 	case "PATH", "ROOST_SOCKET", "ROOST_DATA_DIR", "SSH_AUTH_SOCK":
@@ -430,7 +372,7 @@ func isContainerScopeEnvKey(k string) bool {
 	return false
 }
 
-func resolveOverlaySpecs(proxy *CredProxyRunner, projectPath string, dc config.DevcontainerConfig) (container.Spec, map[string]string, error) {
+func resolveOverlaySpecs(proxy *credproxy.Runner, projectPath string, dc config.DevcontainerConfig) (container.Spec, map[string]string, error) {
 	allow := isProjectEnvScriptAllowed(projectPath, dc.AllowProjectEnvScript)
 	scriptEnv := sandboxdc.RunEnvScript(context.Background(), dc.EnvScript, projectPath, allow)
 
@@ -460,9 +402,6 @@ func buildOverlayEnv(scriptEnv map[string]string, proxySpec container.Spec) map[
 	return env
 }
 
-// buildPostCreate assembles a bash -lc postCreateCommand that:
-//  1. starts each bridge as a background daemon, and
-//  2. runs each postCreateSubcmd in sequence in the foreground.
 func buildPostCreate(binPath string, postCreateSubcmds []string, bridges []container.BridgeSpec) []string {
 	var parts []string
 	for _, bs := range bridges {
@@ -478,7 +417,6 @@ func buildPostCreate(binPath string, postCreateSubcmds []string, bridges []conta
 	return []string{"bash", "-lc", strings.Join(parts, "\n")}
 }
 
-// isProjectEnvScriptAllowed checks whether projectPath is in the allowlist.
 func isProjectEnvScriptAllowed(projectPath string, allowlist []string) bool {
 	for _, p := range allowlist {
 		if config.ExpandPath(p) == projectPath {
@@ -486,4 +424,30 @@ func isProjectEnvScriptAllowed(projectPath string, allowlist []string) bool {
 		}
 	}
 	return false
+}
+
+// ContainerExecInfo holds the docker-exec parameters needed to run a command
+// inside the project's devcontainer. See GetContainerExecInfo method.
+type ContainerExecInfo struct {
+	ContainerID string
+	User        string
+	WorkDir     string
+	PreExec     string
+}
+
+// GetContainerExecInfo ensures the container for projectPath is running and
+// returns the parameters needed for docker exec. Used by the stream backend.
+func (l *DevcontainerLauncher) GetContainerExecInfo(ctx context.Context, projectPath string) (*ContainerExecInfo, error) {
+	opts := l.resolveStartOptions(projectPath)
+	inst, err := l.mgr.EnsureInstance(ctx, projectPath, "", opts)
+	if err != nil {
+		return nil, err
+	}
+	cs := inst.Internal
+	return &ContainerExecInfo{
+		ContainerID: cs.ContainerID(),
+		User:        cs.EffectiveUser(),
+		WorkDir:     cs.WorkspaceTarget(),
+		PreExec:     cs.PreExec(),
+	}, nil
 }

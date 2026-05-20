@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/takezoh/agent-roost/client/state"
 	"github.com/takezoh/agent-roost/platform/sandbox"
 )
 
@@ -193,11 +192,9 @@ func TestBuildLaunchCommand_streamDirectCommand(t *testing.T) {
 		Internal:    &ContainerState{containerID: "ctr42", spec: spec},
 	}
 	m := &Manager{}
-	plan := state.LaunchPlan{
-		Project:   project,
-		StartDir:  project,
-		Command:   "codex resume thr_123 --remote unix:///opt/roost/run/codex-foo.sock",
-		Subsystem: state.LaunchSubsystemStream,
+	plan := sandbox.LaunchSpec{
+		StartDir: project,
+		Command:  "codex resume thr_123 --remote unix:///opt/roost/run/codex-foo.sock",
 	}
 
 	got, _, err := m.BuildLaunchCommand(inst, plan, sandbox.FrameContext{}, nil)
@@ -222,7 +219,7 @@ func TestBuildLaunchCommand_shellUsesLoginShell(t *testing.T) {
 		Internal:    &ContainerState{containerID: "abc123", spec: spec},
 	}
 	m := &Manager{}
-	plan := state.LaunchPlan{Project: project, StartDir: project, Command: "shell"}
+	plan := sandbox.LaunchSpec{StartDir: project, Command: "shell"}
 
 	got, _, err := m.BuildLaunchCommand(inst, plan, sandbox.FrameContext{}, nil)
 	if err != nil {
@@ -251,7 +248,7 @@ func TestBuildLaunchCommand_MergesFrameCtxEnv(t *testing.T) {
 		Internal:    &ContainerState{containerID: "ctr1", spec: spec},
 	}
 	m := &Manager{}
-	plan := state.LaunchPlan{Project: project, StartDir: project, Command: "bash"}
+	plan := sandbox.LaunchSpec{StartDir: project, Command: "bash"}
 	frameCtx := sandbox.FrameContext{Env: map[string]string{"AWS_PROFILE": "prod"}}
 
 	got, _, err := m.BuildLaunchCommand(inst, plan, frameCtx, nil)
@@ -284,7 +281,7 @@ func TestBuildLaunchCommand_SharedInstance_PerFrameIsolation(t *testing.T) {
 	m := &Manager{}
 
 	// Frame A: /workspace/agent-roost
-	planA := state.LaunchPlan{Project: "/workspace/agent-roost", Command: "bash"}
+	planA := sandbox.LaunchSpec{Command: "bash"}
 	ctxA := sandbox.FrameContext{
 		FrameID: "frame-a",
 		WorkDir: "/workspace/agent-roost",
@@ -299,7 +296,7 @@ func TestBuildLaunchCommand_SharedInstance_PerFrameIsolation(t *testing.T) {
 	}
 
 	// Frame B: /workspace/credproxy (different project, same Instance)
-	planB := state.LaunchPlan{Project: "/workspace/credproxy", Command: "bash"}
+	planB := sandbox.LaunchSpec{Command: "bash"}
 	ctxB := sandbox.FrameContext{
 		FrameID: "frame-b",
 		WorkDir: "/workspace/credproxy",
@@ -362,7 +359,7 @@ func TestBuildLaunchCommand_FrameCtxEnvWinsOnConflict(t *testing.T) {
 		Internal:    &ContainerState{containerID: "ctr1", spec: spec},
 	}
 	m := &Manager{}
-	plan := state.LaunchPlan{Project: project, StartDir: project, Command: "bash"}
+	plan := sandbox.LaunchSpec{StartDir: project, Command: "bash"}
 	frameCtx := sandbox.FrameContext{Env: map[string]string{"AWS_PROFILE": "prod"}}
 
 	got, _, err := m.BuildLaunchCommand(inst, plan, frameCtx, nil)
@@ -394,7 +391,7 @@ func TestBuildLaunchCommand_RemoteEnv(t *testing.T) {
 		Internal:    &ContainerState{containerID: "ctr123", spec: spec},
 	}
 	m := &Manager{}
-	plan := state.LaunchPlan{Project: project, StartDir: project, Command: "bash"}
+	plan := sandbox.LaunchSpec{StartDir: project, Command: "bash"}
 
 	got, _, err := m.BuildLaunchCommand(inst, plan, sandbox.FrameContext{}, nil)
 	if err != nil {
@@ -511,7 +508,7 @@ func TestBuildLaunchCommand_PreExec(t *testing.T) {
 			ProjectPath: project,
 			Internal:    &ContainerState{containerID: "abc123", spec: &spec},
 		}
-		got, _, err := m.BuildLaunchCommand(inst, state.LaunchPlan{Project: project, StartDir: project, Command: "bash"}, sandbox.FrameContext{}, nil)
+		got, _, err := m.BuildLaunchCommand(inst, sandbox.LaunchSpec{StartDir: project, Command: "bash"}, sandbox.FrameContext{}, nil)
 		if err != nil {
 			t.Fatalf("BuildLaunchCommand error: %v", err)
 		}
@@ -532,7 +529,7 @@ func TestBuildLaunchCommand_PreExec(t *testing.T) {
 			ProjectPath: project,
 			Internal:    &ContainerState{containerID: "abc123", spec: &spec},
 		}
-		got, _, err := m.BuildLaunchCommand(inst, state.LaunchPlan{Project: project, StartDir: project, Command: "bash"}, sandbox.FrameContext{}, nil)
+		got, _, err := m.BuildLaunchCommand(inst, sandbox.LaunchSpec{StartDir: project, Command: "bash"}, sandbox.FrameContext{}, nil)
 		if err != nil {
 			t.Fatalf("BuildLaunchCommand error: %v", err)
 		}
@@ -551,7 +548,7 @@ func TestBuildLaunchCommand_PreExec(t *testing.T) {
 			ProjectPath: project,
 			Internal:    &ContainerState{containerID: "abc123", spec: &spec},
 		}
-		got, _, err := m.BuildLaunchCommand(inst, state.LaunchPlan{Project: project, StartDir: project, Command: "shell"}, sandbox.FrameContext{}, nil)
+		got, _, err := m.BuildLaunchCommand(inst, sandbox.LaunchSpec{StartDir: project, Command: "shell"}, sandbox.FrameContext{}, nil)
 		if err != nil {
 			t.Fatalf("BuildLaunchCommand error: %v", err)
 		}
@@ -673,7 +670,7 @@ func TestApplyOverlayEnvAppearsInBuildLaunchCommand(t *testing.T) {
 		Internal:    &ContainerState{containerID: "ctr999", spec: spec},
 	}
 	m := &Manager{}
-	plan := state.LaunchPlan{Project: project, StartDir: project, Command: "claude"}
+	plan := sandbox.LaunchSpec{StartDir: project, Command: "claude"}
 
 	got, _, err := m.BuildLaunchCommand(inst, plan, sandbox.FrameContext{}, nil)
 	if err != nil {

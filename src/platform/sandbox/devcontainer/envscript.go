@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/takezoh/agent-roost/client/config"
+	"github.com/takezoh/agent-roost/platform/config"
 )
 
 // RunEnvScript runs scriptPath with projectPath as its first argument and

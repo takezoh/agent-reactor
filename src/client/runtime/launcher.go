@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/takezoh/agent-roost/client/state"
+	"github.com/takezoh/agent-roost/platform/agentlaunch"
 	"github.com/takezoh/agent-roost/platform/pathmap"
 )
 
@@ -14,12 +16,10 @@ import (
 // directly to TmuxBackend.SpawnWindow; Cleanup is called when the frame
 // is destroyed (nil is safe to ignore).
 type WrappedLaunch struct {
-	Command   string
-	StartDir  string
-	Env       map[string]string
-	Cleanup   func() error
-	Subsystem state.LaunchSubsystem
-	Stream    state.StreamLaunchOptions
+	Command  string
+	StartDir string
+	Env      map[string]string
+	Cleanup  func() error
 	// ContainerSockDir is set by devcontainer sandbox launchers to the host-side
 	// run directory that is bind-mounted into the container as /opt/roost/run.
 	// When non-empty, the runtime starts the container endpoint for this project.
@@ -82,11 +82,9 @@ func (d DirectLauncher) WrapLaunch(_ state.FrameID, plan state.LaunchPlan, env m
 		merged = cloneAndSet(merged, "ROOST_SOCKET", d.SockPath)
 	}
 	return WrappedLaunch{
-		Command:   plan.Command,
-		StartDir:  plan.StartDir,
-		Env:       merged,
-		Subsystem: plan.Subsystem,
-		Stream:    plan.Stream,
+		Command:  plan.Command,
+		StartDir: plan.StartDir,
+		Env:      merged,
 	}, nil
 }
 
@@ -116,12 +114,108 @@ func cloneAndSet(env map[string]string, key, value string) map[string]string {
 	return out
 }
 
+// dispatcherAdapter translates between AgentLauncher (client state types) and
+// agentlaunch.Dispatcher (pure platform types).
+type dispatcherAdapter struct {
+	d agentlaunch.Dispatcher
+}
+
+func (a dispatcherAdapter) WrapLaunch(frameID state.FrameID, plan state.LaunchPlan, env map[string]string) (WrappedLaunch, error) {
+	pp := agentlaunch.LaunchPlan{
+		Command:   plan.Command,
+		Env:       env,
+		StartDir:  plan.StartDir,
+		Project:   plan.Project,
+		ForceHost: plan.Sandbox == state.SandboxOverrideHost,
+	}
+	w, err := a.d.Wrap(context.Background(), string(frameID), pp)
+	if err != nil {
+		return WrappedLaunch{}, err
+	}
+	return WrappedLaunch{
+		Command:          w.Command,
+		StartDir:         w.StartDir,
+		Env:              w.Env,
+		Cleanup:          adaptCleanup(w.Cleanup),
+		ContainerSockDir: w.ContainerSockDir,
+		Mounts:           toPathmapMounts(w.Mounts),
+	}, nil
+}
+
+func (a dispatcherAdapter) AdoptFrame(ctx context.Context, frameID state.FrameID, projectPath string) (func() error, pathmap.Mounts, error) {
+	cleanupFn, mounts, err := a.d.AdoptFrame(ctx, string(frameID), projectPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return adaptCleanup(cleanupFn), toPathmapMounts(mounts), nil
+}
+
+func (a dispatcherAdapter) EnsureProject(ctx context.Context, projectPath string) error {
+	return a.d.EnsureProject(ctx, projectPath)
+}
+
+func (a dispatcherAdapter) IsContainer(project string) bool {
+	return a.d.IsContainer(project)
+}
+
+func (a dispatcherAdapter) BeginColdStart() {
+	if cs, ok := a.d.(agentlaunch.ColdStartAware); ok {
+		cs.BeginColdStart()
+	}
+}
+
+func (a dispatcherAdapter) EndColdStart() {
+	if cs, ok := a.d.(agentlaunch.ColdStartAware); ok {
+		cs.EndColdStart()
+	}
+}
+
+// NewDispatcherAdapter wraps an agentlaunch.Dispatcher for use as AgentLauncher.
+func NewDispatcherAdapter(d agentlaunch.Dispatcher) AgentLauncher {
+	return dispatcherAdapter{d: d}
+}
+
+// adaptCleanup converts func(context.Context) error → func() error by
+// supplying a 30-second timeout context.
+func adaptCleanup(f func(context.Context) error) func() error {
+	if f == nil {
+		return nil
+	}
+	return func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return f(ctx)
+	}
+}
+
+// toPathmapMounts converts []agentlaunch.Mount → pathmap.Mounts.
+func toPathmapMounts(ms []agentlaunch.Mount) pathmap.Mounts {
+	if len(ms) == 0 {
+		return nil
+	}
+	out := make(pathmap.Mounts, len(ms))
+	for i, m := range ms {
+		out[i] = pathmap.Mount{Host: m.Host, Container: m.Container}
+	}
+	return out
+}
+
 // launcher returns cfg.Launcher if set, otherwise a zero-cost DirectLauncher.
 func launcher(cfg Config) AgentLauncher {
 	if cfg.Launcher != nil {
 		return cfg.Launcher
 	}
 	return DirectLauncher{}
+}
+
+// devcontainerLauncherFor extracts the *agentlaunch.DevcontainerLauncher from l,
+// handling both a bare dispatcherAdapter (wrapping agentlaunch.SandboxDispatcher)
+// and a legacy *SandboxDispatcher or *DevcontainerLauncher.
+func devcontainerLauncherFor(l AgentLauncher) *agentlaunch.DevcontainerLauncher {
+	if a, ok := l.(dispatcherAdapter); ok {
+		return agentlaunch.DevcontainerLauncherFor(a.d)
+	}
+	return nil
 }
 
 // wrapWithContainerToken calls WrapLaunch, injecting ROOST_SOCKET_TOKEN only
