@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/takezoh/agent-roost/platform/agent/codexclient"
 	"github.com/takezoh/agent-roost/platform/agent/codexschema"
+	"github.com/takezoh/agent-roost/platform/lib/claude/streamjson"
 	"github.com/takezoh/agent-roost/platform/logger"
 )
 
@@ -29,12 +30,13 @@ func newAppHandler(conn *codexclient.Conn, appCtx context.Context, launch claude
 		conn:  conn,
 		turns: turns,
 		runner: &turnRunner{
-			ctx:     appCtx,
-			srv:     srv,
-			writeMu: nil, // set below after h is built
-			threads: make(map[string]string),
-			launch:  launch,
-			newID:   newID,
+			ctx:      appCtx,
+			srv:      srv,
+			writeMu:  nil, // set below after h is built
+			threads:  make(map[string]string),
+			cumUsage: make(map[string]streamjson.Usage),
+			launch:   launch,
+			newID:    newID,
 		},
 	}
 	h.runner.writeMu = &h.writeMu

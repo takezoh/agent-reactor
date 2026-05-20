@@ -221,6 +221,39 @@ The workspace switcher chip bar appears in the SESSIONS pane automatically when
 two or more distinct workspaces exist, and is hidden for single-workspace setups.
 Projects without a settings file fall back to the `default` workspace.
 
+## Orchestrator (WORKFLOW.md)
+
+The orchestrator reads a `WORKFLOW.md` front-matter block from the root of each project to determine how to dispatch work. The `codex:` section controls which agent binary is used.
+
+### Agent selection (`codex.command`)
+
+Use `codex app-server` (the default, requires Codex CLI) or `claude-app-server` (the built-in Claude shim) interchangeably — the orchestrator speaks the same Codex app-server stdio protocol to both:
+
+```yaml
+---
+codex:
+  # Use the native Codex agent (default)
+  command: codex app-server
+
+  # — OR — use the Claude shim (no Codex CLI required)
+  command: claude-app-server
+
+  # Optional: approval and sandbox policy hints forwarded to the agent.
+  # claude-app-server logs these values but does not enforce them;
+  # actual isolation is provided by the devcontainer (see docs/sandbox-setup.md).
+  approval_policy: localSandboxed
+  thread_sandbox: projectDirectory
+  turn_sandbox_policy: ""
+
+  # Timeouts in milliseconds (0 = use defaults)
+  turn_timeout_ms: 0
+  read_timeout_ms: 0
+  stall_timeout_ms: 0
+---
+```
+
+Both agents emit the same `thread/started → turn/started → item/* → thread/tokenUsage/updated → turn/completed` event sequence, so switching `codex.command` never requires any orchestrator-side changes.
+
 ## Sandbox
 
 Run each agent inside a project-scoped devcontainer, isolating filesystem, network, and credentials per project.

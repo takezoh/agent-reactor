@@ -60,3 +60,36 @@ func (s *Server) EmitAgentMessageDelta(threadID, delta string) error {
 		"delta":    delta,
 	})
 }
+
+// EmitItemStarted emits `item/started` for a tool invocation.
+func (s *Server) EmitItemStarted(threadID, turnID string, item map[string]any) error {
+	return s.conn.Notify(codexschema.MethodItemStarted, map[string]any{
+		"threadId": threadID,
+		"turnId":   turnID,
+		"item":     item,
+	})
+}
+
+// EmitItemCompleted emits `item/completed` for a finished tool invocation.
+func (s *Server) EmitItemCompleted(threadID, turnID string, item map[string]any) error {
+	return s.conn.Notify(codexschema.MethodItemCompleted, map[string]any{
+		"threadId": threadID,
+		"turnId":   turnID,
+		"item":     item,
+	})
+}
+
+// EmitTokenUsage emits `thread/tokenUsage/updated`.
+// last is this turn's breakdown; total is the cumulative thread total.
+// Both must be maps with TokenUsageBreakdown fields (inputTokens, outputTokens, etc.).
+func (s *Server) EmitTokenUsage(threadID, turnID string, last, total map[string]any) error {
+	return s.conn.Notify(codexschema.MethodThreadTokenUsageUpdated, map[string]any{
+		"threadId": threadID,
+		"turnId":   turnID,
+		"tokenUsage": map[string]any{
+			"last":               last,
+			"total":              total,
+			"modelContextWindow": nil,
+		},
+	})
+}
