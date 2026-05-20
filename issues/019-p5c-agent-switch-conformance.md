@@ -13,7 +13,8 @@
 
 ### A. event マッピング拡充 (§10.4)
 
-- [ ] tool 呼び出しを item event に: `assistant:tool_use` → `item/started`（tool_call）、`user:tool_result` → `item/completed`（tool_result）
+- [ ] tool 呼び出しを item event に: claude の **全 tool_use を一律 `DynamicToolCallThreadItem`（codex v2 schema の generic dynamic tool-call item）** として emit する。`assistant:tool_use` → `item/started`（tool 名 + raw args をそのまま載せる）、対応する `user:tool_result` → `item/completed`（tool_use の id で相関）
+  - **ツール名ヒューリスティック分岐はしない**（Bash→command_execution / Edit→file_change 等への振り分けは採らない）。理由: (1) orchestrator(013) は item event を消費せず **conformance/observability 専用**、(2) codex の `command_execution`/`file_change` item は exit code・diff 等の固有必須フィールドを持ち、claude の tool_use から推測補完すると不正確・lossy。generic item なら忠実かつ fabrication 不要
 - [ ] `assistant` の途中 text を `item/agentMessage/delta` で逐次送出（018 の最小版を整理）
 - [ ] Claude に対応のない event（`turn_input_required` 等）は **不発火**で良いことを明記（plans/03 の表）。orchestrator(013 handler) が解釈できる範囲に限定
 
