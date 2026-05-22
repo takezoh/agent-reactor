@@ -4,7 +4,7 @@ Pinned JSON Schema and generated Go types for the Codex app-server stdio JSON-RP
 
 ## Pinned version
 
-**codex-cli 0.133.0** (default output, no `--experimental` flag)
+**codex-cli 0.128.0** (default output, no `--experimental` flag)
 
 ## Package layout
 
@@ -21,7 +21,7 @@ Pinned JSON Schema and generated Go types for the Codex app-server stdio JSON-RP
 Run the Makefile target to regenerate both the schema bundles and Go types in one step:
 
 ```sh
-make codex-schema-update   # requires codex 0.133.0 in PATH
+make codex-schema-update   # requires codex 0.128.0 in PATH
 make codex-schema-check    # verify committed pin matches current codex output
 ```
 
@@ -33,7 +33,7 @@ The schema-update target:
 
 ## Drift detection (CI)
 
-CI installs codex 0.133.0 and runs `generate-json-schema`, then diffs the two committed bundles.
+CI installs codex 0.128.0 and runs `generate-json-schema`, then diffs the two committed bundles.
 A schema version bump requires an explicit PR that updates the pin and regenerates types.
 
 ## codegen tool
