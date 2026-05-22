@@ -83,21 +83,17 @@ func parseToolCall(text string) (toolCall, bool) {
 }
 
 // formatToolResult renders the orchestrator's tool reply as the prompt for the
-// next (resumed) claude invocation. The orchestrator returns a
-// DynamicToolCallResponse {success, output, ...}; prefer its `output` string.
+// next (resumed) claude invocation. The orchestrator returns {success, output}
+// where output is the JSON-encoded tool result string.
 func formatToolResult(call toolCall, result json.RawMessage) string {
 	var r struct {
 		Success *bool  `json:"success"`
 		Output  string `json:"output"`
 	}
 	_ = json.Unmarshal(result, &r)
-	body := r.Output
-	if body == "" {
-		body = string(result)
-	}
 	status := ""
 	if r.Success != nil && !*r.Success {
 		status = " (the tool reported failure)"
 	}
-	return fmt.Sprintf("Result of external tool `%s`%s:\n\n%s\n\nContinue with the task.", call.Tool, status, body)
+	return fmt.Sprintf("Result of external tool `%s`%s:\n\n%s\n\nContinue with the task.", call.Tool, status, r.Output)
 }

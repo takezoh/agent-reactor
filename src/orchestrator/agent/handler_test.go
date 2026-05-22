@@ -269,10 +269,14 @@ func TestHandleToolCall_linearGraphql_success(t *testing.T) {
 
 	require.Empty(t, ts.replyErr)
 	require.NotEmpty(t, ts.reply)
-	var result lineargql.Result
-	require.NoError(t, json.Unmarshal(ts.reply, &result))
-	assert.True(t, result.Success)
-	assert.JSONEq(t, `{"viewer":{"id":"u1"}}`, string(result.Data))
+	var reply toolCallReply
+	require.NoError(t, json.Unmarshal(ts.reply, &reply))
+	assert.True(t, reply.Success)
+	// output is the JSON-encoded lineargql.Result
+	var inner lineargql.Result
+	require.NoError(t, json.Unmarshal([]byte(reply.Output), &inner))
+	assert.True(t, inner.Success)
+	assert.JSONEq(t, `{"viewer":{"id":"u1"}}`, string(inner.Data))
 }
 
 func TestHandleToolCall_linearGraphql_graphqlErrors(t *testing.T) {
@@ -285,11 +289,11 @@ func TestHandleToolCall_linearGraphql_graphqlErrors(t *testing.T) {
 
 	require.Empty(t, ts.replyErr)
 	require.NotEmpty(t, ts.reply)
-	var result lineargql.Result
-	require.NoError(t, json.Unmarshal(ts.reply, &result))
-	assert.False(t, result.Success)
-	assert.Contains(t, string(result.Errors), "not found")
-	assert.Contains(t, string(result.Errors), "forbidden")
+	var reply toolCallReply
+	require.NoError(t, json.Unmarshal(ts.reply, &reply))
+	assert.False(t, reply.Success)
+	assert.Contains(t, reply.Output, "not found")
+	assert.Contains(t, reply.Output, "forbidden")
 }
 
 func TestHandleToolCall_unknownTool_replyError(t *testing.T) {

@@ -36,6 +36,13 @@ type toolCallParams struct {
 	TurnID    string          `json:"turnId"`
 }
 
+// toolCallReply is the Symphony-compatible item/tool/call response shape.
+// output holds the JSON-encoded tool result as a string so the agent can read it.
+type toolCallReply struct {
+	Success bool   `json:"success"`
+	Output  string `json:"output"`
+}
+
 // linearArgs is the §10.5 input shape for the linear_graphql tool.
 type linearArgs struct {
 	Query     string          `json:"query"`
@@ -186,7 +193,12 @@ func (h *turnHandler) handleToolCall(id int64, params json.RawMessage) {
 		_ = h.conn.ReplyError(id, "linear_graphql internal error")
 		return
 	}
-	_ = h.conn.Reply(id, result)
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		_ = h.conn.ReplyError(id, "linear_graphql result encode error")
+		return
+	}
+	_ = h.conn.Reply(id, toolCallReply{Success: result.Success, Output: string(resultJSON)})
 }
 
 func extractThreadID(params json.RawMessage) string {
