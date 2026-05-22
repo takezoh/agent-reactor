@@ -44,9 +44,22 @@ type workerParams struct {
 }
 
 func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int, emit func(Event)) (scheduler.LiveSession, error) {
-	wsPath, err := r.prepareWorkspace(ctx, issue.Identifier)
+	wsPath, err := r.ensureWorkspace(ctx, issue.Identifier)
 	if err != nil {
 		return scheduler.LiveSession{}, err
+	}
+
+	// Workspace exists from here — after_run must execute on every exit path (SPEC §9.4).
+	// committed is set true when runLoop takes ownership of teardown.
+	committed := false
+	defer func() {
+		if !committed {
+			r.Workspace.AfterRun(context.Background(), issue.Identifier)
+		}
+	}()
+
+	if err := r.Workspace.BeforeRun(ctx, issue.Identifier); err != nil {
+		return scheduler.LiveSession{}, fmt.Errorf("agent: before run: %w", err)
 	}
 
 	rendered, err := r.renderPrompt(issue, attempt)
@@ -85,6 +98,7 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 		worker:       worker,
 		emit:         emit,
 	}
+	committed = true
 	go r.runLoop(workerCtx, wp)
 
 	emit(Event{
@@ -222,16 +236,16 @@ func (r *Runner) sendWorkerExit(issueID string, attempt int, exitErr error) {
 	}
 }
 
-func (r *Runner) prepareWorkspace(ctx context.Context, identifier string) (string, error) {
+// ensureWorkspace idempotently creates the workspace directory and verifies the
+// cwd invariant (§9.5).  After this call succeeds the workspace is guaranteed
+// to exist, so the caller must arrange for AfterRun on any subsequent failure.
+func (r *Runner) ensureWorkspace(ctx context.Context, identifier string) (string, error) {
 	wsPath, err := r.Workspace.Ensure(ctx, identifier)
 	if err != nil {
 		return "", fmt.Errorf("agent: workspace ensure: %w", err)
 	}
 	if err := r.Workspace.VerifyCWD(identifier, wsPath); err != nil {
 		return "", fmt.Errorf("agent: verify cwd: %w", err)
-	}
-	if err := r.Workspace.BeforeRun(ctx, identifier); err != nil {
-		return "", fmt.Errorf("agent: before run: %w", err)
 	}
 	return wsPath, nil
 }
