@@ -22,10 +22,18 @@ workspace:
   root: /workspace/agent-roost-orchestrator/.roost/worktrees
 hooks:
   timeout_ms: 120000
+  # GitHub から「orchestrator を起動しているブランチ」を clone し symphony ブランチを切る。
+  # base ブランチ名と origin URL は source repo から動的取得(ブランチ名をハードコードしない)。
+  # base は git config symphony.base に記録し、PR 作成時に参照する。
+  # origin=GitHub なので agent はそのまま push / PR 作成できる(push は SSH ブローカー、gh は host_exec 経由)。
   after_create: |
     set -e
-    git clone --no-hardlinks /workspace/agent-roost-orchestrator "$PWD"
-    git -C "$PWD" checkout -B "symphony/$(basename "$PWD")"
+    src=/workspace/agent-roost-orchestrator
+    base=$(git -C "$src" rev-parse --abbrev-ref HEAD)
+    url=$(git -C "$src" remote get-url origin)
+    git clone --depth 1 --branch "$base" "$url" "$PWD"
+    git -C "$PWD" checkout -b "symphony/$(basename "$PWD")"
+    git -C "$PWD" config symphony.base "$base"
 agent:
   max_concurrent_agents: 2
   max_turns: 30
@@ -61,21 +69,24 @@ claude-app-server の3バイナリ)の課題に取り組む自律エージェン
 
 - これは無人オーケストレーションセッション。人間に follow-up を依頼しない。判断は自分で行い、
   状態遷移で進捗を表現する。入力待ち・確認待ちにならない(真のブロッカー=必須の認証/権限/secret 不足時のみ停止)。
-- 作業は与えられたリポジトリコピー(`symphony/{{ issue.identifier }}` がチェックアウト済み)内のみ。
-  他のパスは触らない。
-- このドッグフード環境では clone の origin はローカルで GitHub remote は無い。よって「PR」= この
-  symphony ブランチへの commit を成果物とみなす(`gh pr` は使わない)。
+- 作業は与えられた clone(`symphony/{{ issue.identifier }}` チェックアウト済み、origin=GitHub
+  `takezoh/agent-roost`)内のみ。他のパスは触らない。
+- 使えるもの: `git push`(SSH ブローカー経由で GitHub へ push 可)、`gh`(host_exec 経由でホスト実行。
+  `gh pr create` / `gh pr merge` 等が使える)、`linear_graphql`(Linear の状態遷移・コメント)。
 
-## Linear の状態遷移(`linear_graphql` 外部ツール)
+## Linear ツール(`linear_graphql`)
 
-`linear_graphql` は orchestrator が提供する外部ツール(認証は orchestrator 側が保持。token は見ない)。
-state 遷移はまず id を引いてから `issueUpdate`:
+orchestrator が提供する外部ツール(認証は orchestrator 側が保持。token は見ない)。状態遷移とコメント:
 
 ```graphql
+# 状態の id を引く
 query States($id: String!) { issue(id: $id) { team { states { nodes { id name type } } } } }
-```
-```graphql
+# 状態遷移
 mutation Move($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { stateId: $stateId }) { success } }
+# 進捗/レビュー用コメント(workpad)
+mutation Note($id: String!, $body: String!) { commentCreate(input: { issueId: $id, body: $body }) { success } }
+# レビュー指摘の取得(Rework 時)
+query Comments($id: String!) { issue(id: $id) { comments { nodes { body createdAt user { name } } } } }
 ```
 `$id` = `{{ issue.id }}`。`$stateId` = 目的の state 名の id。
 
@@ -89,14 +100,19 @@ mutation Move($id: String!, $stateId: String!) { issueUpdate(id: $id, input: { s
   1. `AGENTS.md` / `CLAUDE.md` を読み、ビルド/テスト/ルールに従う。
   2. 課題を実装し、必要なテストを書く。`cd src && go test ./...` と `make lint` が緑になることを確認。
   3. `symphony/{{ issue.identifier }}` に論理的な commit を作る。
-  4. 検証が通ったら **Human Review** へ遷移して**ターンを終える**(= 人間のレビュー待ちの handoff)。
-     Human Review は orchestrator が再 dispatch しないので、ここで待機状態になる。
+  4. `git push -u origin symphony/{{ issue.identifier }}` で push する。
+  5. base ブランチは `git config symphony.base` で取得できる(clone 時に記録済み)。
+     `gh pr create --base "$(git config symphony.base)" --head symphony/{{ issue.identifier }} --title "<要約>" --body "<実装内容・検証結果・{{ issue.identifier }}>"` で **PR を作成**する。
+  6. `linear_graphql` の commentCreate で、この issue に **PR の URL と実装/検証の要約**をコメントする
+     (人間がここから確認・レビューする)。
+  7. **Human Review** へ遷移して**ターンを終える**(人間のレビュー待ち handoff。orchestrator は再 dispatch しない)。
 - **Rework** → レビューで修正依頼が来た状態:
-  1. 指摘内容(Linear の issue コメント等)を確認し、修正方針を決める。
-  2. 修正を実装・検証し commit する。
-  3. 再び **Human Review** へ遷移してターンを終える。
-- **Merging** → 人間が承認した状態。最終確認(ブランチが最新で検証が緑)を行い、
-  **Done** へ遷移して完了する(本環境では実 PR マージは行わない)。
+  1. `linear_graphql` の Comments クエリで issue コメントを取得し、PR のレビュー指摘も確認して修正方針を決める。
+  2. 修正を実装・検証し commit、`git push` で同じ PR ブランチを更新する。
+  3. 対応内容を commentCreate で記録し、**Human Review** へ遷移してターンを終える。
+- **Merging** → 人間が承認した状態:
+  1. `gh pr merge symphony/{{ issue.identifier }} --squash --delete-branch`(または適切な戦略)で land する。
+  2. **Done** へ遷移して完了する。
 
 完了(Done)させるか handoff(Human Review)するまでターンを終えても、active 状態のままだと
 orchestrator は同じ issue を再 dispatch し続ける。必ずいずれかの状態へ遷移すること。
