@@ -26,6 +26,7 @@ type DevcontainerLauncher struct {
 	resolveProjectScope func(projectPath string) *config.SandboxConfig
 	proxy               *credproxy.Runner // nil when proxy disabled
 	dataDir             string
+	tty                 bool // allocate a pseudo-TTY (docker exec -it); false for piped/headless consumers
 	coldStart           atomic.Bool
 }
 
@@ -36,12 +37,15 @@ func (l *DevcontainerLauncher) BeginColdStart() { l.coldStart.Store(true) }
 func (l *DevcontainerLauncher) EndColdStart() { l.coldStart.Store(false) }
 
 // NewDevcontainerLauncher creates a Dispatcher that runs agents inside devcontainers.
+// tty selects `docker exec -it` (true, for interactive tmux panes) vs `-i`
+// (false, for headless consumers that pipe JSON-RPC stdio like the orchestrator).
 func NewDevcontainerLauncher(
 	mgr sandbox.Manager[*sandboxdc.ContainerState],
 	resolveSandbox func(string) config.SandboxConfig,
 	resolveProjectScope func(string) *config.SandboxConfig,
 	proxy *credproxy.Runner,
 	dataDir string,
+	tty bool,
 ) *DevcontainerLauncher {
 	return &DevcontainerLauncher{
 		mgr:                 mgr,
@@ -49,6 +53,7 @@ func NewDevcontainerLauncher(
 		resolveProjectScope: resolveProjectScope,
 		proxy:               proxy,
 		dataDir:             dataDir,
+		tty:                 tty,
 	}
 }
 
@@ -94,7 +99,7 @@ func (l *DevcontainerLauncher) Wrap(ctx context.Context, frameID string, plan La
 	}
 	frameCtx.WorkDir = workDir
 
-	cmd, outEnv, err := l.mgr.BuildLaunchCommand(inst, sandbox.LaunchSpec{Command: plan.Command, StartDir: plan.StartDir}, frameCtx, plan.Env)
+	cmd, outEnv, err := l.mgr.BuildLaunchCommand(inst, sandbox.LaunchSpec{Command: plan.Command, StartDir: plan.StartDir, TTY: l.tty}, frameCtx, plan.Env)
 	if err != nil {
 		return WrappedLaunch{}, fmt.Errorf("devcontainer launcher: build command: %w", err)
 	}

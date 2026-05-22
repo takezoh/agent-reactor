@@ -18,6 +18,11 @@ type FrameID string
 type LaunchSpec struct {
 	Command  string
 	StartDir string
+	// TTY requests a pseudo-TTY for the launch (docker exec -it). Interactive
+	// tmux-pane consumers set it; headless consumers that drive the agent over
+	// piped stdio (e.g. the orchestrator's JSON-RPC transport) must leave it
+	// false, because `docker exec -t` aborts when stdin is not a terminal.
+	TTY bool
 }
 
 // Instance represents a running sandbox for one project directory.

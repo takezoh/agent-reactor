@@ -561,6 +561,46 @@ func TestBuildLaunchCommand_PreExec(t *testing.T) {
 	})
 }
 
+func TestBuildLaunchCommand_TTY(t *testing.T) {
+	const project = "/workspace/myapp"
+	base := &DevcontainerSpec{
+		ProjectPath:     project,
+		ContainerEnv:    map[string]string{},
+		WorkspaceFolder: "/workspaces/myapp",
+	}
+	m := &Manager{}
+	newInst := func() *sandbox.Instance[*ContainerState] {
+		spec := *base
+		return &sandbox.Instance[*ContainerState]{
+			ProjectPath: project,
+			Internal:    &ContainerState{containerID: "abc123", spec: &spec},
+		}
+	}
+
+	t.Run("TTY false uses docker exec -i (no -t) for piped stdio", func(t *testing.T) {
+		got, _, err := m.BuildLaunchCommand(newInst(), sandbox.LaunchSpec{StartDir: project, Command: "bash", TTY: false}, sandbox.FrameContext{}, nil)
+		if err != nil {
+			t.Fatalf("BuildLaunchCommand error: %v", err)
+		}
+		if !strings.HasPrefix(got, "docker exec -i ") {
+			t.Errorf("expected 'docker exec -i ' prefix, got: %s", got)
+		}
+		if strings.HasPrefix(got, "docker exec -it") {
+			t.Errorf("did not expect -t (TTY) for piped consumer, got: %s", got)
+		}
+	})
+
+	t.Run("TTY true uses docker exec -it for interactive panes", func(t *testing.T) {
+		got, _, err := m.BuildLaunchCommand(newInst(), sandbox.LaunchSpec{StartDir: project, Command: "bash", TTY: true}, sandbox.FrameContext{}, nil)
+		if err != nil {
+			t.Fatalf("BuildLaunchCommand error: %v", err)
+		}
+		if !strings.HasPrefix(got, "docker exec -it ") {
+			t.Errorf("expected 'docker exec -it ' prefix, got: %s", got)
+		}
+	})
+}
+
 func TestSpecOverlay_PreExecFallback(t *testing.T) {
 	t.Run("overlay PreExec used when spec is empty", func(t *testing.T) {
 		s := &DevcontainerSpec{}

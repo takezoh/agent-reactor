@@ -86,6 +86,7 @@ func buildDevcontainerLauncher(
 		func(project string) *platformconfig.SandboxConfig { return resolver.ResolveProjectScope(project) },
 		runner,
 		dataDir,
+		false, // orchestrator drives the agent over piped JSON-RPC stdio: no TTY
 	)
 
 	// credproxy and the devcontainer manager are bound to ctx and stop when the

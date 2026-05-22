@@ -372,6 +372,7 @@ func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, reso
 			func(project string) *platformconfig.SandboxConfig { return resolver.ResolveProjectScope(project) },
 			runner,
 			dataDir,
+			true, // TUI runs agents in interactive tmux panes: allocate a TTY
 		)
 		slog.Info("sandbox: devcontainer backend enabled")
 	}
