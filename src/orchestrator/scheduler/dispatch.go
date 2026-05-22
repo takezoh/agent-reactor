@@ -11,7 +11,6 @@ import (
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
-// errNoSlots is set on retry entries that were requeued because all orchestrator slots were full.
 var errNoSlots = errors.New("no available orchestrator slots")
 
 // CandidateSource abstracts the tracker for testability.
