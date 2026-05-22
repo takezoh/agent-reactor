@@ -415,3 +415,58 @@ func TestTickSpawnFailSchedulesRetry(t *testing.T) {
 		t.Error("want claim released after spawn failure")
 	}
 }
+
+// TestHandleCodexActivity_TurnCompleted_IncrementsTurnCount verifies that a
+// CodexActivity with TurnCompleted=true increments the TurnCount in State (SPEC §4.1.6).
+func TestHandleCodexActivity_TurnCompleted_IncrementsTurnCount(t *testing.T) {
+	issue := ptrackerv.Issue{ID: "tc-1", Identifier: "TC-1", Title: "t", State: "In Progress"}
+	session := LiveSession{SessionID: "s1"}
+
+	s := New("", schedCfg(), Deps{})
+	if err := s.state.Dispatch(issue, 1, session, time.Now()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	s.handleCodexActivity(CodexActivity{
+		IssueID:       "tc-1",
+		Event:         "turn/completed",
+		Timestamp:     time.Now(),
+		TurnCompleted: true,
+	})
+	s.handleCodexActivity(CodexActivity{
+		IssueID:       "tc-1",
+		Event:         "turn/completed",
+		Timestamp:     time.Now(),
+		TurnCompleted: true,
+	})
+
+	snap := s.state.Snapshot()
+	if got := snap.Running["tc-1"].TurnCount; got != 2 {
+		t.Errorf("got TurnCount=%d, want 2", got)
+	}
+}
+
+// TestHandleCodexActivity_NonTurnCompleted_DoesNotIncrementTurnCount verifies that
+// other events do not modify TurnCount.
+func TestHandleCodexActivity_NonTurnCompleted_DoesNotIncrementTurnCount(t *testing.T) {
+	issue := ptrackerv.Issue{ID: "tc-2", Identifier: "TC-2", Title: "t", State: "In Progress"}
+	session := LiveSession{SessionID: "s2"}
+
+	s := New("", schedCfg(), Deps{})
+	if err := s.state.Dispatch(issue, 1, session, time.Now()); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	s.handleCodexActivity(CodexActivity{
+		IssueID:       "tc-2",
+		Event:         "item/agentMessage/delta",
+		Message:       "hello",
+		Timestamp:     time.Now(),
+		TurnCompleted: false,
+	})
+
+	snap := s.state.Snapshot()
+	if got := snap.Running["tc-2"].TurnCount; got != 0 {
+		t.Errorf("got TurnCount=%d, want 0 for non-turn-completed event", got)
+	}
+}

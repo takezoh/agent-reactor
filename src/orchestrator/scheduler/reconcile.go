@@ -46,7 +46,7 @@ func (s *Scheduler) reconcileStall(ctx context.Context, snap StateSnapshot, cfg 
 		}
 
 		slog.Warn("reconcile: stall detected, killing worker",
-			"issue_id", id, "identifier", run.Issue.Identifier, "elapsed_ms", now.Sub(base).Milliseconds())
+			"issue_id", id, "issue_identifier", run.Issue.Identifier, "elapsed_ms", now.Sub(base).Milliseconds())
 
 		if run.Session.Worker != nil {
 			if err := run.Session.Worker.Kill("stall"); err != nil {
@@ -101,7 +101,7 @@ func (s *Scheduler) reconcileRefresh(ctx context.Context, snap StateSnapshot, cf
 				slog.Warn("reconcile: workspace remove failed", "identifier", run.Issue.Identifier, "err", err)
 			}
 			slog.Info("reconcile: terminal issue cleaned up",
-				"issue_id", id, "identifier", run.Issue.Identifier, "state", iss.State)
+				"issue_id", id, "issue_identifier", run.Issue.Identifier, "state", iss.State)
 
 		case active[norm]:
 			s.state.UpdateIssueSnapshot(id, iss)
@@ -117,7 +117,7 @@ func (s *Scheduler) reconcileRefresh(ctx context.Context, snap StateSnapshot, cf
 				scheduleRetry(s.state, s.clock, s.retryFire, ctx, entry, backoffDelay(entry.Attempt, cfg))
 			}
 			slog.Info("reconcile: non-active issue, worker stopped",
-				"issue_id", id, "identifier", run.Issue.Identifier, "state", iss.State)
+				"issue_id", id, "issue_identifier", run.Issue.Identifier, "state", iss.State)
 		}
 	}
 }

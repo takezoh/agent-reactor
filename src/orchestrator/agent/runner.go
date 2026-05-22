@@ -70,7 +70,13 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 		return scheduler.LiveSession{}, err
 	}
 
-	worker := &Worker{cancel: cancel, done: lr.doneCh, cleanup: lr.cleanup}
+	worker := &Worker{
+		cancel:          cancel,
+		done:            lr.doneCh,
+		cleanup:         lr.cleanup,
+		issueID:         issue.ID,
+		issueIdentifier: issue.Identifier,
+	}
 
 	wp := workerParams{
 		issue:        issue,

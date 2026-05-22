@@ -126,6 +126,40 @@ func TestTurnHandler_TurnDurationTracked(t *testing.T) {
 	require.Greater(t, *got[1].TurnDuration, time.Duration(0))
 }
 
+func TestTurnHandler_TurnCompletedFlag(t *testing.T) {
+	var got []scheduler.CodexActivity
+	h := &turnHandler{
+		issueID:      "iss-7",
+		sessionReady: make(chan sessionIDs, 1),
+		turnDone:     make(chan turnResult, 1),
+		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
+	}
+
+	// Non-completed event must not set TurnCompleted.
+	h.OnNotification("turn/started", nil)
+	require.Len(t, got, 1)
+	require.False(t, got[0].TurnCompleted, "turn/started must not set TurnCompleted")
+
+	// turn/completed must set TurnCompleted=true.
+	h.OnNotification("turn/completed", nil)
+	require.Len(t, got, 2)
+	require.True(t, got[1].TurnCompleted, "turn/completed must set TurnCompleted=true")
+}
+
+func TestTurnHandler_OtherEventsDoNotSetTurnCompleted(t *testing.T) {
+	var got []scheduler.CodexActivity
+	h := &turnHandler{
+		issueID:      "iss-8",
+		sessionReady: make(chan sessionIDs, 1),
+		turnDone:     make(chan turnResult, 1),
+		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
+	}
+
+	h.OnNotification("item/agentMessage/delta", nil)
+	require.Len(t, got, 1)
+	require.False(t, got[0].TurnCompleted, "non-turn/completed event must not set TurnCompleted")
+}
+
 func TestTurnHandler_AgentMessageDeltaRecorded(t *testing.T) {
 	var got []scheduler.CodexActivity
 	h := &turnHandler{

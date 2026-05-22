@@ -156,6 +156,20 @@ func (s *State) EnqueueRetry(entry RetryEntry) {
 	s.retryAttempts[entry.IssueID] = entry
 }
 
+// IncrementTurnCount increments the completed turn counter for a running attempt (SPEC §4.1.6).
+// No-op if issueID is not running.
+func (s *State) IncrementTurnCount(issueID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	run, ok := s.running[issueID]
+	if !ok {
+		return
+	}
+	run.TurnCount++
+	s.running[issueID] = run
+}
+
 // UpdateCodexActivity records the latest codex notification for stall detection (SPEC §8.5 Part A).
 // An empty message leaves LastCodexMessage unchanged.
 // No-op if issueID is not running.

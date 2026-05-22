@@ -99,6 +99,7 @@ func (h *turnHandler) OnNotification(method string, params json.RawMessage) {
 			d := now.Sub(started)
 			act.TurnDuration = &d
 		}
+		act.TurnCompleted = true
 		select {
 		case h.turnDone <- turnResult{}:
 		default:

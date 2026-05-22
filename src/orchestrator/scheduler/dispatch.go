@@ -60,7 +60,7 @@ func dispatchOnce(ctx context.Context, cands []tracker.Issue, st *State, clk Clo
 
 		session, err := spawn(ctx, iss, 1)
 		if err != nil {
-			slog.Error("spawn failed", "issue_id", iss.ID, "identifier", iss.Identifier, "err", err)
+			slog.Error("spawn failed", "issue_id", iss.ID, "issue_identifier", iss.Identifier, "err", err)
 			st.ReleaseClaim(iss.ID)
 			entry := RetryEntry{IssueID: iss.ID, Identifier: iss.Identifier, Attempt: 2, Kind: RetryBackoff, Err: err}
 			scheduleRetry(st, clk, fireCh, ctx, entry, backoffDelay(2, cfg))
@@ -70,7 +70,7 @@ func dispatchOnce(ctx context.Context, cands []tracker.Issue, st *State, clk Clo
 		st.MarkRunning(iss.ID, iss, 1, session, time.Now())
 		globalAvail--
 		perStateUsed[norm]++
-		slog.Info("dispatched", "issue_id", iss.ID, "identifier", iss.Identifier)
+		slog.Info("dispatched", "issue_id", iss.ID, "issue_identifier", iss.Identifier)
 	}
 }
 
@@ -133,5 +133,5 @@ func handleRetryFire(ctx context.Context, req retryFireReq, tr CandidateSource, 
 	}
 
 	st.MarkRunning(req.IssueID, *found, req.Attempt, session, time.Now())
-	slog.Info("retry-fire: dispatched", "issue_id", req.IssueID, "identifier", found.Identifier, "attempt", req.Attempt)
+	slog.Info("retry-fire: dispatched", "issue_id", req.IssueID, "issue_identifier", found.Identifier, "attempt", req.Attempt)
 }

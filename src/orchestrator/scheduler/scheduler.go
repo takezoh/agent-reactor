@@ -55,6 +55,7 @@ type CodexActivity struct {
 	Usage        *metrics.Usage             // non-nil for thread/tokenUsage/updated
 	RateLimit    *metrics.RateLimitSnapshot // non-nil for account/rateLimits/updated
 	TurnDuration *time.Duration             // non-nil for turn/completed (elapsed turn time)
+	TurnCompleted bool                      // true when a turn/completed notification was received (SPEC §4.1.6)
 }
 
 // Scheduler runs the polling loop per SPEC §16.2.
@@ -197,6 +198,9 @@ func (s *Scheduler) handleCodexActivity(a CodexActivity) {
 	}
 	if a.TurnDuration != nil {
 		s.state.AddRuntime(a.IssueID, *a.TurnDuration)
+	}
+	if a.TurnCompleted {
+		s.state.IncrementTurnCount(a.IssueID)
 	}
 }
 
