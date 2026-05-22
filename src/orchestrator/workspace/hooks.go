@@ -30,10 +30,13 @@ func (m *Manager) AfterRun(ctx context.Context, identifier string) {
 	_ = m.runHook(ctx, "after_run", m.hooks.AfterRun, p)
 }
 
+// hookOutputMaxBytes is the maximum number of bytes logged from hook stdout/stderr (SPEC §15.4).
+const hookOutputMaxBytes = 2048
+
 // runHook executes script via "sh -lc <script>" with cwd set to the workspace path.
 // The hook runs under min(caller deadline, hooks.TimeoutMS).
-// Logs start, failure, and timeout. Returns ErrHookFailed on non-zero exit or timeout.
-// An empty script is a no-op.
+// stdout/stderr are captured, truncated to hookOutputMaxBytes, and logged per §15.4.
+// Returns ErrHookFailed on non-zero exit or timeout. An empty script is a no-op.
 func (m *Manager) runHook(ctx context.Context, name, script, cwd string) error {
 	if script == "" {
 		return nil
@@ -48,13 +51,26 @@ func (m *Manager) runHook(ctx context.Context, name, script, cwd string) error {
 	cmd := exec.CommandContext(hctx, "sh", "-lc", script)
 	cmd.Dir = cwd
 
-	if err := cmd.Run(); err != nil {
+	out, err := cmd.CombinedOutput()
+	output := string(truncateOutput(out, hookOutputMaxBytes))
+
+	if err != nil {
 		if errors.Is(hctx.Err(), context.DeadlineExceeded) {
-			slog.Error("workspace: hook timeout", "hook", name, "timeout_ms", m.hooks.TimeoutMS)
+			slog.Error("workspace: hook timeout", "hook", name, "timeout_ms", m.hooks.TimeoutMS, "output", output)
 			return fmt.Errorf("%w: %s: timeout after %dms", ErrHookFailed, name, m.hooks.TimeoutMS)
 		}
-		slog.Error("workspace: hook failed", "hook", name, "err", err)
+		slog.Error("workspace: hook failed", "hook", name, "err", err, "output", output)
 		return fmt.Errorf("%w: %s: %v", ErrHookFailed, name, err)
 	}
+
+	slog.Debug("workspace: hook output", "hook", name, "output", output)
 	return nil
+}
+
+// truncateOutput returns b unchanged if len(b) <= max, otherwise returns b[:max].
+func truncateOutput(b []byte, max int) []byte {
+	if len(b) > max {
+		return b[:max]
+	}
+	return b
 }
