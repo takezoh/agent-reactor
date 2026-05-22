@@ -146,7 +146,7 @@ orchestrator が advertise する optional client-side tool。SPEC は agent pro
 - `item/tool/call`（agent→orchestrator の ServerRequest）を `orchestrator/agent/handler.go` の `OnServerRequest` で受け、`orchestrator/lineargql/` が `query`+`variables` を Linear GraphQL に POST して success/errors を判別。Linear POST は stdlib `net/http`、token は env 経由のみ・ログ禁止
 - Linear client は `wfconfig.TrackerConfig`（Endpoint/APIKey）から構築し `Runner.LinearClient` に注入（`agent.New` で auth が揃えば自動有効化）
 
-> ⚠ **advertise 制約（pinned codex 0.128.0）**: tool を agent に discover させる wire 経路が pinned schema に**存在しない**。`DynamicToolSpec`（tool 宣言形）は schema 定義のみで request からの `$ref` 参照ゼロの orphan、`InitializeCapabilities` も `experimentalApi`+opt-out のみ。よって handler は実装済みだが、実機 codex が自発的に `item/tool/call` を発火するには codex schema bump（`DynamicToolSpec` の配線）が必要。詳細は [issues/024](../issues/024-p8b-linear-graphql-tool.md) §B。
+> ⚠ **advertise 制約（pinned codex 0.133.0）**: tool を agent に discover させる wire 経路が pinned schema に**存在しない**。`DynamicToolSpec`（tool 宣言形）は schema 定義のみで request からの `$ref` 参照ゼロの orphan、`InitializeCapabilities` も `experimentalApi`+opt-out のみ。よって handler は実装済みだが、実機 codex が自発的に `item/tool/call` を発火するには codex schema bump（`DynamicToolSpec` の配線）が必要。詳細は [issues/024](../issues/024-p8b-linear-graphql-tool.md) §B。
 
 → orchestrator binary は Linear API を **2 系統**持つ:
 1. tracker 用 (`platform/tracker/linear/` 経由で dispatch decisions)
