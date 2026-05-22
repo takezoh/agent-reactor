@@ -137,7 +137,7 @@ func (c *notificationCollector) nthParams(method string, n int) map[string]any {
 func fakeLauncherSequence(calls *[][]string, sequences ...[]string) claudeLauncher {
 	i := 0
 	var mu sync.Mutex
-	return func(ctx context.Context, cwd, resumeID, sysPrompt, prompt string) (io.ReadCloser, func() error, error) {
+	return func(ctx context.Context, cwd, resumeID, sysPrompt, prompt string, extraEnv []string) (io.ReadCloser, func() error, error) {
 		mu.Lock()
 		idx := i
 		if i < len(sequences)-1 {
@@ -526,7 +526,7 @@ func TestShim_ApprovalSandboxWarnLog(t *testing.T) {
 	slog.SetDefault(slog.New(handler))
 
 	called := make(chan struct{}, 1)
-	launch := func(ctx context.Context, cwd, resumeID, sysPrompt, prompt string) (io.ReadCloser, func() error, error) {
+	launch := func(ctx context.Context, cwd, resumeID, sysPrompt, prompt string, extraEnv []string) (io.ReadCloser, func() error, error) {
 		called <- struct{}{}
 		body := strings.Join([]string{lineSystemInit, lineResultOK}, "\n") + "\n"
 		return io.NopCloser(strings.NewReader(body)), func() error { return nil }, nil
@@ -632,7 +632,7 @@ func TestShim_KillPropagation(t *testing.T) {
 	blocked := make(chan struct{})
 	var launchCtx context.Context
 	var launchMu sync.Mutex
-	launch := func(ctx context.Context, cwd, resumeID, sysPrompt, prompt string) (io.ReadCloser, func() error, error) {
+	launch := func(ctx context.Context, cwd, resumeID, sysPrompt, prompt string, extraEnv []string) (io.ReadCloser, func() error, error) {
 		launchMu.Lock()
 		launchCtx = ctx
 		launchMu.Unlock()
@@ -728,86 +728,91 @@ func TestProcessGroupKill(t *testing.T) {
 		"grandchild PID %s should be dead after process group kill", grandchildPID)
 }
 
-// toolReplyClient is a test orchestrator: it replies to item/tool/call
-// ServerRequests from the shim and records notifications.
-type toolReplyClient struct {
-	*notificationCollector
-	conn       *codexclient.Conn
-	toolOutput string
-	mu         sync.Mutex
-	toolCalls  []json.RawMessage
-}
+// TestShim_BridgeEnvPassedToLauncher verifies that when dynamic tools are
+// advertised via thread/start, the shim creates a tool bridge and passes
+// TOOL_BRIDGE_SOCKET in the launcher's extraEnv.
+func TestShim_BridgeEnvPassedToLauncher(t *testing.T) {
+	var capturedEnvs [][]string
+	var envMu sync.Mutex
 
-func (c *toolReplyClient) OnServerRequest(id int64, method string, params json.RawMessage) {
-	if method != codexschema.MethodItemToolCall {
-		return
+	launch := func(_ context.Context, _, _, _, _ string, extraEnv []string) (io.ReadCloser, func() error, error) {
+		envMu.Lock()
+		capturedEnvs = append(capturedEnvs, append([]string{}, extraEnv...))
+		envMu.Unlock()
+		body := strings.Join([]string{lineSystemInit, lineResultOK}, "\n") + "\n"
+		return io.NopCloser(strings.NewReader(body)), func() error { return nil }, nil
 	}
-	c.mu.Lock()
-	c.toolCalls = append(c.toolCalls, append([]byte{}, params...))
-	c.mu.Unlock()
-	_ = c.conn.Reply(id, map[string]any{"success": true, "output": c.toolOutput})
-}
+	// ids: thread-1, turn-1, bridge-1 (socket id)
+	clientConn, _, _ := pipeShim(t, launch, []string{"thread-1", "turn-1", "bridge-1"})
 
-func (c *toolReplyClient) calls() []json.RawMessage {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]json.RawMessage{}, c.toolCalls...)
-}
-
-func resultLineWithText(t *testing.T, text string) string {
-	t.Helper()
-	b, err := json.Marshal(map[string]any{
-		"type": "result", "subtype": "success", "result": text, "is_error": false,
-		"usage": map[string]any{"input_tokens": 1, "output_tokens": 1},
-	})
-	require.NoError(t, err)
-	return string(b)
-}
-
-// TestShim_dynamicToolRoundTrip verifies the shim simulates a codex client tool
-// using claude -p: claude emits a tool_call sentinel, the shim forwards it to
-// the orchestrator via item/tool/call, then resumes claude with the result —
-// all within a single turn (no MCP).
-func TestShim_dynamicToolRoundTrip(t *testing.T) {
-	toolCallText := "I'll update the issue.\n```tool_call\n{\"tool\":\"linear_graphql\",\"arguments\":{\"query\":\"mutation{ x }\"}}\n```"
-	var calls [][]string
-	launch := fakeLauncherSequence(&calls,
-		[]string{lineSystemInit, resultLineWithText(t, toolCallText)}, // first call → tool call
-		[]string{lineSystemInit, resultLineWithText(t, "all done")},   // resume → final answer
-	)
-	clientConn, _, _ := pipeShim(t, launch, []string{"thread-1", "turn-1", "call-1"})
-
-	c := &toolReplyClient{
-		notificationCollector: &notificationCollector{},
-		conn:                  clientConn,
-		toolOutput:            `{"data":{"issueUpdate":{"success":true}}}`,
-	}
-	go func() { _ = clientConn.Run(context.Background(), c) }()
+	nc := &notificationCollector{}
+	go func() { _ = clientConn.Run(context.Background(), nc) }()
 
 	require.NoError(t, codexclient.Initialize(clientConn))
 	tid, err := codexclient.StartThread(clientConn, "/ws", []any{map[string]any{
 		"name": "linear_graphql", "description": "Linear GraphQL", "inputSchema": map[string]any{"type": "object"},
 	}})
 	require.NoError(t, err)
-	require.Equal(t, "thread-1", tid)
 	require.NoError(t, codexclient.StartTurn(clientConn, tid, "/ws", []byte("work the issue")))
 
-	waitForMethods(t, c.notificationCollector, []string{
+	waitForMethods(t, nc, []string{
 		codexschema.MethodThreadStarted,
 		codexschema.MethodTurnStarted,
 		codexschema.MethodThreadTokenUsageUpdated,
 		codexschema.MethodTurnCompleted,
 	})
 
-	// Exactly one tool call forwarded, naming linear_graphql.
-	toolCalls := c.calls()
-	require.Len(t, toolCalls, 1)
-	assert.Contains(t, string(toolCalls[0]), "linear_graphql")
+	envMu.Lock()
+	envs := append([][]string{}, capturedEnvs...)
+	envMu.Unlock()
 
-	// claude was launched twice: original prompt, then a resume carrying the result.
-	require.Len(t, calls, 2)
-	assert.Equal(t, "work the issue", calls[0][2])
-	assert.Equal(t, "claude-sess-1", calls[1][1]) // resume id from SystemInit
-	assert.Contains(t, calls[1][2], "Result of external tool `linear_graphql`")
-	assert.Contains(t, calls[1][2], "issueUpdate")
+	require.Len(t, envs, 1, "claude should be launched exactly once (no resume loop)")
+
+	hasBridgeSocket := false
+	for _, e := range envs[0] {
+		if strings.HasPrefix(e, "TOOL_BRIDGE_SOCKET=") {
+			hasBridgeSocket = true
+		}
+	}
+	assert.True(t, hasBridgeSocket, "TOOL_BRIDGE_SOCKET should be in extraEnv")
+}
+
+// TestShim_NoBridgeWithoutDynTools verifies that when no dynamic tools are
+// advertised, TOOL_BRIDGE_SOCKET is not injected into the launcher.
+func TestShim_NoBridgeWithoutDynTools(t *testing.T) {
+	var capturedEnvs [][]string
+	var envMu sync.Mutex
+
+	launch := func(_ context.Context, _, _, _, _ string, extraEnv []string) (io.ReadCloser, func() error, error) {
+		envMu.Lock()
+		capturedEnvs = append(capturedEnvs, append([]string{}, extraEnv...))
+		envMu.Unlock()
+		body := strings.Join([]string{lineSystemInit, lineResultOK}, "\n") + "\n"
+		return io.NopCloser(strings.NewReader(body)), func() error { return nil }, nil
+	}
+	clientConn, _, _ := pipeShim(t, launch, []string{"thread-1", "turn-1"})
+
+	nc := &notificationCollector{}
+	go func() { _ = clientConn.Run(context.Background(), nc) }()
+
+	require.NoError(t, codexclient.Initialize(clientConn))
+	// No dynamic tools advertised.
+	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("hello")))
+
+	waitForMethods(t, nc, []string{
+		codexschema.MethodThreadStarted,
+		codexschema.MethodTurnStarted,
+		codexschema.MethodThreadTokenUsageUpdated,
+		codexschema.MethodTurnCompleted,
+	})
+
+	envMu.Lock()
+	envs := append([][]string{}, capturedEnvs...)
+	envMu.Unlock()
+
+	require.Len(t, envs, 1)
+	for _, e := range envs[0] {
+		assert.False(t, strings.HasPrefix(e, "TOOL_BRIDGE_SOCKET="),
+			"TOOL_BRIDGE_SOCKET should not be set without dynamic tools")
+	}
 }

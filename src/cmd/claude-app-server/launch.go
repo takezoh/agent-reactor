@@ -9,11 +9,13 @@ import (
 	"time"
 )
 
-// claudeLauncher starts a claude process and returns its stdout, a wait func, and any startup error.
-// resumeSessionID is empty for a new session; non-empty triggers --resume.
-// appendSystemPrompt, when non-empty, is passed via --append-system-prompt (used
-// to teach claude the dynamic-tool calling convention; see turn.go).
-type claudeLauncher func(ctx context.Context, cwd, resumeSessionID, appendSystemPrompt, prompt string) (io.ReadCloser, func() error, error)
+// claudeLauncher starts a claude process and returns its stdout, a wait func,
+// and any startup error.
+//
+//   - resumeSessionID is empty for a new session; non-empty triggers --resume.
+//   - appendSystemPrompt, when non-empty, is passed via --append-system-prompt.
+//   - extraEnv is appended to the inherited environment (e.g. TOOL_BRIDGE_SOCKET).
+type claudeLauncher func(ctx context.Context, cwd, resumeSessionID, appendSystemPrompt, prompt string, extraEnv []string) (io.ReadCloser, func() error, error)
 
 // claudeArgs builds the claude CLI argv. --verbose is mandatory: current claude
 // versions reject `-p --output-format stream-json` without it ("requires --verbose").
@@ -28,7 +30,7 @@ func claudeArgs(resumeSessionID, appendSystemPrompt, prompt string) []string {
 	return append(args, prompt)
 }
 
-func realLaunch(ctx context.Context, cwd, resumeSessionID, appendSystemPrompt, prompt string) (io.ReadCloser, func() error, error) {
+func realLaunch(ctx context.Context, cwd, resumeSessionID, appendSystemPrompt, prompt string, extraEnv []string) (io.ReadCloser, func() error, error) {
 	bin := os.Getenv("CLAUDE_BIN")
 	if bin == "" {
 		bin = "claude"
@@ -46,6 +48,10 @@ func realLaunch(ctx context.Context, cwd, resumeSessionID, appendSystemPrompt, p
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 	cmd.WaitDelay = 5 * time.Second
+
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

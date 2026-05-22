@@ -92,80 +92,67 @@ func (r *turnRunner) runTurn(req turnReq) {
 	r.mu.Lock()
 	tools := r.dynTools[threadID]
 	r.mu.Unlock()
-	r.runTurnLoop(threadID, turnID, sessionID, req.cwd, req.prompt, buildToolSystemPrompt(tools))
-}
 
-// runTurnLoop drives one codex turn. With dynamic tools advertised it simulates
-// codex's client-tool round-trips: launch claude, and when claude emits a
-// tool-call sentinel, forward it to the orchestrator and resume claude with the
-// result. The whole loop is presented as a single turn (one turn/started ..
-// turn/completed); internal claude resumes are hidden from the orchestrator.
-func (r *turnRunner) runTurnLoop(threadID, turnID, sessionID, cwd, prompt, sysPrompt string) {
-	var turnUsage streamjson.Usage
-	for iter := 0; ; iter++ {
-		r.mu.Lock()
-		resumeID := r.threads[threadID]
-		r.mu.Unlock()
+	sysPrompt := buildCLISystemPrompt(tools)
 
-		stdout, wait, err := r.launch(r.ctx, cwd, resumeID, sysPrompt, prompt)
+	// Start a tool bridge if dynamic tools are advertised.  The bridge listens
+	// on a Unix socket; the TOOL_BRIDGE_SOCKET env var tells the CLI where to
+	// connect.  claude invokes the CLI via its native Bash tool, keeping
+	// credentials outside the container (§10.5).
+	var bridge *toolBridge
+	if len(tools) > 0 {
+		var err error
+		bridge, err = newToolBridge(r.srv.Conn(), threadID, turnID, r.newID)
 		if err != nil {
-			slog.Error("launch claude", "err", err)
+			slog.Error("start tool bridge", "err", err)
 			_ = r.emit(func() error { return r.srv.EmitTurnFailed(threadID, err.Error()) })
 			return
 		}
-		scan := r.scanStream(threadID, turnID, streamjson.NewScanner(stdout))
-		werr := wait()
-
-		// No result line means the process ended without turn/completed or error.
-		// Always emit a failure so the orchestrator does not wait out turn_timeout.
-		if !scan.resultReceived {
-			msg := "claude exited without emitting a result"
-			if werr != nil {
-				msg = fmt.Sprintf("claude exited: %v", werr)
-			}
-			_ = r.emit(func() error { return r.srv.EmitTurnFailed(threadID, msg) })
-			return
-		}
-		turnUsage = addUsage(turnUsage, scan.usage)
-		if scan.isError {
-			_ = r.emit(func() error { return r.srv.EmitTurnFailed(threadID, scan.resultText) })
-			return
-		}
-
-		call, isCall := toolCall{}, false
-		if sysPrompt != "" {
-			call, isCall = parseToolCall(scan.resultText)
-		}
-		if !isCall {
-			r.completeTurn(threadID, turnID, sessionID, turnUsage, scan.resultText)
-			return
-		}
-		if iter >= maxToolCalls {
-			_ = r.emit(func() error {
-				return r.srv.EmitTurnFailed(threadID, fmt.Sprintf("exceeded max external tool calls (%d)", maxToolCalls))
-			})
-			return
-		}
-		prompt = r.runToolCall(threadID, turnID, call)
+		defer bridge.Close()
 	}
+
+	r.runTurnLoop(threadID, turnID, sessionID, req.cwd, req.prompt, sysPrompt, bridge)
 }
 
-// runToolCall forwards a dynamic-tool invocation to the orchestrator via
-// item/tool/call and returns the resume prompt carrying the result. The
-// orchestrator executes the tool (it holds the credentials); the shim never
-// sees the raw token.
-func (r *turnRunner) runToolCall(threadID, turnID string, call toolCall) string {
-	res, err := r.srv.Conn().Request(codexschema.MethodItemToolCall, map[string]any{
-		"tool":      call.Tool,
-		"arguments": call.Arguments,
-		"callId":    r.newID(),
-		"threadId":  threadID,
-		"turnId":    turnID,
-	})
-	if err != nil {
-		return fmt.Sprintf("External tool `%s` failed: %v\n\nContinue with the task without it.", call.Tool, err)
+// runTurnLoop drives one codex turn as a single claude invocation.  When
+// dynamic tools are advertised the shim starts a tool bridge (Unix socket)
+// and passes TOOL_BRIDGE_SOCKET to claude.  claude calls the tools via its
+// native Bash tool; the bridge forwards each call to the orchestrator as
+// item/tool/call.  No sentinel detection or --resume loop is needed.
+func (r *turnRunner) runTurnLoop(threadID, turnID, sessionID, cwd, prompt, sysPrompt string, bridge *toolBridge) {
+	var extraEnv []string
+	if bridge != nil {
+		extraEnv = append(extraEnv, "TOOL_BRIDGE_SOCKET="+bridge.SocketPath())
 	}
-	return formatToolResult(call, res)
+
+	r.mu.Lock()
+	resumeID := r.threads[threadID]
+	r.mu.Unlock()
+
+	stdout, wait, err := r.launch(r.ctx, cwd, resumeID, sysPrompt, prompt, extraEnv)
+	if err != nil {
+		slog.Error("launch claude", "err", err)
+		_ = r.emit(func() error { return r.srv.EmitTurnFailed(threadID, err.Error()) })
+		return
+	}
+	scan := r.scanStream(threadID, turnID, streamjson.NewScanner(stdout))
+	werr := wait()
+
+	// No result line means the process ended without turn/completed or error.
+	// Always emit a failure so the orchestrator does not wait out turn_timeout.
+	if !scan.resultReceived {
+		msg := "claude exited without emitting a result"
+		if werr != nil {
+			msg = fmt.Sprintf("claude exited: %v", werr)
+		}
+		_ = r.emit(func() error { return r.srv.EmitTurnFailed(threadID, msg) })
+		return
+	}
+	if scan.isError {
+		_ = r.emit(func() error { return r.srv.EmitTurnFailed(threadID, scan.resultText) })
+		return
+	}
+	r.completeTurn(threadID, turnID, sessionID, scan.usage, scan.resultText)
 }
 
 // turnScanResult captures the outcome of scanning one claude invocation.
@@ -179,7 +166,7 @@ type turnScanResult struct {
 // scanStream processes claude stream-json events for one claude invocation,
 // emitting per-item Codex notifications, and returns the final result. It does
 // not emit turn/completed or turn/failed — runTurnLoop decides that after
-// checking for a tool call.
+// reading the result.
 func (r *turnRunner) scanStream(threadID, turnID string, sc *streamjson.Scanner) turnScanResult {
 	toolNames := map[string]string{} // toolUseID → name for item/completed correlation
 	var out turnScanResult
