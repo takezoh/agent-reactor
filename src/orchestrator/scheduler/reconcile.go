@@ -24,7 +24,8 @@ func (s *Scheduler) reconcile(ctx context.Context, cfg wfconfig.Config) {
 
 	s.reconcileStall(ctx, snap, cfg)
 	if s.tracker != nil && s.workspace != nil {
-		s.reconcileRefresh(ctx, snap, cfg)
+		// Re-snapshot after stall processing: workers killed by stall must not be double-processed.
+		s.reconcileRefresh(ctx, s.state.Snapshot(), cfg)
 	}
 }
 
@@ -85,6 +86,17 @@ func (s *Scheduler) reconcileRefresh(ctx context.Context, snap StateSnapshot, cf
 	for id, run := range snap.Running {
 		iss, found := byID[id]
 		if !found {
+			// Issue disappeared from tracker response: stop worker but keep workspace (SPEC §8.5).
+			if run.Session.Worker != nil {
+				if err := run.Session.Worker.Kill("not-found"); err != nil {
+					slog.Warn("reconcile: not-found kill failed", "issue_id", id, "err", err)
+				}
+			}
+			if entry, ok := s.state.WorkerExitAbnormal(id, errors.New("issue not in refresh response"), run.Attempt); ok {
+				scheduleRetry(s.state, s.clock, s.retryFire, ctx, entry, backoffDelay(entry.Attempt, cfg))
+			}
+			slog.Info("reconcile: issue not in refresh response, worker stopped",
+				"issue_id", id, "identifier", run.Issue.Identifier)
 			continue
 		}
 
