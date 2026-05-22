@@ -116,8 +116,6 @@ func TestDispatchOnce_SpawnFailSchedulesRetry(t *testing.T) {
 	}
 }
 
-// TestDispatchOnce_FirstRunAttemptIsZero verifies the initial dispatch passes attempt=0
-// to SpawnFunc, matching SPEC §4.1.5 (attempt is null/0 on first run).
 func TestDispatchOnce_FirstRunAttemptIsZero(t *testing.T) {
 	st := NewState()
 	spawn := &fakeSpawn{}
@@ -141,9 +139,6 @@ func TestDispatchOnce_FirstRunAttemptIsZero(t *testing.T) {
 	}
 }
 
-// TestDispatchOnce_SpawnFail_FirstBackoff10s verifies that a spawn failure on the
-// initial run (attempt=0) schedules the first retry with attempt=1 and a 10s backoff,
-// matching SPEC §8.4 ("10s-based" exponential, first failure → 10s).
 func TestDispatchOnce_SpawnFail_FirstBackoff10s(t *testing.T) {
 	st := NewState()
 	spawn := &fakeSpawn{err: errors.New("spawn error")}

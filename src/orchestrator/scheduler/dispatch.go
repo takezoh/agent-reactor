@@ -62,7 +62,6 @@ func dispatchOnce(ctx context.Context, cands []tracker.Issue, st *State, clk Clo
 		if err != nil {
 			slog.Error("spawn failed", "issue_id", iss.ID, "identifier", iss.Identifier, "err", err)
 			st.ReleaseClaim(iss.ID)
-			// attempt=0 failed → first retry is attempt=1 → backoffDelay(1)=10s (SPEC §8.4).
 			entry := RetryEntry{IssueID: iss.ID, Identifier: iss.Identifier, Attempt: 1, Kind: RetryBackoff, Err: err}
 			scheduleRetry(st, clk, fireCh, ctx, entry, backoffDelay(1, cfg))
 			continue

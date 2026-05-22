@@ -79,23 +79,16 @@ func TestRender_nullPriorityRendersEmpty(t *testing.T) {
 	assert.Equal(t, "p=", out)
 }
 
-// TestRender_attempt0FalsyOnFirstRun verifies that attempt=0 (first run, SPEC §4.1.5)
-// makes {% if attempt %} falsy so attempt-scoped content is suppressed (SPEC §5.4).
-// Templates should guard retry-specific content with {% if attempt %}.
 func TestRender_attempt0FalsyOnFirstRun(t *testing.T) {
-	// Primary contract: {% if attempt %} is falsy on first run.
 	out, err := prompt.Render("{% if attempt %}visible{% endif %}", prompt.Vars{Attempt: 0})
 	assert.NoError(t, err)
 	assert.Equal(t, "", out, "{% if attempt %} must be falsy on first run")
 
-	// Retry block with {{ attempt }} inside — the entire block is skipped.
 	out, err = prompt.Render("{% if attempt %}retry {{ attempt }}{% endif %}", prompt.Vars{Attempt: 0})
 	assert.NoError(t, err)
 	assert.Equal(t, "", out, "retry block must not render on first run")
 }
 
-// TestRender_attempt1TruthyOnRetry verifies that attempt>=1 (retry) makes
-// {% if attempt %} truthy and renders the attempt number (SPEC §5.4).
 func TestRender_attempt1TruthyOnRetry(t *testing.T) {
 	out, err := prompt.Render("a={{ attempt }}", prompt.Vars{Attempt: 1})
 	assert.NoError(t, err)
