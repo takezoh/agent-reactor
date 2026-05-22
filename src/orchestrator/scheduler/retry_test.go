@@ -89,3 +89,45 @@ func TestScheduleRetry_CancelledContextDropped(t *testing.T) {
 	clk.Advance(time.Millisecond)
 	// Should not block; just assert no panic.
 }
+
+// TestScheduleRetry_RearmStopsOldTimer verifies that re-arming a retry for the same
+// issue stops the previous timer so it does not fire (SPEC §8.4 / Elixir cancel_timer).
+func TestScheduleRetry_RearmStopsOldTimer(t *testing.T) {
+	clk := newFakeClock(time.Now())
+	st := NewState()
+	fireCh := make(chan retryFireReq, 4)
+
+	e1 := RetryEntry{IssueID: "id3", Identifier: "P-3", Attempt: 1, Kind: RetryBackoff}
+	scheduleRetry(st, clk, fireCh, context.Background(), e1, 10*time.Second)
+
+	// Re-arm before the first timer fires — old timer must be stopped.
+	e2 := RetryEntry{IssueID: "id3", Identifier: "P-3", Attempt: 2, Kind: RetryBackoff}
+	scheduleRetry(st, clk, fireCh, context.Background(), e2, 20*time.Second)
+
+	// Advance past the first timer's deadline; it should NOT fire (was stopped).
+	clk.Advance(10 * time.Second)
+	select {
+	case req := <-fireCh:
+		t.Fatalf("orphan fire from old timer: %+v", req)
+	default:
+	}
+
+	// Advance to the second timer's deadline; it SHOULD fire.
+	clk.Advance(10 * time.Second)
+	select {
+	case req := <-fireCh:
+		if req.IssueID != "id3" || req.Attempt != 2 {
+			t.Errorf("unexpected req: %+v", req)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second timer did not fire")
+	}
+}
+
+// TestRetryTimer_StopZeroValue verifies RetryTimer.Stop on a zero value does not panic.
+func TestRetryTimer_StopZeroValue(t *testing.T) {
+	var rt RetryTimer
+	if rt.Stop() {
+		t.Error("zero-value RetryTimer.Stop() should return false")
+	}
+}

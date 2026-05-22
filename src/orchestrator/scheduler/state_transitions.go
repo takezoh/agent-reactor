@@ -147,12 +147,17 @@ func (s *State) ReleaseClaim(issueID string) {
 	}
 }
 
-// EnqueueRetry registers a retry entry for an issue (SPEC §7.3).
+// EnqueueRetry registers a retry entry for an issue (SPEC §7.3 / §8.4).
 // Callers populate entry.DueAtMS and entry.Timer before calling.
+// Any existing timer for the same issue is cancelled before the new entry is stored,
+// matching the Elixir reference: Process.cancel_timer(old_timer) before re-arming.
 func (s *State) EnqueueRetry(entry RetryEntry) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if old, ok := s.retryAttempts[entry.IssueID]; ok {
+		old.Timer.Stop()
+	}
 	s.retryAttempts[entry.IssueID] = entry
 }
 
