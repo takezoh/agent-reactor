@@ -415,3 +415,37 @@ func TestTickSpawnFailSchedulesRetry(t *testing.T) {
 		t.Error("want claim released after spawn failure")
 	}
 }
+
+// TestTickRevalidationSkipsStaleIssue verifies that tickOnce skips an issue that went
+// non-active between candidate fetch and dispatch (SPEC §16.4).
+func TestTickRevalidationSkipsStaleIssue(t *testing.T) {
+	tr := &fakeTracker{issues: []ptrackerv.Issue{
+		{ID: "1", Identifier: "P-1", Title: "issue", State: "In Progress"},
+	}}
+	spawn := &fakeSpawn{}
+	clk := newFakeClock(time.Now())
+	// RefreshTracker returns the issue as "Done" — simulates state change between fetch and spawn.
+	rt := &fakeReconcileTracker{
+		refreshIssues: []ptrackerv.Issue{{ID: "1", Identifier: "P-1", Title: "issue", State: "Done"}},
+	}
+
+	s := New("", schedCfg(), Deps{
+		Tracker:        tr,
+		Spawn:          spawn.fn,
+		Clock:          clk,
+		RefreshTracker: rt,
+	})
+	s.workflowPath = writeWorkflow(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.tickOnce(ctx)
+
+	if spawn.callCount() != 0 {
+		t.Errorf("want 0 spawns for stale issue, got %d", spawn.callCount())
+	}
+	snap := s.state.Snapshot()
+	if _, ok := snap.Claimed["1"]; ok {
+		t.Error("want claim released for stale issue")
+	}
+}
