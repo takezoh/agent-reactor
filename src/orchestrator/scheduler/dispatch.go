@@ -78,7 +78,9 @@ func dispatchOnce(ctx context.Context, cands []tracker.Issue, st *State, clk Clo
 func handleRetryFire(ctx context.Context, req retryFireReq, tr CandidateSource, st *State, clk Clock, fireCh chan<- retryFireReq, spawn SpawnFunc, cfg wfconfig.Config) {
 	cands, err := tr.Candidates(ctx)
 	if err != nil {
-		slog.Error("retry-fire: candidates fetch failed", "issue_id", req.IssueID, "err", err)
+		slog.Error("retry-fire: candidates fetch failed, rescheduling", "issue_id", req.IssueID, "attempt", req.Attempt, "err", err)
+		entry := RetryEntry{IssueID: req.IssueID, Identifier: req.Identifier, Attempt: req.Attempt + 1, Kind: RetryBackoff, Err: err}
+		scheduleRetry(st, clk, fireCh, ctx, entry, backoffDelay(req.Attempt+1, cfg))
 		return
 	}
 

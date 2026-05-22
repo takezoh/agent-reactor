@@ -10,6 +10,9 @@ import (
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
+// errFetch is a sentinel error for candidate fetch failures.
+var errFetch = errors.New("fetch failed")
+
 func dispCfg() wfconfig.Config {
 	return wfconfig.Config{
 		Tracker: wfconfig.TrackerConfig{
@@ -166,6 +169,30 @@ func TestHandleRetryFire_EligibleAndSlots(t *testing.T) {
 	snap := st.Snapshot()
 	if _, ok := snap.Running["1"]; !ok {
 		t.Error("want issue in running after retry dispatch")
+	}
+}
+
+// TestHandleRetryFire_FetchFailReschedules verifies that a candidate fetch error causes
+// the retry to be rescheduled with attempt+1 (SPEC §8.4/§16.6).
+func TestHandleRetryFire_FetchFailReschedules(t *testing.T) {
+	st := NewState()
+	tr := &fakeTracker{callErr: errFetch}
+	spawn := &fakeSpawn{}
+	clk := newFakeClock(time.Now())
+	fireCh := make(chan retryFireReq, 4)
+
+	handleRetryFire(context.Background(), retryFireReq{IssueID: "1", Identifier: "P-1", Attempt: 2}, tr, st, clk, fireCh, spawn.fn, dispCfg())
+
+	if spawn.callCount() != 0 {
+		t.Error("want no spawn on fetch failure")
+	}
+	snap := st.Snapshot()
+	entry, ok := snap.RetryAttempts["1"]
+	if !ok {
+		t.Fatal("want retry rescheduled after fetch failure")
+	}
+	if entry.Attempt != 3 {
+		t.Errorf("want attempt=3 (attempt+1), got %d", entry.Attempt)
 	}
 }
 
