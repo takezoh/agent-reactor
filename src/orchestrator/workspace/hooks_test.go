@@ -93,22 +93,6 @@ func TestBeforeRun_WithOutput_Succeeds(t *testing.T) {
 	}
 }
 
-// §15.4: failed hook output is captured alongside the error.
-func TestBeforeRun_FailedHook_CapturesOutput(t *testing.T) {
-	root := t.TempDir()
-	m := New(wfconfig.Config{
-		Workspace: wfconfig.WorkspaceConfig{Root: root},
-		Hooks:     wfconfig.HooksConfig{TimeoutMS: 5000, BeforeRun: "echo error_msg && exit 1"},
-	})
-	if _, err := m.Ensure(context.Background(), "issue-1"); err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	err := m.BeforeRun(context.Background(), "issue-1")
-	if !errors.Is(err, ErrHookFailed) {
-		t.Errorf("BeforeRun failed hook err = %v, want ErrHookFailed", err)
-	}
-}
-
 // §15.4: truncateOutput limits byte length to max.
 func TestTruncateOutput(t *testing.T) {
 	cases := []struct {

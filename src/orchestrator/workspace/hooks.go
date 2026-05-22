@@ -67,7 +67,6 @@ func (m *Manager) runHook(ctx context.Context, name, script, cwd string) error {
 	return nil
 }
 
-// truncateOutput returns b unchanged if len(b) <= max, otherwise returns b[:max].
 func truncateOutput(b []byte, max int) []byte {
 	if len(b) > max {
 		return b[:max]
