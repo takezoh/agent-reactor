@@ -84,7 +84,6 @@ func (m *Manager) VerifyCWD(identifier, cwd string) error {
 	if filepath.Clean(abs) != expected {
 		return fmt.Errorf("%w: got %q, want %q", ErrCWDMismatch, abs, expected)
 	}
-	// §9.5/§15.2: resolve symlinks and re-verify root containment.
 	realCWD, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		return fmt.Errorf("%w: cannot resolve cwd symlinks: %v", ErrCWDMismatch, err)
@@ -94,7 +93,7 @@ func (m *Manager) VerifyCWD(identifier, cwd string) error {
 		return fmt.Errorf("%w: cannot resolve root symlinks: %v", ErrCWDMismatch, err)
 	}
 	rel, err := filepath.Rel(realRoot, realCWD)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("%w: %q resolves outside workspace root", ErrSymlinkEscapesRoot, cwd)
 	}
 	return nil

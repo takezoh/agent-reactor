@@ -151,9 +151,7 @@ func TestVerifyCWD_SymlinkEscape_OutsideRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Path: %v", err)
 	}
-	// Create an external target directory outside the workspace root.
 	externalDir := t.TempDir()
-	// Point the workspace path at the external directory via symlink.
 	if err := os.Symlink(externalDir, wsPath); err != nil {
 		t.Fatalf("Symlink: %v", err)
 	}
@@ -166,7 +164,6 @@ func TestVerifyCWD_SymlinkEscape_OutsideRoot(t *testing.T) {
 // §9.5/§15.2: symlink inside root that points to another dir inside root must succeed.
 func TestVerifyCWD_SymlinkWithinRoot(t *testing.T) {
 	m := newTestManager(t)
-	// Create the real target inside the root.
 	target := filepath.Join(m.Root(), "real-issue-dir")
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -175,12 +172,27 @@ func TestVerifyCWD_SymlinkWithinRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Path: %v", err)
 	}
-	// Create a symlink inside root pointing to another directory inside root.
 	if err := os.Symlink(target, wsPath); err != nil {
 		t.Fatalf("Symlink: %v", err)
 	}
 	if err := m.VerifyCWD("issue-link", wsPath); err != nil {
 		t.Errorf("VerifyCWD symlink-within-root: unexpected err = %v", err)
+	}
+}
+
+// §9.5/§15.2: symlink that resolves to the workspace root itself must be rejected.
+// Path() rejects rel=="." for lexical paths; the post-symlink check must be equally strict.
+func TestVerifyCWD_SymlinkToRoot_IsRejected(t *testing.T) {
+	m := newTestManager(t)
+	wsPath, err := m.Path("issue-rootlink")
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if err := os.Symlink(m.Root(), wsPath); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	if err := m.VerifyCWD("issue-rootlink", wsPath); !errors.Is(err, ErrSymlinkEscapesRoot) {
+		t.Errorf("VerifyCWD symlink-to-root err = %v, want ErrSymlinkEscapesRoot", err)
 	}
 }
 
@@ -192,7 +204,6 @@ func TestVerifyCWD_NonExistentPath_ReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Path: %v", err)
 	}
-	// wsPath was never created — EvalSymlinks must fail.
 	err = m.VerifyCWD("issue-ghost", wsPath)
 	if !errors.Is(err, ErrCWDMismatch) {
 		t.Errorf("VerifyCWD non-existent err = %v, want ErrCWDMismatch", err)
