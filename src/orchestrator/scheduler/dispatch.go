@@ -53,21 +53,22 @@ func dispatchOnce(ctx context.Context, cands []tracker.Issue, st *State, clk Clo
 			continue
 		}
 
-		if err := st.Claim(iss, 1); err != nil {
+		if err := st.Claim(iss, 0); err != nil {
 			// Duplicate claim — already claimed elsewhere; skip.
 			continue
 		}
 
-		session, err := spawn(ctx, iss, 1)
+		session, err := spawn(ctx, iss, 0)
 		if err != nil {
 			slog.Error("spawn failed", "issue_id", iss.ID, "identifier", iss.Identifier, "err", err)
 			st.ReleaseClaim(iss.ID)
-			entry := RetryEntry{IssueID: iss.ID, Identifier: iss.Identifier, Attempt: 2, Kind: RetryBackoff, Err: err}
-			scheduleRetry(st, clk, fireCh, ctx, entry, backoffDelay(2, cfg))
+			// attempt=0 failed → first retry is attempt=1 → backoffDelay(1)=10s (SPEC §8.4).
+			entry := RetryEntry{IssueID: iss.ID, Identifier: iss.Identifier, Attempt: 1, Kind: RetryBackoff, Err: err}
+			scheduleRetry(st, clk, fireCh, ctx, entry, backoffDelay(1, cfg))
 			continue
 		}
 
-		st.MarkRunning(iss.ID, iss, 1, session, time.Now())
+		st.MarkRunning(iss.ID, iss, 0, session, time.Now())
 		globalAvail--
 		perStateUsed[norm]++
 		slog.Info("dispatched", "issue_id", iss.ID, "identifier", iss.Identifier)

@@ -13,7 +13,7 @@ func makeRunningScheduler(t *testing.T) (*Scheduler, *fakeClock, chan retryFireR
 	t.Helper()
 	st := NewState()
 	iss := tracker.Issue{ID: "1", Identifier: "P-1", State: "In Progress"}
-	if err := st.Dispatch(iss, 1, LiveSession{}, time.Now()); err != nil {
+	if err := st.Dispatch(iss, 0, LiveSession{}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	clk := newFakeClock(time.Now())

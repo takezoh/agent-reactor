@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -70,5 +71,47 @@ func TestSPEC_17_4_PerStateConcurrency(t *testing.T) {
 func TestSPEC_17_4_ContinuationFixed1s(t *testing.T) {
 	if continuationDelay != 1000*time.Millisecond {
 		t.Errorf("continuationDelay = %v, want 1s", continuationDelay)
+	}
+}
+
+// SPEC §4.1.5 — attempt is null/0 on the first run; >=1 for retries/continuations.
+// Verifies that dispatchOnce passes attempt=0 to SpawnFunc on the initial dispatch.
+func TestSPEC_4_1_5_FirstRunAttemptZero(t *testing.T) {
+	st := NewState()
+	spawn := &fakeSpawn{}
+	clk := newFakeClock(time.Now())
+	fireCh := make(chan retryFireReq, 4)
+
+	cands := []ptrackerv.Issue{{ID: "1", Identifier: "P-1", Title: "t", State: "In Progress"}}
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, schedCfg())
+
+	if spawn.callCount() != 1 {
+		t.Fatalf("want 1 spawn, got %d", spawn.callCount())
+	}
+	if got := spawn.calls[0].Attempt; got != 0 {
+		t.Errorf("SPEC §4.1.5: first run attempt must be 0 (null), got %d", got)
+	}
+}
+
+// SPEC §8.4 — failure backoff is 10s-based exponential; first failure must use 10s.
+// Verifies that an initial-run spawn failure schedules a retry with a 10s backoff.
+func TestSPEC_8_4_FirstFailureBackoff10s(t *testing.T) {
+	cfg := schedCfg()
+	st := NewState()
+	spawn := &fakeSpawn{err: errors.New("agent error")}
+	clk := newFakeClock(time.Now())
+	fireCh := make(chan retryFireReq, 4)
+
+	cands := []ptrackerv.Issue{{ID: "1", Identifier: "P-1", Title: "t", State: "In Progress"}}
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, cfg)
+
+	entry, ok := st.Snapshot().RetryAttempts["1"]
+	if !ok {
+		t.Fatal("want retry entry after initial spawn fail")
+	}
+	wantDelay := backoffDelay(1, cfg) // 10s
+	gotDelayMS := entry.DueAtMS - clk.Now().UnixMilli()
+	if gotDelayMS != wantDelay.Milliseconds() {
+		t.Errorf("SPEC §8.4: first failure backoff want %dms (10s), got %dms", wantDelay.Milliseconds(), gotDelayMS)
 	}
 }

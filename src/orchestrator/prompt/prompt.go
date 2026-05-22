@@ -40,9 +40,18 @@ func Render(tmpl string, vars Vars) (string, error) {
 	if tmpl == "" {
 		return defaultPrompt, nil
 	}
+	// attempt=0 represents the first run (SPEC §4.1.5: attempt is null on first run).
+	// Pass false so {% if attempt %} is falsy on the first run (SPEC §5.4).
+	// Liquid: only nil and false are falsy; "" and 0 are truthy. StrictVariables
+	// errors on nil (treated as undefined), so false is used as the null sentinel.
+	// Templates must guard attempt-specific content with {% if attempt %}.
+	var attemptVal any = false
+	if vars.Attempt > 0 {
+		attemptVal = vars.Attempt
+	}
 	bindings := liquid.Bindings{
 		"issue":   toIssueMap(vars.Issue),
-		"attempt": vars.Attempt,
+		"attempt": attemptVal,
 	}
 	out, err := engine().ParseAndRenderString(tmpl, bindings)
 	if err != nil {

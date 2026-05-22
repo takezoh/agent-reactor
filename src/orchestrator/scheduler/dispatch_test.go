@@ -116,6 +116,59 @@ func TestDispatchOnce_SpawnFailSchedulesRetry(t *testing.T) {
 	}
 }
 
+// TestDispatchOnce_FirstRunAttemptIsZero verifies the initial dispatch passes attempt=0
+// to SpawnFunc, matching SPEC §4.1.5 (attempt is null/0 on first run).
+func TestDispatchOnce_FirstRunAttemptIsZero(t *testing.T) {
+	st := NewState()
+	spawn := &fakeSpawn{}
+	clk := newFakeClock(time.Now())
+	fireCh := make(chan retryFireReq, 4)
+
+	cands := []tracker.Issue{makeIssue("1", "In Progress")}
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg())
+
+	if spawn.callCount() != 1 {
+		t.Fatalf("want 1 spawn, got %d", spawn.callCount())
+	}
+	if got := spawn.calls[0].Attempt; got != 0 {
+		t.Errorf("first run: want attempt=0, got %d", got)
+	}
+	snap := st.Snapshot()
+	if run, ok := snap.Running["1"]; !ok {
+		t.Error("want issue 1 in running")
+	} else if run.Attempt != 0 {
+		t.Errorf("RunAttempt.Attempt: want 0, got %d", run.Attempt)
+	}
+}
+
+// TestDispatchOnce_SpawnFail_FirstBackoff10s verifies that a spawn failure on the
+// initial run (attempt=0) schedules the first retry with attempt=1 and a 10s backoff,
+// matching SPEC §8.4 ("10s-based" exponential, first failure → 10s).
+func TestDispatchOnce_SpawnFail_FirstBackoff10s(t *testing.T) {
+	st := NewState()
+	spawn := &fakeSpawn{err: errors.New("spawn error")}
+	clk := newFakeClock(time.Now())
+	fireCh := make(chan retryFireReq, 4)
+
+	cfg := dispCfg()
+	cands := []tracker.Issue{makeIssue("1", "In Progress")}
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, cfg)
+
+	snap := st.Snapshot()
+	entry, ok := snap.RetryAttempts["1"]
+	if !ok {
+		t.Fatal("want retry entry after spawn fail")
+	}
+	if entry.Attempt != 1 {
+		t.Errorf("first retry: want attempt=1, got %d", entry.Attempt)
+	}
+	want10s := backoffDelay(1, cfg)
+	gotDelayMS := entry.DueAtMS - clk.Now().UnixMilli()
+	if gotDelayMS != want10s.Milliseconds() {
+		t.Errorf("first backoff: want %dms (10s), got %dms", want10s.Milliseconds(), gotDelayMS)
+	}
+}
+
 // TestHandleRetryFire_IssueNotFound releases the claim.
 func TestHandleRetryFire_IssueNotFound(t *testing.T) {
 	st := NewState()
