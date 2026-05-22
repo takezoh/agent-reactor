@@ -236,8 +236,19 @@ func (r *Runner) prepareWorkspace(ctx context.Context, identifier string) (strin
 	return wsPath, nil
 }
 
+// currentTemplate returns the most up-to-date prompt template.
+// If PromptLoader is set it is called per-dispatch so that live edits to
+// WORKFLOW.md are reflected immediately (SPEC §6.2). PromptTemplate is used
+// as a static fallback (e.g. in tests that set it directly).
+func (r *Runner) currentTemplate() string {
+	if r.PromptLoader != nil {
+		return r.PromptLoader()
+	}
+	return r.PromptTemplate
+}
+
 func (r *Runner) renderPrompt(issue tracker.Issue, attempt int) (string, error) {
-	rendered, err := prompt.Render(r.PromptTemplate, prompt.Vars{Issue: issue, Attempt: attempt})
+	rendered, err := prompt.Render(r.currentTemplate(), prompt.Vars{Issue: issue, Attempt: attempt})
 	if err != nil {
 		return "", fmt.Errorf("agent: render prompt: %w", err)
 	}

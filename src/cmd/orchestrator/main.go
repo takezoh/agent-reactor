@@ -149,7 +149,7 @@ func buildScheduler(ctx context.Context, absPath string, cfg wfconfig.Config, tm
 
 	runner := agent.New(ws, cfg, tmpl, dispatcher, tr)
 
-	sched := scheduler.New(absPath, cfg, scheduler.Deps{
+	sched := scheduler.New(absPath, cfg, tmpl, scheduler.Deps{
 		Tracker:        tr,
 		RefreshTracker: tr,
 		Workspace:      ws,
@@ -157,5 +157,7 @@ func buildScheduler(ctx context.Context, absPath string, cfg wfconfig.Config, tm
 	})
 	runner.WorkerDone = sched.WorkerDone()
 	runner.CodexActivity = sched.CodexActivity()
+	// Wire live template reload: each dispatch reads the latest WORKFLOW.md body (SPEC §6.2).
+	runner.PromptLoader = sched.LastGoodTemplate
 	return sched, dispatcherCleanup, nil
 }

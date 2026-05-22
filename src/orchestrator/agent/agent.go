@@ -46,7 +46,8 @@ type procFunc func(ctx context.Context, dir string, env map[string]string, comma
 type Runner struct {
 	Workspace      *workspace.Manager
 	Cfg            wfconfig.Config
-	PromptTemplate string
+	PromptTemplate string        // static fallback; used when PromptLoader is nil
+	PromptLoader   func() string // called per-dispatch to pick up live WORKFLOW.md edits (SPEC §6.2)
 	Dispatcher     agentlaunch.Dispatcher
 	Tracker        stateRefresher
 	WorkerDone     chan<- scheduler.WorkerExit

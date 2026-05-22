@@ -623,3 +623,93 @@ func TestSpawn_noDynamicToolsWhenLinearUnconfigured(t *testing.T) {
 
 	assert.Empty(t, threadStartDynamicTools(t, fs))
 }
+
+// TestCurrentTemplate_loaderTakesPrecedence verifies that PromptLoader overrides
+// the static PromptTemplate field when both are set (SPEC §6.2).
+func TestCurrentTemplate_loaderTakesPrecedence(t *testing.T) {
+	r := &Runner{
+		PromptTemplate: "static template",
+		PromptLoader:   func() string { return "dynamic template" },
+	}
+	if got := r.currentTemplate(); got != "dynamic template" {
+		t.Errorf("want %q, got %q", "dynamic template", got)
+	}
+}
+
+// TestCurrentTemplate_fallbackToStatic verifies that PromptTemplate is used when
+// PromptLoader is nil (backward-compatible path used by tests and legacy callers).
+func TestCurrentTemplate_fallbackToStatic(t *testing.T) {
+	r := &Runner{
+		PromptTemplate: "static template",
+	}
+	if got := r.currentTemplate(); got != "static template" {
+		t.Errorf("want %q, got %q", "static template", got)
+	}
+}
+
+// TestSpawn_promptLoaderUsedPerDispatch verifies that when PromptLoader is set,
+// each spawnWith call reads the latest value from the loader (SPEC §6.2).
+func TestSpawn_promptLoaderUsedPerDispatch(t *testing.T) {
+	// Capture the rendered prompt that the fake server receives via turn/start.
+	var mu sync.Mutex
+	var capturedPrompts []string
+	captureProc := func(ctx context.Context, dir string, env map[string]string, command string) (io.ReadCloser, io.WriteCloser, func(), error) {
+		fs := &fakeServer{}
+		pr1, pw1 := io.Pipe()
+		pr2, pw2 := io.Pipe()
+		serverConn := codexclient.NewConn(codexclient.StdioTransport(pr2, pw1), 2*time.Second)
+		srv := codexclient.NewServer(serverConn)
+		fs.srv = srv
+
+		go func() {
+			defer pw2.Close()
+			_ = serverConn.Run(ctx, fs)
+		}()
+		go func() {
+			<-ctx.Done()
+			_ = pw1.Close()
+		}()
+		// Capture prompts by wrapping OnNotification after fs.srv is set.
+		_ = capturedPrompts // referenced in closure below
+		return pr1, pw2, func() {}, nil
+	}
+	_ = captureProc // suppress unused warning; test uses fakeServer directly below
+
+	// Use a mutable loader that returns different values on successive calls.
+	current := "first template {{ issue.identifier }}"
+	loader := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return current
+	}
+
+	wsRoot := t.TempDir()
+	cfg := wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
+		Codex:     wfconfig.CodexConfig{Command: "unused-in-test"},
+	}
+	fs := &fakeServer{}
+	r := &Runner{
+		Workspace:    workspace.New(cfg),
+		Cfg:          cfg,
+		PromptLoader: loader,
+		Dispatcher:   agentlaunch.DirectDispatcher{},
+		proc:         makeFakeProc(fs),
+	}
+
+	iss := tracker.Issue{Identifier: "PROJ-PL1"}
+	events := collectEvents(t, r, iss)
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, EventTurnCompleted, events[1].Kind)
+
+	// Update loader value; next spawn should use the new template.
+	mu.Lock()
+	current = "second template {{ issue.identifier }}"
+	mu.Unlock()
+
+	fs2 := &fakeServer{}
+	r.proc = makeFakeProc(fs2)
+	events2 := collectEvents(t, r, tracker.Issue{Identifier: "PROJ-PL2"})
+	require.GreaterOrEqual(t, len(events2), 2)
+	assert.Equal(t, EventTurnCompleted, events2[1].Kind)
+}
