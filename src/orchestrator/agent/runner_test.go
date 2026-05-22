@@ -35,6 +35,8 @@ type fakeServer struct {
 	mu               sync.Mutex
 	lastCWD          string          // cwd from the most recent turn/start notification
 	lastDynamicTools json.RawMessage // params from the most recent thread/start request
+	lastThreadParams json.RawMessage // full params from the most recent thread/start request
+	lastTurnParams   json.RawMessage // full params from the most recent turn/start notification
 }
 
 func (f *fakeServer) OnNotification(method string, params json.RawMessage) {
@@ -42,7 +44,7 @@ func (f *fakeServer) OnNotification(method string, params json.RawMessage) {
 		return
 	}
 
-	// Capture the cwd field from the params for test assertions.
+	// Capture the cwd field and full params from the notification for test assertions.
 	var p struct {
 		CWD string `json:"cwd"`
 	}
@@ -51,8 +53,8 @@ func (f *fakeServer) OnNotification(method string, params json.RawMessage) {
 		f.lastCWD = p.CWD
 		f.mu.Unlock()
 	}
-
 	f.mu.Lock()
+	f.lastTurnParams = params
 	fail := f.failTurn
 	hang := f.hangTurn
 	f.mu.Unlock()
@@ -75,6 +77,22 @@ func (f *fakeServer) getLastCWD() string {
 	return f.lastCWD
 }
 
+func (f *fakeServer) getLastThreadParams() json.RawMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	raw := make(json.RawMessage, len(f.lastThreadParams))
+	copy(raw, f.lastThreadParams)
+	return raw
+}
+
+func (f *fakeServer) getLastTurnParams() json.RawMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	raw := make(json.RawMessage, len(f.lastTurnParams))
+	copy(raw, f.lastTurnParams)
+	return raw
+}
+
 func (f *fakeServer) OnServerRequest(id int64, method string, params json.RawMessage) {
 	switch method {
 	case codexschema.MethodInitialize:
@@ -82,6 +100,7 @@ func (f *fakeServer) OnServerRequest(id int64, method string, params json.RawMes
 	case codexschema.MethodThreadStart:
 		f.mu.Lock()
 		f.lastDynamicTools = params
+		f.lastThreadParams = params
 		f.mu.Unlock()
 		_ = f.srv.Conn().Reply(id, map[string]any{"thread": map[string]any{"id": testThreadID}})
 	}
@@ -622,4 +641,187 @@ func TestSpawn_noDynamicToolsWhenLinearUnconfigured(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Empty(t, threadStartDynamicTools(t, fs))
+}
+
+// ---- §10.2 approval/sandbox policy and serviceName tests ----
+
+// threadStartParam decodes a single top-level string field from thread/start params.
+func threadStartParam(t *testing.T, fs *fakeServer, field string) string {
+	t.Helper()
+	raw := fs.getLastThreadParams()
+	require.NotEmpty(t, raw, "thread/start should have been sent")
+	var m map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &m))
+	v, ok := m[field]
+	if !ok {
+		return ""
+	}
+	var s string
+	require.NoError(t, json.Unmarshal(v, &s))
+	return s
+}
+
+// threadStartParamAbsent asserts that a given field is absent from thread/start params.
+func threadStartParamAbsent(t *testing.T, fs *fakeServer, field string) {
+	t.Helper()
+	raw := fs.getLastThreadParams()
+	require.NotEmpty(t, raw, "thread/start should have been sent")
+	var m map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &m))
+	_, ok := m[field]
+	assert.False(t, ok, "field %q should be absent from thread/start params", field)
+}
+
+// turnStartParam decodes a single top-level string field from turn/start params.
+func turnStartParam(t *testing.T, fs *fakeServer, field string) string {
+	t.Helper()
+	raw := fs.getLastTurnParams()
+	require.NotEmpty(t, raw, "turn/start should have been sent")
+	var m map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &m))
+	v, ok := m[field]
+	if !ok {
+		return ""
+	}
+	var s string
+	require.NoError(t, json.Unmarshal(v, &s))
+	return s
+}
+
+// turnStartParamAbsent asserts that a given field is absent from turn/start params.
+func turnStartParamAbsent(t *testing.T, fs *fakeServer, field string) {
+	t.Helper()
+	raw := fs.getLastTurnParams()
+	require.NotEmpty(t, raw, "turn/start should have been sent")
+	var m map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &m))
+	_, ok := m[field]
+	assert.False(t, ok, "field %q should be absent from turn/start params", field)
+}
+
+// makeRunnerWithCodex creates a Runner with specific CodexConfig fields for §10.2 tests.
+func makeRunnerWithCodex(t *testing.T, codexCfg wfconfig.CodexConfig, fs *fakeServer) *Runner {
+	t.Helper()
+	wsRoot := t.TempDir()
+	cfg := wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
+		Codex:     codexCfg,
+	}
+	ws := workspace.New(cfg)
+	return &Runner{
+		Workspace:      ws,
+		Cfg:            cfg,
+		PromptTemplate: "",
+		Dispatcher:     agentlaunch.DirectDispatcher{},
+		proc:           makeFakeProc(fs),
+	}
+}
+
+// TestSPEC_17_5_ThreadStartSendsApprovalPolicy verifies that codex.approval_policy
+// reaches the thread/start wire params (SPEC §10.2).
+func TestSPEC_17_5_ThreadStartSendsApprovalPolicy(t *testing.T) {
+	fs := &fakeServer{}
+	r := makeRunnerWithCodex(t, wfconfig.CodexConfig{
+		Command:        "unused",
+		ApprovalPolicy: "never",
+	}, fs)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := r.spawnWith(ctx, tracker.Issue{Identifier: "PROJ-AP1"}, 1, func(Event) {})
+	require.NoError(t, err)
+
+	assert.Equal(t, "never", threadStartParam(t, fs, "approvalPolicy"))
+}
+
+// TestSPEC_17_5_ThreadStartSendsSandboxMode verifies that codex.thread_sandbox
+// reaches the thread/start wire params as "sandbox" (SPEC §10.2).
+func TestSPEC_17_5_ThreadStartSendsSandboxMode(t *testing.T) {
+	fs := &fakeServer{}
+	r := makeRunnerWithCodex(t, wfconfig.CodexConfig{
+		Command:       "unused",
+		ThreadSandbox: "danger-full-access",
+	}, fs)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := r.spawnWith(ctx, tracker.Issue{Identifier: "PROJ-SM1"}, 1, func(Event) {})
+	require.NoError(t, err)
+
+	assert.Equal(t, "danger-full-access", threadStartParam(t, fs, "sandbox"))
+}
+
+// TestSPEC_17_5_ThreadStartSendsServiceName verifies that the issue identifier
+// and title are sent as serviceName in thread/start (SPEC §10.2).
+func TestSPEC_17_5_ThreadStartSendsServiceName(t *testing.T) {
+	fs := &fakeServer{}
+	r := makeRunnerWithCodex(t, wfconfig.CodexConfig{Command: "unused"}, fs)
+	iss := tracker.Issue{Identifier: "DEV-42", Title: "Fix the bug"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := r.spawnWith(ctx, iss, 1, func(Event) {})
+	require.NoError(t, err)
+
+	assert.Equal(t, "DEV-42: Fix the bug", threadStartParam(t, fs, "serviceName"))
+}
+
+// TestSPEC_17_5_TurnStartSendsApprovalPolicy verifies that codex.approval_policy
+// reaches the turn/start wire params (SPEC §10.2).
+func TestSPEC_17_5_TurnStartSendsApprovalPolicy(t *testing.T) {
+	fs := &fakeServer{}
+	r := makeRunnerWithCodex(t, wfconfig.CodexConfig{
+		Command:        "unused",
+		ApprovalPolicy: "on-failure",
+	}, fs)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := r.spawnWith(ctx, tracker.Issue{Identifier: "PROJ-TAP1"}, 1, func(Event) {})
+	require.NoError(t, err)
+
+	assert.Equal(t, "on-failure", turnStartParam(t, fs, "approvalPolicy"))
+}
+
+// TestSPEC_17_5_TurnStartSendsSandboxPolicy verifies that codex.turn_sandbox_policy
+// reaches the turn/start wire params as {"type": "<value>"} (SPEC §10.2).
+func TestSPEC_17_5_TurnStartSendsSandboxPolicy(t *testing.T) {
+	fs := &fakeServer{}
+	r := makeRunnerWithCodex(t, wfconfig.CodexConfig{
+		Command:           "unused",
+		TurnSandboxPolicy: "workspace-write",
+	}, fs)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := r.spawnWith(ctx, tracker.Issue{Identifier: "PROJ-TSP1"}, 1, func(Event) {})
+	require.NoError(t, err)
+
+	// sandboxPolicy must be a JSON object with "type" field.
+	raw := fs.getLastTurnParams()
+	require.NotEmpty(t, raw)
+	var m map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &m))
+	spRaw, ok := m["sandboxPolicy"]
+	require.True(t, ok, "sandboxPolicy should be present in turn/start params")
+	var sp map[string]string
+	require.NoError(t, json.Unmarshal(spRaw, &sp))
+	assert.Equal(t, "workspace-write", sp["type"])
+}
+
+// TestSPEC_17_5_EmptyPolicyFieldsOmitted verifies that when no codex policy
+// config is set, the optional fields are omitted from the wire (SPEC §10.2).
+func TestSPEC_17_5_EmptyPolicyFieldsOmitted(t *testing.T) {
+	fs := &fakeServer{}
+	r := makeRunner(t, "", makeFakeProc(fs)) // all CodexConfig fields are zero
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := r.spawnWith(ctx, tracker.Issue{Identifier: "PROJ-EMP1"}, 1, func(Event) {})
+	require.NoError(t, err)
+
+	threadStartParamAbsent(t, fs, "approvalPolicy")
+	threadStartParamAbsent(t, fs, "sandbox")
+	turnStartParamAbsent(t, fs, "approvalPolicy")
+	turnStartParamAbsent(t, fs, "sandboxPolicy")
 }
