@@ -105,8 +105,25 @@ func handleRetryFire(ctx context.Context, req retryFireReq, tr CandidateSource, 
 
 	snap := st.Snapshot()
 	active := normSet(cfg.Tracker.ActiveStates)
-	if !eligible(*found, snap, active, terminal) {
-		slog.Info("retry-fire: issue not eligible, releasing", "issue_id", req.IssueID)
+
+	// Issue should be in retryAttempts when the timer fires; eligible() now blocks
+	// re-dispatch during the retry window. If the issue is unexpectedly running or claimed
+	// (bug elsewhere), skip without calling ReleaseClaim to avoid orphaning a live worker.
+	if _, ok := snap.Running[req.IssueID]; ok {
+		slog.Warn("retry-fire: issue unexpectedly running, skipping", "issue_id", req.IssueID)
+		return
+	}
+	if _, ok := snap.Claimed[req.IssueID]; ok {
+		slog.Warn("retry-fire: issue unexpectedly claimed, skipping", "issue_id", req.IssueID)
+		return
+	}
+	if !active[strings.ToLower(found.State)] {
+		slog.Info("retry-fire: issue state not active, releasing", "issue_id", req.IssueID, "state", found.State)
+		st.ReleaseClaim(req.IssueID)
+		return
+	}
+	if strings.ToLower(found.State) == "todo" && hasActiveBlocker(found.BlockedBy, terminal) {
+		slog.Info("retry-fire: issue is blocked, releasing", "issue_id", req.IssueID)
 		st.ReleaseClaim(req.IssueID)
 		return
 	}

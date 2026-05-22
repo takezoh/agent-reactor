@@ -28,8 +28,9 @@ func baseIssue() tracker.Issue {
 
 func emptySnap() StateSnapshot {
 	return StateSnapshot{
-		Running: map[string]RunAttempt{},
-		Claimed: map[string]struct{}{},
+		Running:       map[string]RunAttempt{},
+		Claimed:       map[string]struct{}{},
+		RetryAttempts: map[string]RetryEntry{},
 	}
 }
 
@@ -106,6 +107,21 @@ func TestEligible_RunningAndClaimed(t *testing.T) {
 			t.Errorf("want 0, got %d", len(got))
 		}
 	})
+}
+
+// TestEligible_RetryQueuedExcluded verifies issues in the retry queue are not eligible
+// for dispatch (SPEC §7.1 / §7.4: RetryQueued is part of claimed; re-dispatch is forbidden).
+func TestEligible_RetryQueuedExcluded(t *testing.T) {
+	cfg := cfg2()
+	iss := baseIssue()
+
+	snap := emptySnap()
+	snap.RetryAttempts[iss.ID] = RetryEntry{IssueID: iss.ID, Kind: RetryContinuation}
+
+	got := filterEligible([]tracker.Issue{iss}, snap, cfg)
+	if len(got) != 0 {
+		t.Errorf("want 0 eligible for retry-queued issue, got %d", len(got))
+	}
 }
 
 // TestEligible_BlockerRule verifies the Todo+blocker exclusion per SPEC §8.2.

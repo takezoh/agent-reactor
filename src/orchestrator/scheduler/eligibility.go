@@ -38,6 +38,9 @@ func eligible(iss tracker.Issue, snap StateSnapshot, active, terminal map[string
 	if _, ok := snap.Claimed[iss.ID]; ok {
 		return false
 	}
+	if _, ok := snap.RetryAttempts[iss.ID]; ok {
+		return false
+	}
 	if strings.ToLower(iss.State) == "todo" && hasActiveBlocker(iss.BlockedBy, terminal) {
 		return false
 	}
