@@ -48,14 +48,14 @@ type WorkerExit struct {
 // CodexActivity is sent on the codexActivity channel when the agent runner receives
 // a codex protocol notification (SPEC §10 / §13.5).
 type CodexActivity struct {
-	IssueID      string
-	Event        string // codex notification method name
-	Message      string // non-empty for item/agentMessage/delta events
-	Timestamp    time.Time
-	Usage        *metrics.Usage             // non-nil for thread/tokenUsage/updated
-	RateLimit    *metrics.RateLimitSnapshot // non-nil for account/rateLimits/updated
-	TurnDuration *time.Duration             // non-nil for turn/completed (elapsed turn time)
-	TurnCompleted bool                      // true when a turn/completed notification was received (SPEC §4.1.6)
+	IssueID       string
+	Event         string // codex notification method name
+	Message       string // non-empty for item/agentMessage/delta events
+	Timestamp     time.Time
+	Usage         *metrics.Usage             // non-nil for thread/tokenUsage/updated
+	RateLimit     *metrics.RateLimitSnapshot // non-nil for account/rateLimits/updated
+	TurnDuration  *time.Duration             // non-nil for turn/completed (elapsed turn time)
+	TurnCompleted bool                       // true when a turn/completed notification was received (SPEC §4.1.6)
 }
 
 // Scheduler runs the polling loop per SPEC §16.2.

@@ -20,14 +20,19 @@ import (
 
 // --- Activity tracking tests (§13.5 / §8.5) ---
 
-func TestTurnHandler_ActivityReportedOnEveryNotification(t *testing.T) {
-	var got []scheduler.CodexActivity
-	h := &turnHandler{
-		issueID:      "iss-1",
+func newTestHandler(t *testing.T, issueID string, got *[]scheduler.CodexActivity) *turnHandler {
+	t.Helper()
+	return &turnHandler{
+		issueID:      issueID,
 		sessionReady: make(chan sessionIDs, 1),
 		turnDone:     make(chan turnResult, 1),
-		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
+		report:       func(a scheduler.CodexActivity) { *got = append(*got, a) },
 	}
+}
+
+func TestTurnHandler_ActivityReportedOnEveryNotification(t *testing.T) {
+	var got []scheduler.CodexActivity
+	h := newTestHandler(t, "iss-1", &got)
 
 	before := time.Now()
 	h.OnNotification("some/method", nil)
@@ -46,12 +51,7 @@ func TestTurnHandler_ActivityReportedOnEveryNotification(t *testing.T) {
 // the delta-style "last" payload must be ignored; only "total" (absolute) is used.
 func TestTurnHandler_UsageUsesTotalIgnoresLastPayload(t *testing.T) {
 	var got []scheduler.CodexActivity
-	h := &turnHandler{
-		issueID:      "iss-2",
-		sessionReady: make(chan sessionIDs, 1),
-		turnDone:     make(chan turnResult, 1),
-		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
-	}
+	h := newTestHandler(t, "iss-2", &got)
 
 	params, _ := json.Marshal(map[string]any{
 		"threadId": "thread1",
@@ -81,12 +81,7 @@ func TestTurnHandler_UsageUsesTotalIgnoresLastPayload(t *testing.T) {
 
 func TestTurnHandler_RateLimitReported(t *testing.T) {
 	var got []scheduler.CodexActivity
-	h := &turnHandler{
-		issueID:      "iss-3",
-		sessionReady: make(chan sessionIDs, 1),
-		turnDone:     make(chan turnResult, 1),
-		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
-	}
+	h := newTestHandler(t, "iss-3", &got)
 
 	resetsAt := int64(1234567890000)
 	params, _ := json.Marshal(map[string]any{
@@ -108,12 +103,7 @@ func TestTurnHandler_RateLimitReported(t *testing.T) {
 
 func TestTurnHandler_TurnDurationTracked(t *testing.T) {
 	var got []scheduler.CodexActivity
-	h := &turnHandler{
-		issueID:      "iss-4",
-		sessionReady: make(chan sessionIDs, 1),
-		turnDone:     make(chan turnResult, 1),
-		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
-	}
+	h := newTestHandler(t, "iss-4", &got)
 
 	params, _ := json.Marshal(map[string]any{"turnId": "t1"})
 	h.OnNotification("turn/started", params)
@@ -128,46 +118,21 @@ func TestTurnHandler_TurnDurationTracked(t *testing.T) {
 
 func TestTurnHandler_TurnCompletedFlag(t *testing.T) {
 	var got []scheduler.CodexActivity
-	h := &turnHandler{
-		issueID:      "iss-7",
-		sessionReady: make(chan sessionIDs, 1),
-		turnDone:     make(chan turnResult, 1),
-		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
-	}
-
-	// Non-completed event must not set TurnCompleted.
-	h.OnNotification("turn/started", nil)
-	require.Len(t, got, 1)
-	require.False(t, got[0].TurnCompleted, "turn/started must not set TurnCompleted")
-
-	// turn/completed must set TurnCompleted=true.
-	h.OnNotification("turn/completed", nil)
-	require.Len(t, got, 2)
-	require.True(t, got[1].TurnCompleted, "turn/completed must set TurnCompleted=true")
-}
-
-func TestTurnHandler_OtherEventsDoNotSetTurnCompleted(t *testing.T) {
-	var got []scheduler.CodexActivity
-	h := &turnHandler{
-		issueID:      "iss-8",
-		sessionReady: make(chan sessionIDs, 1),
-		turnDone:     make(chan turnResult, 1),
-		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
-	}
+	h := newTestHandler(t, "iss-7", &got)
 
 	h.OnNotification("item/agentMessage/delta", nil)
-	require.Len(t, got, 1)
 	require.False(t, got[0].TurnCompleted, "non-turn/completed event must not set TurnCompleted")
+
+	h.OnNotification("turn/started", nil)
+	require.False(t, got[1].TurnCompleted, "turn/started must not set TurnCompleted")
+
+	h.OnNotification("turn/completed", nil)
+	require.True(t, got[2].TurnCompleted, "turn/completed must set TurnCompleted=true")
 }
 
 func TestTurnHandler_AgentMessageDeltaRecorded(t *testing.T) {
 	var got []scheduler.CodexActivity
-	h := &turnHandler{
-		issueID:      "iss-5",
-		sessionReady: make(chan sessionIDs, 1),
-		turnDone:     make(chan turnResult, 1),
-		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
-	}
+	h := newTestHandler(t, "iss-5", &got)
 
 	params, _ := json.Marshal(map[string]any{
 		"delta":    "hello world",

@@ -531,20 +531,24 @@ func TestIncrementTurnCount_ResetOnRespawn(t *testing.T) {
 	s := NewState()
 	issue := testIssue("id41", "PROJ-41")
 
-	// Attempt 1: increment twice.
+	// Attempt 1: increment twice and confirm it reaches 2.
 	if err := s.Dispatch(issue, 1, LiveSession{}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	s.IncrementTurnCount("id41")
 	s.IncrementTurnCount("id41")
+	if got := s.Snapshot().Running["id41"].TurnCount; got != 2 {
+		t.Fatalf("attempt 1: got TurnCount=%d, want 2", got)
+	}
 	s.WorkerExitNormal("id41")
 
-	// Attempt 2: new RunAttempt — TurnCount must start from zero.
+	// Attempt 2: TurnCount must not carry over from attempt 1.
 	if err := s.Dispatch(issue, 2, LiveSession{}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	s.IncrementTurnCount("id41")
 	snap := s.Snapshot()
-	if got := snap.Running["id41"].TurnCount; got != 0 {
-		t.Errorf("got TurnCount=%d after respawn, want 0", got)
+	if got := snap.Running["id41"].TurnCount; got != 1 {
+		t.Errorf("got TurnCount=%d after respawn+1 increment, want 1 (carry-over from attempt 1 would give 3)", got)
 	}
 }
