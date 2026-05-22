@@ -11,8 +11,14 @@ import (
 	ptrackerv "github.com/takezoh/agent-roost/platform/tracker"
 )
 
-// ErrStall is recorded in a RetryEntry when a worker is killed due to stall timeout.
-var ErrStall = errors.New("stall timeout exceeded")
+var (
+	// ErrStall is recorded in a RetryEntry when a worker is killed due to stall timeout.
+	ErrStall = errors.New("stall timeout exceeded")
+	// ErrNotInRefresh is recorded when an issue disappears from the tracker refresh response (SPEC §8.5).
+	ErrNotInRefresh = errors.New("issue not in refresh response")
+	// ErrLeftActiveStates is recorded when an issue transitions to a non-active, non-terminal state.
+	ErrLeftActiveStates = errors.New("issue left active states")
+)
 
 // reconcile runs Part A (stall detection) and Part B (tracker state refresh) per SPEC §8.5.
 // Called at the start of each tick, regardless of preflight status.
@@ -92,7 +98,7 @@ func (s *Scheduler) reconcileRefresh(ctx context.Context, snap StateSnapshot, cf
 					slog.Warn("reconcile: not-found kill failed", "issue_id", id, "err", err)
 				}
 			}
-			if entry, ok := s.state.WorkerExitAbnormal(id, errors.New("issue not in refresh response"), run.Attempt); ok {
+			if entry, ok := s.state.WorkerExitAbnormal(id, ErrNotInRefresh, run.Attempt); ok {
 				scheduleRetry(s.state, s.clock, s.retryFire, ctx, entry, backoffDelay(entry.Attempt, cfg))
 			}
 			slog.Info("reconcile: issue not in refresh response, worker stopped",
@@ -125,7 +131,7 @@ func (s *Scheduler) reconcileRefresh(ctx context.Context, snap StateSnapshot, cf
 					slog.Warn("reconcile: non-active kill failed", "issue_id", id, "err", err)
 				}
 			}
-			if entry, ok := s.state.WorkerExitAbnormal(id, errors.New("issue left active states"), run.Attempt); ok {
+			if entry, ok := s.state.WorkerExitAbnormal(id, ErrLeftActiveStates, run.Attempt); ok {
 				scheduleRetry(s.state, s.clock, s.retryFire, ctx, entry, backoffDelay(entry.Attempt, cfg))
 			}
 			slog.Info("reconcile: non-active issue, worker stopped",
