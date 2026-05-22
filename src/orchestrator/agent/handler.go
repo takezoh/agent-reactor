@@ -36,8 +36,7 @@ type toolCallParams struct {
 	TurnID    string          `json:"turnId"`
 }
 
-// toolCallReply is the Symphony-compatible item/tool/call response shape.
-// output holds the JSON-encoded tool result as a string so the agent can read it.
+// toolCallReply is the §10.5 item/tool/call reply; Output is JSON-encoded so the agent reads a string.
 type toolCallReply struct {
 	Success bool   `json:"success"`
 	Output  string `json:"output"`

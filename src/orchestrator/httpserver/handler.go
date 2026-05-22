@@ -11,9 +11,7 @@ import (
 	"github.com/takezoh/agent-roost/orchestrator/scheduler"
 )
 
-// snapshotTimeout is the maximum time the HTTP handler will wait for the
-// scheduler state lock before returning a 503 snapshot_timeout response
-// (SPEC §13.3 RECOMMENDED).
+// snapshotTimeout caps the wait for the scheduler state lock; exceeded → 503 snapshot_timeout (SPEC §13.3).
 const snapshotTimeout = 500 * time.Millisecond
 
 // SchedulerReader is the read-only interface the HTTP handlers use to access
@@ -142,9 +140,7 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, errorEnvelope{Error: errorDetail{Code: code, Message: message}})
 }
 
-// writeSnapshotError writes a 503 response for snapshot errors (SPEC §13.3 RECOMMENDED).
-// ErrSnapshotTimeout → "snapshot_timeout"; ErrOrchestratorUnavailable →
-// "orchestrator_unavailable"; other errors → 500 "internal_error".
+// writeSnapshotError maps ErrSnapshotTimeout/ErrOrchestratorUnavailable → 503; other errors → 500 (SPEC §13.3).
 func writeSnapshotError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, scheduler.ErrSnapshotTimeout):

@@ -5,25 +5,13 @@ import (
 	"errors"
 )
 
-// ErrSnapshotTimeout is returned by SnapshotCtx when the state lock cannot be
-// acquired before the context deadline expires (SPEC §13.3 RECOMMENDED).
+// ErrSnapshotTimeout is returned by SnapshotCtx when the state lock cannot be acquired before the deadline (SPEC §13.3).
 var ErrSnapshotTimeout = errors.New("snapshot timeout")
 
-// ErrOrchestratorUnavailable is returned by SnapshotCtx when the orchestrator
-// is not available to serve a snapshot (not yet started or shutting down)
-// (SPEC §13.3 RECOMMENDED).
+// ErrOrchestratorUnavailable is returned by SnapshotCtx when the scheduler is not running (SPEC §13.3).
 var ErrOrchestratorUnavailable = errors.New("orchestrator unavailable")
 
-// SnapshotCtx returns a read-only copy of the current state, or an error if
-// the context expires before the state lock can be acquired (SPEC §13.3).
-//
-// The goroutine that acquires the lock always completes and releases it even
-// when the context is cancelled first; the buffered channel (cap 1) ensures
-// the goroutine never blocks on the send, so there is no goroutine leak.
-//
-// Error mapping:
-//   - context.DeadlineExceeded → ErrSnapshotTimeout
-//   - context.Canceled         → ErrOrchestratorUnavailable
+// SnapshotCtx acquires the state lock via a goroutine; buffered chan(1) prevents goroutine leak on timeout (SPEC §13.3).
 func (s *State) SnapshotCtx(ctx context.Context) (StateSnapshot, error) {
 	ch := make(chan StateSnapshot, 1)
 	go func() {

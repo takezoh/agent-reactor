@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// TestSnapshotCtx_Success verifies that SnapshotCtx returns the state normally
-// when the lock is available and the context has not expired.
 func TestSnapshotCtx_Success(t *testing.T) {
 	s := NewState()
 
@@ -24,8 +22,6 @@ func TestSnapshotCtx_Success(t *testing.T) {
 	}
 }
 
-// TestSnapshotCtx_Timeout verifies that SnapshotCtx returns ErrSnapshotTimeout
-// when the context deadline expires while the state lock is held by another goroutine.
 func TestSnapshotCtx_Timeout(t *testing.T) {
 	s := NewState()
 
@@ -42,8 +38,6 @@ func TestSnapshotCtx_Timeout(t *testing.T) {
 	}
 }
 
-// TestSnapshotCtx_Cancelled verifies that SnapshotCtx returns ErrOrchestratorUnavailable
-// when the context is cancelled (not timed out) while the state lock is held.
 func TestSnapshotCtx_Cancelled(t *testing.T) {
 	s := NewState()
 
@@ -67,9 +61,6 @@ func TestSnapshotCtx_Cancelled(t *testing.T) {
 	<-done
 }
 
-// TestScheduler_SnapshotCtx_Unavailable verifies that Scheduler.SnapshotCtx
-// returns ErrOrchestratorUnavailable when the scheduler has not been started
-// (available flag is false).
 func TestScheduler_SnapshotCtx_Unavailable(t *testing.T) {
 	s := New("", schedCfg(), minDeps(nil, nil, newFakeClock(time.Now())))
 	// available is false by default (Run has not been called).
@@ -81,8 +72,6 @@ func TestScheduler_SnapshotCtx_Unavailable(t *testing.T) {
 	}
 }
 
-// TestScheduler_SnapshotCtx_AvailableWhileRunning verifies that Scheduler.SnapshotCtx
-// succeeds while the scheduler is running (available flag is true).
 func TestScheduler_SnapshotCtx_AvailableWhileRunning(t *testing.T) {
 	s := New("", schedCfg(), minDeps(nil, nil, newFakeClock(time.Now())))
 	s.available.Store(true)

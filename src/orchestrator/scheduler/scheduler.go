@@ -103,8 +103,6 @@ func New(workflowPath string, cfg wfconfig.Config, deps Deps) *Scheduler {
 // Run starts the scheduler loop and blocks until ctx is cancelled.
 // Startup: startup cleanup → immediate tick → poll at interval.
 // WORKFLOW.md is watched via fsnotify for immediate re-apply; poll remains as a safety net.
-// available is set to true on entry and cleared on return so that SnapshotCtx
-// can detect unavailability (SPEC §13.3).
 func (s *Scheduler) Run(ctx context.Context) error {
 	s.available.Store(true)
 	defer s.available.Store(false)

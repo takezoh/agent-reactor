@@ -8,32 +8,32 @@ import (
 	"github.com/takezoh/agent-roost/orchestrator/scheduler"
 )
 
-// SPEC §17.6 / §13.3 — snapshot_timeout error returns 503 with the correct
-// error envelope {"error": {"code": "snapshot_timeout", ...}}.
+// SPEC §17.6/§13.3 — snapshot_timeout returns 503 with the correct error envelope.
 func TestSPEC_17_6_SnapshotTimeout(t *testing.T) {
 	sched := &fakeScheduler{snapshotErr: scheduler.ErrSnapshotTimeout}
 	h := newMux(sched)
 
-	status, body := getBody(t, h, http.MethodGet, "/api/v1/state")
-	if status != http.StatusServiceUnavailable {
-		t.Fatalf("status %d, want 503; body: %s", status, body)
-	}
+	for _, ep := range []string{"/api/v1/state", "/api/v1/ISSUE-1"} {
+		status, body := getBody(t, h, http.MethodGet, ep)
+		if status != http.StatusServiceUnavailable {
+			t.Fatalf("%s: status %d, want 503; body: %s", ep, status, body)
+		}
 
-	var resp map[string]any
-	if err := json.Unmarshal(body, &resp); err != nil {
-		t.Fatalf("invalid JSON: %v; body: %s", err, body)
-	}
-	errField, ok := resp["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("want {\"error\": {...}} envelope, got: %s", body)
-	}
-	if errField["code"] != "snapshot_timeout" {
-		t.Errorf("error.code want \"snapshot_timeout\", got %v", errField["code"])
+		var resp map[string]any
+		if err := json.Unmarshal(body, &resp); err != nil {
+			t.Fatalf("%s: invalid JSON: %v; body: %s", ep, err, body)
+		}
+		errField, ok := resp["error"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: want {\"error\": {...}} envelope, got: %s", ep, body)
+		}
+		if errField["code"] != "snapshot_timeout" {
+			t.Errorf("%s: error.code want \"snapshot_timeout\", got %v", ep, errField["code"])
+		}
 	}
 }
 
-// SPEC §17.6 / §13.3 — orchestrator_unavailable error returns 503 with the
-// correct error envelope {"error": {"code": "orchestrator_unavailable", ...}}.
+// SPEC §17.6/§13.3 — orchestrator_unavailable returns 503 with the correct error envelope.
 func TestSPEC_17_6_OrchestratorUnavailable(t *testing.T) {
 	sched := &fakeScheduler{snapshotErr: scheduler.ErrOrchestratorUnavailable}
 	h := newMux(sched)
