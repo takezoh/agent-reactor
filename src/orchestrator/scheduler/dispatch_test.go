@@ -10,7 +10,6 @@ import (
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
-// errFetch is a sentinel error for candidate fetch failures.
 var errFetch = errors.New("fetch failed")
 
 func dispCfg() wfconfig.Config {
@@ -172,8 +171,6 @@ func TestHandleRetryFire_EligibleAndSlots(t *testing.T) {
 	}
 }
 
-// TestHandleRetryFire_FetchFailReschedules verifies that a candidate fetch error causes
-// the retry to be rescheduled with attempt+1 (SPEC §8.4/§16.6).
 func TestHandleRetryFire_FetchFailReschedules(t *testing.T) {
 	st := NewState()
 	tr := &fakeTracker{callErr: errFetch}
@@ -193,6 +190,9 @@ func TestHandleRetryFire_FetchFailReschedules(t *testing.T) {
 	}
 	if entry.Attempt != 3 {
 		t.Errorf("want attempt=3 (attempt+1), got %d", entry.Attempt)
+	}
+	if entry.Identifier != "P-1" {
+		t.Errorf("want identifier=P-1 preserved, got %q", entry.Identifier)
 	}
 }
 
