@@ -17,15 +17,14 @@ func (errRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, errors.New("dial failed")
 }
 
-// normalizeBlockers – type comparison is case-insensitive and trims whitespace (§11.3).
 func TestNormalizeBlockers_CaseInsensitiveAndTrim(t *testing.T) {
 	ref := rawIssueRef{ID: "id1", Identifier: "DEV-1", State: rawState{Name: "Todo"}}
 	want := []tracker.Blocker{{ID: "id1", Identifier: "DEV-1", State: "Todo"}}
 
 	cases := []struct {
-		name     string
-		relType  string
-		wantLen  int
+		name    string
+		relType string
+		wantLen int
 	}{
 		{"exact lowercase", "blocks", 1},
 		{"uppercase B", "Blocks", 1},
@@ -43,6 +42,9 @@ func TestNormalizeBlockers_CaseInsensitiveAndTrim(t *testing.T) {
 			got := normalizeBlockers(nodes)
 			if len(got) != tc.wantLen {
 				t.Fatalf("len = %d, want %d (type=%q)", len(got), tc.wantLen, tc.relType)
+			}
+			if tc.wantLen == 0 && got != nil {
+				t.Errorf("want nil slice, got %+v", got)
 			}
 			if tc.wantLen > 0 && !reflect.DeepEqual(got, want) {
 				t.Errorf("got %+v, want %+v", got, want)
