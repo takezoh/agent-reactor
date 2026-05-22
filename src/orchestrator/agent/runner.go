@@ -49,12 +49,11 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 		return scheduler.LiveSession{}, err
 	}
 
-	// Workspace exists from here — after_run must execute on every exit path (SPEC §9.4).
-	// committed is set true when runLoop takes ownership of teardown.
+	// AfterRun must fire on every exit path from here (SPEC §9.4); committed transfers ownership to runLoop.
 	committed := false
 	defer func() {
 		if !committed {
-			r.Workspace.AfterRun(context.Background(), issue.Identifier)
+			r.Workspace.AfterRun(ctx, issue.Identifier)
 		}
 	}()
 
@@ -236,9 +235,7 @@ func (r *Runner) sendWorkerExit(issueID string, attempt int, exitErr error) {
 	}
 }
 
-// ensureWorkspace idempotently creates the workspace directory and verifies the
-// cwd invariant (§9.5).  After this call succeeds the workspace is guaranteed
-// to exist, so the caller must arrange for AfterRun on any subsequent failure.
+// Caller must arrange AfterRun on any subsequent failure once this succeeds (SPEC §9.4/§9.5).
 func (r *Runner) ensureWorkspace(ctx context.Context, identifier string) (string, error) {
 	wsPath, err := r.Workspace.Ensure(ctx, identifier)
 	if err != nil {

@@ -118,6 +118,17 @@ func makeFakeProc(fs *fakeServer) procFunc {
 	}
 }
 
+func makeRunnerWithCfg(t *testing.T, cfg wfconfig.Config, proc procFunc) *Runner {
+	t.Helper()
+	return &Runner{
+		Workspace:      workspace.New(cfg),
+		Cfg:            cfg,
+		PromptTemplate: "",
+		Dispatcher:     agentlaunch.DirectDispatcher{},
+		proc:           proc,
+	}
+}
+
 func makeRunner(t *testing.T, tmpl string, proc procFunc) *Runner {
 	t.Helper()
 	wsRoot := t.TempDir()
@@ -125,14 +136,9 @@ func makeRunner(t *testing.T, tmpl string, proc procFunc) *Runner {
 		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
 		Codex:     wfconfig.CodexConfig{Command: "unused-in-test"},
 	}
-	ws := workspace.New(cfg)
-	return &Runner{
-		Workspace:      ws,
-		Cfg:            cfg,
-		PromptTemplate: tmpl,
-		Dispatcher:     agentlaunch.DirectDispatcher{},
-		proc:           proc,
-	}
+	r := makeRunnerWithCfg(t, cfg, proc)
+	r.PromptTemplate = tmpl
+	return r
 }
 
 func collectEvents(t *testing.T, r *Runner, issue tracker.Issue) []Event {
@@ -265,11 +271,9 @@ func TestSpawn_beforeRunFailureAborts(t *testing.T) {
 	assert.Error(t, err, "before_run failure should abort spawn")
 }
 
-// TestSPEC_9_4_AfterRunCalledOnBeforeRunFailure verifies SPEC §9.4: after_run
-// must execute even when before_run fails (workspace already exists).
 func TestSPEC_9_4_AfterRunCalledOnBeforeRunFailure(t *testing.T) {
 	wsRoot := t.TempDir()
-	markerFile := filepath.Join(t.TempDir(), "after_run_called")
+	markerFile := filepath.Join(wsRoot, "after_run_called")
 	cfg := wfconfig.Config{
 		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
 		Hooks: wfconfig.HooksConfig{
@@ -283,13 +287,7 @@ func TestSPEC_9_4_AfterRunCalledOnBeforeRunFailure(t *testing.T) {
 	// Pre-create workspace so Ensure succeeds before before_run hook runs.
 	require.NoError(t, os.MkdirAll(filepath.Join(wsRoot, iss.Identifier), 0o755))
 
-	r := &Runner{
-		Workspace:      workspace.New(cfg),
-		Cfg:            cfg,
-		PromptTemplate: "",
-		Dispatcher:     agentlaunch.DirectDispatcher{},
-		proc:           makeFakeProc(&fakeServer{}),
-	}
+	r := makeRunnerWithCfg(t, cfg, makeFakeProc(&fakeServer{}))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -300,11 +298,9 @@ func TestSPEC_9_4_AfterRunCalledOnBeforeRunFailure(t *testing.T) {
 	assert.NoError(t, statErr, "after_run must be called even when before_run fails (SPEC §9.4)")
 }
 
-// TestSPEC_9_4_AfterRunCalledOnLaunchConnFailure verifies SPEC §9.4: after_run
-// must execute when session launch fails after the workspace was created.
 func TestSPEC_9_4_AfterRunCalledOnLaunchConnFailure(t *testing.T) {
 	wsRoot := t.TempDir()
-	markerFile := filepath.Join(t.TempDir(), "after_run_called")
+	markerFile := filepath.Join(wsRoot, "after_run_called")
 	cfg := wfconfig.Config{
 		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
 		Hooks: wfconfig.HooksConfig{
@@ -318,13 +314,7 @@ func TestSPEC_9_4_AfterRunCalledOnLaunchConnFailure(t *testing.T) {
 	failProc := func(_ context.Context, _ string, _ map[string]string, _ string) (io.ReadCloser, io.WriteCloser, func(), error) {
 		return nil, nil, nil, errors.New("proc: simulated launch failure")
 	}
-	r := &Runner{
-		Workspace:      workspace.New(cfg),
-		Cfg:            cfg,
-		PromptTemplate: "",
-		Dispatcher:     agentlaunch.DirectDispatcher{},
-		proc:           failProc,
-	}
+	r := makeRunnerWithCfg(t, cfg, failProc)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
