@@ -27,6 +27,20 @@ func makeIssue(id, state string) tracker.Issue {
 	return tracker.Issue{ID: id, Identifier: "P-" + id, Title: "t", State: state}
 }
 
+// setupRetryQueued drives a state machine through Dispatch → WorkerExitNormal → EnqueueRetry,
+// leaving the issue in RetryQueued (claimed, in retryAttempts, not running).
+func setupRetryQueued(t *testing.T, st *State, id string) {
+	t.Helper()
+	iss := makeIssue(id, "In Progress")
+	if err := st.Dispatch(iss, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.WorkerExitNormal(id); !ok {
+		t.Fatal("WorkerExitNormal failed")
+	}
+	st.EnqueueRetry(RetryEntry{IssueID: id, Identifier: "P-" + id, Attempt: 2, Kind: RetryContinuation})
+}
+
 // TestDispatchOnce_EligibleIssueSpawned verifies a basic eligible dispatch.
 func TestDispatchOnce_EligibleIssueSpawned(t *testing.T) {
 	st := NewState()
@@ -154,15 +168,7 @@ func TestHandleRetryFire_NotActive(t *testing.T) {
 // The issue must be in RetryQueued state (claimed + retryAttempts) before firing.
 func TestHandleRetryFire_EligibleAndSlots(t *testing.T) {
 	st := NewState()
-	// Set up RetryQueued state: Dispatch → WorkerExitNormal → EnqueueRetry.
-	iss := makeIssue("1", "In Progress")
-	if err := st.Dispatch(iss, 1, LiveSession{}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := st.WorkerExitNormal("1"); !ok {
-		t.Fatal("WorkerExitNormal failed")
-	}
-	st.EnqueueRetry(RetryEntry{IssueID: "1", Identifier: "P-1", Attempt: 2, Kind: RetryContinuation})
+	setupRetryQueued(t, st, "1")
 
 	tr := &fakeTracker{issues: []tracker.Issue{makeIssue("1", "In Progress")}}
 	spawn := &fakeSpawn{}
@@ -188,17 +194,7 @@ func TestDispatchOnce_RetryQueuedNotRedispatched(t *testing.T) {
 	clk := newFakeClock(time.Now())
 	fireCh := make(chan retryFireReq, 4)
 
-	// First dispatch: issue starts running.
-	iss := makeIssue("1", "In Progress")
-	if err := st.Dispatch(iss, 1, LiveSession{}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-
-	// Worker exits → issue moves to RetryQueued (claimed retained, removed from running).
-	if _, ok := st.WorkerExitNormal("1"); !ok {
-		t.Fatal("WorkerExitNormal failed")
-	}
-	st.EnqueueRetry(RetryEntry{IssueID: "1", Identifier: "P-1", Attempt: 2, Kind: RetryContinuation})
+	setupRetryQueued(t, st, "1")
 
 	// Simulate a poll tick while the issue is still in the retry window.
 	cands := []tracker.Issue{makeIssue("1", "In Progress")}

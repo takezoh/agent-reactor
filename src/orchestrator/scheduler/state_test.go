@@ -14,6 +14,17 @@ func testIssue(id, identifier string) tracker.Issue {
 	return tracker.Issue{ID: id, Identifier: identifier, Title: "t"}
 }
 
+// redispatchRetry drives the state machine from RetryQueued back to Running:
+// EnqueueRetry → ClaimFromRetry → MarkRunning.
+func redispatchRetry(t *testing.T, s *State, issueID, identifier string, issue tracker.Issue, attempt int) {
+	t.Helper()
+	s.EnqueueRetry(RetryEntry{IssueID: issueID, Identifier: identifier, Attempt: attempt})
+	if err := s.ClaimFromRetry(issueID, attempt); err != nil {
+		t.Fatal(err)
+	}
+	s.MarkRunning(issueID, issue, attempt, LiveSession{}, time.Now())
+}
+
 func TestStateDispatch_AddsToRunningAndClaimed(t *testing.T) {
 	s := NewState()
 	issue := testIssue("id1", "PROJ-1")
@@ -357,12 +368,7 @@ func TestRecordUsage_AccumulatorPersistsAcrossContinuation(t *testing.T) {
 	s.RecordUsage("id23", metrics.Usage{ThreadID: "t1", Input: 100, Output: 50, Total: 150})
 	s.WorkerExitNormal("id23")
 
-	// Re-dispatch: WorkerExitNormal retains claimed (SPEC §7.1); use ClaimFromRetry.
-	s.EnqueueRetry(RetryEntry{IssueID: "id23", Identifier: "PROJ-23", Attempt: 2})
-	if err := s.ClaimFromRetry("id23", 2); err != nil {
-		t.Fatal(err)
-	}
-	s.MarkRunning("id23", issue, 2, LiveSession{}, time.Now())
+	redispatchRetry(t, s, "id23", "PROJ-23", issue, 2)
 	// Thread resumes: reports 50 more input, 20 more output (absolute 150/70/220).
 	s.RecordUsage("id23", metrics.Usage{ThreadID: "t1", Input: 150, Output: 70, Total: 220})
 	snap := s.Snapshot()
@@ -425,12 +431,7 @@ func TestCodexTotals_NoDoubleCountAcrossRetry(t *testing.T) {
 	s.RecordUsage("id31", metrics.Usage{ThreadID: "t1", Input: 100, Output: 40, Total: 140})
 	s.WorkerExitNormal("id31")
 
-	// Attempt 2: WorkerExitNormal retains claimed (SPEC §7.1); use ClaimFromRetry.
-	s.EnqueueRetry(RetryEntry{IssueID: "id31", Identifier: "PROJ-31", Attempt: 2})
-	if err := s.ClaimFromRetry("id31", 2); err != nil {
-		t.Fatal(err)
-	}
-	s.MarkRunning("id31", issue, 2, LiveSession{}, time.Now())
+	redispatchRetry(t, s, "id31", "PROJ-31", issue, 2)
 	s.RecordUsage("id31", metrics.Usage{ThreadID: "t1", Input: 150, Output: 60, Total: 210})
 
 	// Terminal release: should roll up accumulated 150/60/210 once.
@@ -453,12 +454,7 @@ func TestCodexTotals_RuntimePersistsAcrossRetry(t *testing.T) {
 	s.AddRuntime("id32", 5*time.Second)
 	s.WorkerExitNormal("id32")
 
-	// Re-dispatch: WorkerExitNormal retains claimed (SPEC §7.1); use ClaimFromRetry.
-	s.EnqueueRetry(RetryEntry{IssueID: "id32", Identifier: "PROJ-32", Attempt: 2})
-	if err := s.ClaimFromRetry("id32", 2); err != nil {
-		t.Fatal(err)
-	}
-	s.MarkRunning("id32", issue, 2, LiveSession{}, time.Now())
+	redispatchRetry(t, s, "id32", "PROJ-32", issue, 2)
 	s.AddRuntime("id32", 3*time.Second)
 
 	snap := s.Snapshot()

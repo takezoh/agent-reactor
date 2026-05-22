@@ -95,9 +95,9 @@ func handleRetryFire(ctx context.Context, req retryFireReq, tr CandidateSource, 
 		return
 	}
 
-	// SPEC §7.1: RetryQueued issues remain claimed; eligible() would wrongly return false
-	// because it checks snap.Claimed. Instead, check active/terminal directly and use
-	// ClaimFromRetry to atomically promote RetryQueued → Claimed for re-dispatch.
+	// RetryQueued issues are in snap.Claimed and snap.RetryAttempts, so eligible() correctly
+	// excludes them. Skip it: check only active/terminal state, then use ClaimFromRetry
+	// (not Claim) because claimed is already retained by WorkerExit* (SPEC §7.1).
 	terminal := normSet(cfg.Tracker.TerminalStates)
 	active := normSet(cfg.Tracker.ActiveStates)
 	norm := strings.ToLower(found.State)

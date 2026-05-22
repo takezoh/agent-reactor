@@ -33,9 +33,8 @@ func (s *State) Claim(issue tracker.Issue, attempt int) error {
 }
 
 // ClaimFromRetry promotes a RetryQueued issue back to claimed for re-dispatch (SPEC §7.1).
-// The issue must be in retryAttempts (RetryQueued state) and not already running.
-// claimed is already retained from the WorkerExit* transition; this removes retryAttempts.
-// Returns ErrDuplicateDispatch if the issue is not in RetryQueued state.
+// The issue must be in retryAttempts and claimed (retained by WorkerExit*) but not running.
+// Returns ErrDuplicateDispatch if the issue is not in a valid RetryQueued state.
 func (s *State) ClaimFromRetry(issueID string, attempt int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -46,8 +45,11 @@ func (s *State) ClaimFromRetry(issueID string, attempt int) error {
 	if _, ok := s.running[issueID]; ok {
 		return ErrDuplicateDispatch
 	}
+	if _, ok := s.claimed[issueID]; !ok {
+		// claimed must be retained by WorkerExit* (§7.1); missing = broken invariant.
+		return ErrDuplicateDispatch
+	}
 	delete(s.retryAttempts, issueID)
-	// claimed is already present (retained by WorkerExit*); no update needed.
 	return nil
 }
 
