@@ -42,10 +42,11 @@ func normalizeLabels(nodes []rawLabel) []string {
 }
 
 // normalizeBlockers derives blocked_by from inverse "blocks" relations (§11.3).
+// Elixir reference: String.downcase(String.trim(relation_type)) == "blocks".
 func normalizeBlockers(nodes []rawRelNode) []tracker.Blocker {
 	var out []tracker.Blocker
 	for _, n := range nodes {
-		if n.Type != "blocks" {
+		if !strings.EqualFold(strings.TrimSpace(n.Type), "blocks") {
 			continue
 		}
 		out = append(out, tracker.Blocker{
