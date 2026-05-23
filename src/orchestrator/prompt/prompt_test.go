@@ -78,3 +78,23 @@ func TestRender_nullPriorityRendersEmpty(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "p=", out)
 }
+
+func TestRender_attempt0FalsyOnFirstRun(t *testing.T) {
+	out, err := prompt.Render("{% if attempt %}visible{% endif %}", prompt.Vars{Attempt: 0})
+	assert.NoError(t, err)
+	assert.Equal(t, "", out, "{% if attempt %} must be falsy on first run")
+
+	out, err = prompt.Render("{% if attempt %}retry {{ attempt }}{% endif %}", prompt.Vars{Attempt: 0})
+	assert.NoError(t, err)
+	assert.Equal(t, "", out, "retry block must not render on first run")
+}
+
+func TestRender_attempt1TruthyOnRetry(t *testing.T) {
+	out, err := prompt.Render("a={{ attempt }}", prompt.Vars{Attempt: 1})
+	assert.NoError(t, err)
+	assert.Equal(t, "a=1", out, "attempt=1 must render its value on first retry")
+
+	out, err = prompt.Render("{% if attempt %}retry {{ attempt }}{% endif %}", prompt.Vars{Attempt: 1})
+	assert.NoError(t, err)
+	assert.Equal(t, "retry 1", out, "{% if attempt %} must be truthy on retry")
+}
