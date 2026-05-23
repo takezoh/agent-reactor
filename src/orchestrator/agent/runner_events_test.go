@@ -44,8 +44,9 @@ func TestSpawn_turnCancelledOnKill(t *testing.T) {
 	sess, err := r.spawnWith(ctx, iss, 1, emit)
 	require.NoError(t, err)
 
-	// Kill the worker while the turn is still running.
-	err = sess.Worker.Kill("test: intentional kill")
+	// Kill the worker gracefully (handoff/terminal) while the turn is still running;
+	// graceful kills surface as turn_cancelled, not turn_failed.
+	err = sess.Worker.Kill("terminal")
 	require.NoError(t, err)
 
 	// Wait for the cancelled event to be emitted by runLoop.

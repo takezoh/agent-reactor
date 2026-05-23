@@ -137,6 +137,7 @@ func (r *Runner) runLoop(ctx context.Context, wp workerParams) {
 	for turn := 1; ; turn++ {
 		result := r.awaitTurn(ctx, wp)
 		if result.cancelled {
+			// Orchestrator killed the worker gracefully (handoff/terminal); not an agent error.
 			wp.emit(r.turnCancelledEvent(wp.ids))
 			break
 		}
@@ -179,14 +180,18 @@ func (r *Runner) awaitTurn(ctx context.Context, wp workerParams) turnResult {
 		<-wp.doneCh
 		return turnResult{failed: true, err: fmt.Errorf("turn timeout exceeded (%dms)", r.Cfg.Codex.TurnTimeoutMS)}
 	case <-wp.doneCh:
-		// Check if the process exited due to intentional context cancellation.
-		if ctx.Err() != nil {
+		// Process exited. A graceful orchestrator kill (handoff/terminal) is not an
+		// agent error → turn_cancelled. A stall kill or unexpected exit is a failure.
+		if wp.worker != nil && wp.worker.WasKilledGracefully() {
 			return turnResult{cancelled: true}
 		}
 		select {
 		case result := <-wp.turnDone:
 			return result
 		default:
+			if ctx.Err() != nil {
+				return turnResult{failed: true, err: errors.New("worker killed before turn completed")}
+			}
 			return turnResult{failed: true, err: errors.New("codex process exited unexpectedly")}
 		}
 	}

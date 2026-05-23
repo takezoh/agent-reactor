@@ -223,6 +223,112 @@ func TestRunLoop_TurnFailed_AbnormalExit(t *testing.T) {
 	assert.Equal(t, 0, tr.callCount(), "want no RefreshStates on turn failure")
 }
 
+// TestRunLoop_GracefulKill_NoTurnFailed verifies that killing a worker with reason
+// "terminal" or "non-active" (orchestrator-initiated handoff/completion) does not
+// emit turn_failed and produces a nil WorkerExit.Err.
+func TestRunLoop_GracefulKill_NoTurnFailed(t *testing.T) {
+	for _, reason := range []string{"terminal", "non-active"} {
+		t.Run(reason, func(t *testing.T) {
+			// hangTurn: session starts but the turn never resolves — simulates the
+			// agent mid-turn when reconcile fires.
+			fs := &fakeServer{hangTurn: true}
+			r := makeLoopRunner(t, 10, makeFakeProc(fs), nil)
+			iss := tracker.Issue{ID: "i-graceful", Identifier: "P-G", State: "In Progress"}
+
+			workerDone := make(chan scheduler.WorkerExit, 1)
+			r.WorkerDone = workerDone
+
+			var mu sync.Mutex
+			var events []Event
+			emit := func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() }
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			session, err := r.spawnWith(ctx, iss, 1, emit)
+			require.NoError(t, err)
+
+			// Wait for session_started before killing.
+			require.Eventually(t, func() bool {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(events) > 0
+			}, 2*time.Second, 10*time.Millisecond)
+
+			// Simulate reconcile killing the worker (handoff or Done transition).
+			require.NoError(t, session.Worker.Kill(reason))
+
+			var exit scheduler.WorkerExit
+			select {
+			case exit = <-workerDone:
+			case <-time.After(5 * time.Second):
+				t.Fatal("timeout waiting for WorkerDone")
+			}
+
+			mu.Lock()
+			evts := make([]Event, len(events))
+			copy(evts, events)
+			mu.Unlock()
+
+			for _, e := range evts {
+				assert.NotEqual(t, EventTurnFailed, e.Kind,
+					"graceful kill(%s) must not emit turn_failed, got event %v", reason, e.Kind)
+			}
+			assert.NoError(t, exit.Err, "graceful kill(%s) must produce nil WorkerExit.Err", reason)
+		})
+	}
+}
+
+// TestRunLoop_StallKill_EmitsTurnFailed verifies that killing a worker with reason "stall"
+// (orchestrator stall-timeout, a real failure) still emits turn_failed and a non-nil exit.
+func TestRunLoop_StallKill_EmitsTurnFailed(t *testing.T) {
+	fs := &fakeServer{hangTurn: true}
+	r := makeLoopRunner(t, 10, makeFakeProc(fs), nil)
+	iss := tracker.Issue{ID: "i-stall", Identifier: "P-S", State: "In Progress"}
+
+	workerDone := make(chan scheduler.WorkerExit, 1)
+	r.WorkerDone = workerDone
+
+	var mu sync.Mutex
+	var events []Event
+	emit := func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() }
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	session, err := r.spawnWith(ctx, iss, 1, emit)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(events) > 0
+	}, 2*time.Second, 10*time.Millisecond)
+
+	require.NoError(t, session.Worker.Kill("stall"))
+
+	var exit scheduler.WorkerExit
+	select {
+	case exit = <-workerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for WorkerDone")
+	}
+
+	mu.Lock()
+	evts := make([]Event, len(events))
+	copy(evts, events)
+	mu.Unlock()
+
+	hasTurnFailed := false
+	for _, e := range evts {
+		if e.Kind == EventTurnFailed {
+			hasTurnFailed = true
+		}
+	}
+	assert.True(t, hasTurnFailed, "stall kill must emit turn_failed")
+	assert.Error(t, exit.Err, "stall kill must produce non-nil WorkerExit.Err")
+}
+
 // TestRunLoop_SecondTurnFailed_AbnormalExit verifies that a failure on turn 2 (after
 // turn 1 succeeded) results in turn_completed + turn_failed events and a non-nil exit.
 func TestRunLoop_SecondTurnFailed_AbnormalExit(t *testing.T) {
