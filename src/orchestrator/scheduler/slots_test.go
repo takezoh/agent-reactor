@@ -52,6 +52,30 @@ func TestAvailableGlobalSlots(t *testing.T) {
 	}
 }
 
+// TestAvailableGlobalSlots_IncludesRetryQueued verifies that RetryQueued issues (SPEC §7.1)
+// count against the global concurrency limit to prevent over-dispatch.
+func TestAvailableGlobalSlots_IncludesRetryQueued(t *testing.T) {
+	// 1 running + 1 retryQueued = 2 used; with global cap 3, only 1 slot left.
+	snap := snapWithRunning("In Progress")
+	snap.RetryAttempts = map[string]RetryEntry{
+		"retry-1": {IssueID: "retry-1"},
+	}
+	got := availableGlobalSlots(snap, agentCfg(3, nil))
+	if got != 1 {
+		t.Errorf("want 1 available slot (3 - 1 running - 1 retryQueued), got %d", got)
+	}
+
+	// At cap: 2 running + 1 retryQueued = 3; no slots available.
+	snap2 := snapWithRunning("In Progress", "Todo")
+	snap2.RetryAttempts = map[string]RetryEntry{
+		"retry-1": {IssueID: "retry-1"},
+	}
+	got2 := availableGlobalSlots(snap2, agentCfg(3, nil))
+	if got2 != 0 {
+		t.Errorf("want 0 available slots at cap, got %d", got2)
+	}
+}
+
 func TestAvailablePerStateSlots(t *testing.T) {
 	byState := map[string]int{"in progress": 2}
 

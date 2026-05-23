@@ -62,7 +62,7 @@ func newReconcileScheduler(tr schedulerTrackerAPI, ws schedulerWorkspaceAPI, clk
 
 func TestReconcileStall_KillsAndEnqueuesRetry(t *testing.T) {
 	w := &fakeWorker{}
-	s := newReconcileScheduler(&fakeReconcileTracker{}, &fakeWorkspace{}, newFakeClock(time.Unix(1000, 0)))
+	s := newReconcileScheduler(nil, nil, newFakeClock(time.Unix(1000, 0)))
 
 	started := time.Unix(0, 0)
 	issue := testIssue("id1", "PROJ-1")
@@ -84,7 +84,7 @@ func TestReconcileStall_KillsAndEnqueuesRetry(t *testing.T) {
 
 func TestReconcileStall_UsesStartedAtFallback(t *testing.T) {
 	w := &fakeWorker{}
-	s := newReconcileScheduler(&fakeReconcileTracker{}, &fakeWorkspace{}, newFakeClock(time.Unix(1000, 0)))
+	s := newReconcileScheduler(nil, nil, newFakeClock(time.Unix(1000, 0)))
 
 	started := time.Unix(0, 0)
 	issue := testIssue("id2", "PROJ-2")
@@ -100,7 +100,7 @@ func TestReconcileStall_UsesStartedAtFallback(t *testing.T) {
 
 func TestReconcileStall_SkipsWhenTimeoutZero(t *testing.T) {
 	w := &fakeWorker{}
-	s := newReconcileScheduler(&fakeReconcileTracker{}, &fakeWorkspace{}, newFakeClock(time.Unix(1000, 0)))
+	s := newReconcileScheduler(nil, nil, newFakeClock(time.Unix(1000, 0)))
 
 	started := time.Unix(0, 0)
 	issue := testIssue("id3", "PROJ-3")
@@ -217,6 +217,33 @@ func TestReconcileRefresh_IntermediateKillsNoWorkspaceRemove(t *testing.T) {
 	}
 }
 
+func TestReconcileRefresh_NotFoundKillsNoWorkspaceRemove(t *testing.T) {
+	w := &fakeWorker{}
+	ws := &fakeWorkspace{}
+	issue := testIssue("id8", "PROJ-8")
+
+	// Tracker returns empty slice — id8 is absent from refresh response.
+	tr := &fakeReconcileTracker{refreshIssues: []ptrackerv.Issue{}}
+	s := newReconcileScheduler(tr, ws, newFakeClock(time.Now()))
+	_ = s.state.Dispatch(issue, 1, LiveSession{Worker: w}, time.Now())
+
+	s.reconcile(context.Background(), refreshCfg([]string{"Done"}, []string{"In Progress"}))
+
+	if len(w.killed) != 1 || w.killed[0] != "not-found" {
+		t.Errorf("expected Kill(not-found), got %v", w.killed)
+	}
+	if len(ws.removed) != 0 {
+		t.Errorf("expected no workspace Remove for disappeared issue, got %v", ws.removed)
+	}
+	snap := s.state.Snapshot()
+	if _, ok := snap.Running["id8"]; ok {
+		t.Error("expected id8 removed from running after not-found stop")
+	}
+	if _, ok := snap.RetryAttempts["id8"]; !ok {
+		t.Error("expected retry entry enqueued for disappeared issue")
+	}
+}
+
 func TestReconcileRefresh_ErrorSkipsAll(t *testing.T) {
 	w := &fakeWorker{}
 	ws := &fakeWorkspace{}
@@ -242,7 +269,7 @@ func TestReconcileRefresh_ErrorSkipsAll(t *testing.T) {
 func TestReconcileStall_RecentActivityPreventsKill(t *testing.T) {
 	w := &fakeWorker{}
 	now := time.Unix(1000, 0)
-	s := newReconcileScheduler(&fakeReconcileTracker{}, &fakeWorkspace{}, newFakeClock(now))
+	s := newReconcileScheduler(nil, nil, newFakeClock(now))
 
 	// StartedAt is old enough to exceed the stall threshold.
 	started := time.Unix(0, 0)

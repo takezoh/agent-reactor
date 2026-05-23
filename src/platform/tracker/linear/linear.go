@@ -82,11 +82,7 @@ func (c *Client) fetchPages(ctx context.Context, query string, buildVars func(af
 			return nil, fmt.Errorf("%w: %s", ErrUnknownPayload, err)
 		}
 		for _, node := range raw.Issues.Nodes {
-			issue, err := normalizeIssue(node)
-			if err != nil {
-				return nil, fmt.Errorf("%w: normalize %s: %s", ErrUnknownPayload, node.ID, err)
-			}
-			issues = append(issues, issue)
+			issues = append(issues, normalizeIssue(node))
 		}
 		pi := raw.Issues.PageInfo
 		if !pi.HasNextPage {

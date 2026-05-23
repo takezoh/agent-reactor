@@ -19,6 +19,8 @@ var (
 	ErrCWDMismatch = errors.New("workspace: cwd does not match workspace path")
 	// ErrHookFailed is returned when a fatal hook exits non-zero or times out (§9.4).
 	ErrHookFailed = errors.New("workspace: hook failed")
+	// ErrSymlinkEscapesRoot is returned when a resolved symlink points outside the workspace root (§9.5/§15.2).
+	ErrSymlinkEscapesRoot = errors.New("workspace: symlink escapes workspace root")
 )
 
 // Manager manages per-issue workspace directories and lifecycle hooks per SPEC §9.
@@ -67,7 +69,8 @@ func sanitizeKey(s string) string {
 	}, s)
 }
 
-// VerifyCWD checks that cwd equals the workspace path for identifier per §9.5 Inv1.
+// VerifyCWD checks that cwd equals the workspace path for identifier per §9.5 Inv1,
+// and that the resolved path (after symlink expansion) remains inside the root (§9.5/§15.2).
 // Call this before launching the agent subprocess.
 func (m *Manager) VerifyCWD(identifier, cwd string) error {
 	expected, err := m.Path(identifier)
@@ -80,6 +83,18 @@ func (m *Manager) VerifyCWD(identifier, cwd string) error {
 	}
 	if filepath.Clean(abs) != expected {
 		return fmt.Errorf("%w: got %q, want %q", ErrCWDMismatch, abs, expected)
+	}
+	realCWD, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return fmt.Errorf("%w: cannot resolve cwd symlinks: %v", ErrCWDMismatch, err)
+	}
+	realRoot, err := filepath.EvalSymlinks(m.root)
+	if err != nil {
+		return fmt.Errorf("%w: cannot resolve root symlinks: %v", ErrCWDMismatch, err)
+	}
+	rel, err := filepath.Rel(realRoot, realCWD)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%w: %q resolves outside workspace root", ErrSymlinkEscapesRoot, cwd)
 	}
 	return nil
 }

@@ -86,6 +86,9 @@ Symphony SPEC v1 Draft への conformance の正本ドキュメント。
 | Usage and rate-limit telemetry extracted | `TestTurnHandler_UsageUsesTotalIgnoresLastPayload`, `TestTurnHandler_RateLimitReported` (`agent`) |
 | Token absolute totals used; same absolute value not double-counted | `TestSPEC_17_5_AbsoluteTokenNoDoubleCount` (`platform/metrics`) / `TestAccumulator_SingleThread_NoDoubleCount` |
 | Agent-switch event parity: shim emits §10.4 protocol method names | `TestSPEC_17_5_AgentSwitchEventParity` (`cmd/claude-app-server`) / `TestShim_ConformanceEventOrder` |
+| `thread/start` sends `approvalPolicy`, `sandbox`, `serviceName` per §10.2 | `TestSPEC_17_5_ThreadStartSendsApprovalPolicy`, `TestSPEC_17_5_ThreadStartSendsSandboxMode`, `TestSPEC_17_5_ThreadStartSendsServiceName` (`agent`) |
+| `turn/start` sends `approvalPolicy`, `sandboxPolicy` per §10.2 | `TestSPEC_17_5_TurnStartSendsApprovalPolicy`, `TestSPEC_17_5_TurnStartSendsSandboxPolicy` (`agent`) |
+| Empty policy config omits optional fields from wire | `TestSPEC_17_5_EmptyPolicyFieldsOmitted` (`agent`) |
 
 ### §17.6 Observability
 
@@ -93,6 +96,8 @@ Symphony SPEC v1 Draft への conformance の正本ドキュメント。
 |---|---|
 | `/api/v1/state` response contains required top-level fields | `TestSPEC_17_6_StateShape` (`orchestrator/httpserver`) / `TestStateEndpoint_EmptySnapshot` |
 | 405 Method Not Allowed uses standard error envelope | `TestSPEC_17_6_MethodNotAllowedEnvelope` (`orchestrator/httpserver`) / `TestMethodNotAllowed_405` |
+| Snapshot timeout returns 503 with `snapshot_timeout` code (§13.3 RECOMMENDED) | `TestSPEC_17_6_SnapshotTimeout` (`orchestrator/httpserver`) / `TestSnapshotCtx_Timeout` (`scheduler`) |
+| Orchestrator unavailable returns 503 with `orchestrator_unavailable` code (§13.3 RECOMMENDED) | `TestSPEC_17_6_OrchestratorUnavailable` (`orchestrator/httpserver`) / `TestScheduler_SnapshotCtx_Unavailable` (`scheduler`) |
 | Logging sink failures do not crash orchestration | `TestRunContinuesAfterTickPreflightFailure` (`cmd/orchestrator`) |
 
 ### §17.7 CLI and Host Lifecycle
@@ -165,7 +170,7 @@ LINEAR_API_KEY=<key> LINEAR_PROJECT_SLUG=<slug> \
 | SPEC § | SPEC | 我々の選択 |
 |---|---|---|
 | §10 | Codex app-server 専用 | `codex.command` 経由の stdio shim で複数 agent 対応 (`claude-app-server`) |
-| §10.5 `linear_graphql` | OPTIONAL extension | codex native `item/tool/call` で実装; advertise は pinned codex 0.128.0 で blocked (→ [issues/024](../../issues/024-p8b-linear-graphql-tool.md) §B) |
+| §10.5 `linear_graphql` | OPTIONAL extension | codex native `item/tool/call` で実装; advertise は pinned codex 0.133.0 で blocked (→ [issues/024](../../issues/024-p8b-linear-graphql-tool.md) §B) |
 | §13.7 | HTTP server は OPTIONAL | **必須として実装** — orchestrator は TUI を持たない |
 | §3.3 | sandbox は impl-defined | devcontainer mode をデフォルト推奨 |
 | §9.3 | workspace population は impl-defined | `after_create` hook で `git worktree add` を強く推奨 |
@@ -191,4 +196,4 @@ default で適用: devcontainer 隔離、credproxy、mcpproxy whitelist、hostex
 
 ### §10.5 `linear_graphql` advertise blocked (最新逸脱)
 
-`DynamicToolSpec` が codex schema 上 orphan のため tool 宣言の wire 経路が無い。handler は `orchestrator/lineargql/` に実装済だが、advertise は pinned codex 0.128.0 が schema bump するまで不可。`codex.command: claude-app-server` 経由では `item/tool/call` で call は到達するが codex 正規経路では blocked。詳細: [issues/024](../../issues/024-p8b-linear-graphql-tool.md) §B。
+`DynamicToolSpec` が codex schema 上 orphan のため tool 宣言の wire 経路が無い。handler は `orchestrator/lineargql/` に実装済だが、advertise は pinned codex 0.133.0 が schema bump するまで不可。`codex.command: claude-app-server` 経由では `item/tool/call` で call は到達するが codex 正規経路では blocked。詳細: [issues/024](../../issues/024-p8b-linear-graphql-tool.md) §B。

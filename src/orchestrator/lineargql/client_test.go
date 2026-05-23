@@ -112,6 +112,66 @@ func TestExecute_missingAPIKeyReturnSuccessFalse(t *testing.T) {
 	assert.False(t, result.Success)
 }
 
+func TestExecute_multipleOperationsRejected(t *testing.T) {
+	// Two named operations in one document must be rejected without hitting the
+	// network (no server is started here).
+	c := lineargql.New("http://unused", "key")
+	src := `query A { viewer { id } } query B { teams { nodes { id } } }`
+
+	result, err := c.Execute(context.Background(), src, nil)
+	require.NoError(t, err)
+	assert.False(t, result.Success)
+	assert.Contains(t, string(result.Errors), "exactly one")
+}
+
+func TestExecute_multipleOperationsNotSentToServer(t *testing.T) {
+	// Confirm no HTTP request is made when the document has multiple operations.
+	_, lastReq := captureServer(t, `{"data":{}}`)
+	c := lineargql.New("http://unused", "key") // wrong URL — would fail if reached
+	src := `query A { viewer { id } } query B { teams { nodes { id } } }`
+
+	result, err := c.Execute(context.Background(), src, nil)
+	require.NoError(t, err)
+	assert.False(t, result.Success)
+	assert.Nil(t, lastReq(), "no request should reach the server")
+}
+
+func TestExecute_arrayVariablesRejected(t *testing.T) {
+	c := lineargql.New("http://unused", "key")
+
+	result, err := c.Execute(context.Background(), "{ viewer { id } }", []byte(`["a","b"]`))
+	require.NoError(t, err)
+	assert.False(t, result.Success)
+	assert.Contains(t, string(result.Errors), "JSON object")
+}
+
+func TestExecute_stringVariablesRejected(t *testing.T) {
+	c := lineargql.New("http://unused", "key")
+
+	result, err := c.Execute(context.Background(), "{ viewer { id } }", []byte(`"hello"`))
+	require.NoError(t, err)
+	assert.False(t, result.Success)
+	assert.Contains(t, string(result.Errors), "JSON object")
+}
+
+func TestExecute_nullVariablesAllowed(t *testing.T) {
+	url, _ := captureServer(t, `{"data":{}}`)
+	c := lineargql.New(url, "key")
+
+	result, err := c.Execute(context.Background(), "{ viewer { id } }", []byte("null"))
+	require.NoError(t, err)
+	assert.True(t, result.Success)
+}
+
+func TestExecute_objectVariablesAllowed(t *testing.T) {
+	url, _ := captureServer(t, `{"data":{}}`)
+	c := lineargql.New(url, "key")
+
+	result, err := c.Execute(context.Background(), "{ viewer { id } }", []byte(`{"key":"val"}`))
+	require.NoError(t, err)
+	assert.True(t, result.Success)
+}
+
 func TestExecute_tokenNotLogged(t *testing.T) {
 	secret := "super-secret-api-key-12345"
 	url, _ := captureServer(t, `{"data":{}}`)

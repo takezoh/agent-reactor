@@ -53,13 +53,23 @@ type Worker interface {
 // RetryTimer wraps a one-shot Timer scheduled by the scheduler (SPEC §8.4).
 type RetryTimer struct{ t Timer }
 
+// Stop cancels the underlying timer. Returns false if it has already fired or been stopped.
+// Safe to call on a zero-value RetryTimer.
+func (rt RetryTimer) Stop() bool {
+	if rt.t == nil {
+		return false
+	}
+	return rt.t.Stop()
+}
+
 // RunAttempt holds the runtime state of a running issue (SPEC §4.1.5 / §16.4).
 type RunAttempt struct {
 	Issue   tracker.Issue // snapshot at dispatch time
 	Session LiveSession
 
-	Attempt int
-	Phase   RunPhase
+	Attempt   int
+	Phase     RunPhase
+	TurnCount int // number of turns completed in this attempt (SPEC §4.1.6)
 
 	StartedAt time.Time
 

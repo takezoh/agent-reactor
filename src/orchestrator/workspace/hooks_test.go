@@ -77,3 +77,41 @@ func TestBeforeRun_EmptyScript_Noop(t *testing.T) {
 		t.Errorf("BeforeRun with empty script: %v", err)
 	}
 }
+
+// §15.4: hook stdout/stderr is captured and succeeds when exit 0.
+func TestBeforeRun_WithOutput_Succeeds(t *testing.T) {
+	root := t.TempDir()
+	m := New(wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: root},
+		Hooks:     wfconfig.HooksConfig{TimeoutMS: 5000, BeforeRun: "echo hello from hook"},
+	})
+	if _, err := m.Ensure(context.Background(), "issue-1"); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if err := m.BeforeRun(context.Background(), "issue-1"); err != nil {
+		t.Errorf("BeforeRun with output: %v", err)
+	}
+}
+
+// §15.4: truncateOutput limits byte length to max.
+func TestTruncateOutput(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   []byte
+		max     int
+		wantLen int
+	}{
+		{"empty", []byte{}, 2048, 0},
+		{"under_max", []byte("hello"), 2048, 5},
+		{"exact_max", make([]byte, 2048), 2048, 2048},
+		{"over_max", make([]byte, 3000), 2048, 2048},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := truncateOutput(tc.input, tc.max)
+			if len(got) != tc.wantLen {
+				t.Errorf("len = %d, want %d", len(got), tc.wantLen)
+			}
+		})
+	}
+}

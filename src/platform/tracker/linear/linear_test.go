@@ -277,8 +277,12 @@ func TestSPEC_17_3_FetchIssueStatesByIDsUsesIDType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	// §11.2 requires nullable list [ID!], not non-null list [ID!]!
 	if !strings.Contains(*body, "[ID!]") {
 		t.Errorf("query must declare ids as [ID!]; body: %s", *body)
+	}
+	if strings.Contains(*body, "[ID!]!") {
+		t.Errorf("query must not declare ids as [ID!]! (non-null); §11.2 requires nullable [ID!]; body: %s", *body)
 	}
 }
 
@@ -348,6 +352,31 @@ func TestErrorMapping_MissingDataField(t *testing.T) {
 	_, err := c.FetchCandidateIssues(context.Background())
 	if !errors.Is(err, linear.ErrUnknownPayload) {
 		t.Errorf("want ErrUnknownPayload, got %v", err)
+	}
+}
+
+func TestSPEC_11_3_BadTimestampPreservesIssue(t *testing.T) {
+	node := fakeNode("id1", "PROJ-1")
+	node["createdAt"] = "not-a-date"
+	node["updatedAt"] = "also-bad"
+	srv, _ := captureServer(t, issuesResp([]map[string]any{node}, false, ""))
+
+	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	issues, err := c.FetchCandidateIssues(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v (bad timestamp must be non-fatal per §11.3)", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue, got %d", len(issues))
+	}
+	if issues[0].Identifier != "PROJ-1" {
+		t.Errorf("identifier: want PROJ-1, got %s", issues[0].Identifier)
+	}
+	if !issues[0].CreatedAt.IsZero() {
+		t.Errorf("createdAt: want zero time for bad input, got %v", issues[0].CreatedAt)
+	}
+	if !issues[0].UpdatedAt.IsZero() {
+		t.Errorf("updatedAt: want zero time for bad input, got %v", issues[0].UpdatedAt)
 	}
 }
 

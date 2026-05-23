@@ -7,13 +7,26 @@ import (
 )
 
 // availableGlobalSlots returns the number of global dispatch slots remaining (SPEC §8.3).
+// RetryQueued issues are claimed (SPEC §7.1) and occupy a slot during the backoff window.
 func availableGlobalSlots(snap StateSnapshot, cfg wfconfig.Config) int {
-	used := len(snap.Running)
+	used := len(snap.Running) + retryQueuedCount(snap)
 	avail := cfg.Agent.MaxConcurrentAgents - used
 	if avail < 0 {
 		return 0
 	}
 	return avail
+}
+
+// retryQueuedCount returns the number of issues in RetryQueued state
+// (in retryAttempts but not yet promoted back to running).
+func retryQueuedCount(snap StateSnapshot) int {
+	count := 0
+	for id := range snap.RetryAttempts {
+		if _, running := snap.Running[id]; !running {
+			count++
+		}
+	}
+	return count
 }
 
 // availablePerStateSlots returns dispatch slots for the given state (SPEC §8.3).

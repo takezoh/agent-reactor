@@ -108,6 +108,22 @@ func TestEligible_RunningAndClaimed(t *testing.T) {
 	})
 }
 
+// TestEligible_RetryAttempts verifies that RetryQueued issues (in retryAttempts) are
+// excluded from dispatch — defense-in-depth for SPEC §7.4 (double-dispatch prevention).
+func TestEligible_RetryAttempts(t *testing.T) {
+	cfg := cfg2()
+	iss := baseIssue()
+
+	snap := StateSnapshot{
+		Running:       map[string]RunAttempt{},
+		Claimed:       map[string]struct{}{},
+		RetryAttempts: map[string]RetryEntry{"id1": {IssueID: "id1"}},
+	}
+	if got := filterEligible([]tracker.Issue{iss}, snap, cfg); len(got) != 0 {
+		t.Errorf("want 0 eligible for RetryQueued issue, got %d", len(got))
+	}
+}
+
 // TestEligible_BlockerRule verifies the Todo+blocker exclusion per SPEC §8.2.
 func TestEligible_BlockerRule(t *testing.T) {
 	cfg := cfg2()

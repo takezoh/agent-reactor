@@ -13,7 +13,7 @@ metrics+stall (021)、observability HTTP server (022)、WORKFLOW.md hot reload (
 M4 (P9) で SPEC §17 conformance test 群（canonical `TestSPEC_*` マーカー + §17.8 実 Linear profile）と
 `docs/orchestrator/symphony-conformance.md`（SPEC §17 ↔ test 対応表 + posture）、orchestrator サービスの
 位置付け doc（AGENTS.md / ARCHITECTURE.md）を整備（025/026、archive 済み）。
-**唯一の残件は P8b `linear_graphql` (024) の tool advertise**: handler + wiring は実装済だが、pinned codex 0.128.0 で
+**唯一の残件は P8b `linear_graphql` (024) の tool advertise**: handler + wiring は実装済だが、pinned codex 0.133.0 で
 `DynamicToolSpec` が schema 上 orphan（request からの `$ref` 参照ゼロ）のため宣言できず、実機 codex から到達不能。
 codex schema bump が入れば forward-compatible な handler がそのまま機能する（外部要因待ち）。
 
@@ -63,7 +63,7 @@ codex schema bump が入れば forward-compatible な handler がそのまま機
 - **三層境界**: `platform/` (共有基盤) ↛ `client/`/`orchestrator/`、`client/` ↛ `orchestrator/` を depguard で実効化
 - **agentlaunch**: `platform/agentlaunch/` の `Dispatcher` を import すれば sandbox 配線済みで agent を起動可能。client 固有概念 (FrameID/SandboxOverride) は adapter で遮断
 - **codexclient**: transport 非依存の JSON-RPC framing (`Conn`)。ws (roost) と stdio (shim/orchestrator) の両 transport。server helper を shim に提供
-- **codexschema**: codex-cli 0.128.0 で pin、CI で drift 検出
+- **codexschema**: codex-cli 0.133.0 で pin、CI で drift 検出
 - **3 バイナリ**: `roost` / `orchestrator`（poll/dispatch/reconcile/HTTP 稼働）/ `claude-app-server`（codex protocol shim 稼働）が同一 module から build
 
 ## issue の置き場
