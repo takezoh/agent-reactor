@@ -1,7 +1,6 @@
 package linear
 
 import (
-	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -9,15 +8,11 @@ import (
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
-func normalizeIssue(n rawNode) (tracker.Issue, error) {
-	createdAt, err := parseTime(n.CreatedAt)
-	if err != nil {
-		return tracker.Issue{}, fmt.Errorf("createdAt: %w", err)
-	}
-	updatedAt, err := parseTime(n.UpdatedAt)
-	if err != nil {
-		return tracker.Issue{}, fmt.Errorf("updatedAt: %w", err)
-	}
+// normalizeIssue converts a raw API node to a tracker.Issue.
+// Timestamp parse failures are non-fatal per SPEC §11.3: zero time is used instead.
+func normalizeIssue(n rawNode) tracker.Issue {
+	createdAt, _ := parseTime(n.CreatedAt)
+	updatedAt, _ := parseTime(n.UpdatedAt)
 	return tracker.Issue{
 		ID:          n.ID,
 		Identifier:  n.Identifier,
@@ -31,7 +26,7 @@ func normalizeIssue(n rawNode) (tracker.Issue, error) {
 		BlockedBy:   normalizeBlockers(n.InverseRelations.Nodes),
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
-	}, nil
+	}
 }
 
 // normalizeLabels lowercases each label name (§11.3).
