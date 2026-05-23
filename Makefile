@@ -57,7 +57,7 @@ clean:
 
 # codex-schema-check — verify committed bundle files match current codex output.
 # Comparison is done with sorted keys so JSON object ordering doesn't matter.
-# Requires codex and jq in PATH (use mise: `mise use codex@0.133.0`).
+# Requires codex and jq in PATH (use mise: `mise use codex@0.128.0`).
 codex-schema-check:
 	@echo "Generating codex JSON Schema into $(CODEX_SCHEMA_TMP)..."
 	@rm -rf $(CODEX_SCHEMA_TMP)
@@ -69,7 +69,7 @@ codex-schema-check:
 	jq --sort-keys . $(CODEX_SCHEMA_DIR)/schema/codex_app_server_protocol.v2.schemas.json > /tmp/_schemav2_committed.json
 	jq --sort-keys . $(CODEX_SCHEMA_TMP)/codex_app_server_protocol.v2.schemas.json > /tmp/_schemav2_generated.json
 	diff /tmp/_schemav2_committed.json /tmp/_schemav2_generated.json
-	@echo "OK: schema bundles are in sync with codex 0.133.0"
+	@echo "OK: schema bundles are in sync with codex 0.128.0"
 
 # codex-schema-update — regenerate pinned schema bundles and Go types.
 # Run this when upgrading codex. Requires codex and npx (quicktype) in PATH.

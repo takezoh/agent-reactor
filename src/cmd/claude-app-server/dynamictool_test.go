@@ -37,7 +37,6 @@ func TestParseToolCall_invalidJSON(t *testing.T) {
 
 // --- formatToolResult ---
 
-// orchestratorReply mirrors the toolCallReply the orchestrator sends.
 type orchestratorReply struct {
 	Success bool   `json:"success"`
 	Output  string `json:"output"`

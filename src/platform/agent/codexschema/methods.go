@@ -44,6 +44,10 @@ const (
 	// MethodItemToolCall is the ServerRequest the agent sends when the model invokes
 	// a client-side tool (SPEC §10.5). The client replies with the tool result.
 	MethodItemToolCall = "item/tool/call"
+	// MethodItemToolRequestUserInput is the EXPERIMENTAL server → client request
+	// the agent sends when the model requires user input (SPEC §10.5).
+	// Documented posture: automated orchestration treats this as a hard fail.
+	MethodItemToolRequestUserInput = "item/tool/requestUserInput"
 )
 
 // Approval reply values.

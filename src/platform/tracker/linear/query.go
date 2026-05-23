@@ -27,9 +27,10 @@ query($slug: String!, $states: [String!]!, $after: String) {
   }
 }`
 
-// byIDsQuery fetches issues by their GraphQL IDs, using the [ID!]! variable type (§11.2).
+// byIDsQuery fetches issues by their GraphQL IDs.
+// §11.2 specifies the variable type as [ID!] (nullable list).
 const byIDsQuery = `
-query($ids: [ID!]!, $after: String) {
+query($ids: [ID!], $after: String) {
   issues(
     filter: { id: { in: $ids } }
     first: 50

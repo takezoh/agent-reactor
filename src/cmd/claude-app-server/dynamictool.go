@@ -82,9 +82,7 @@ func parseToolCall(text string) (toolCall, bool) {
 	return c, true
 }
 
-// formatToolResult renders the orchestrator's tool reply as the prompt for the
-// next (resumed) claude invocation. The orchestrator returns {success, output}
-// where output is the JSON-encoded tool result string.
+// formatToolResult renders the {success, output} orchestrator reply as the next claude prompt.
 func formatToolResult(call toolCall, result json.RawMessage) string {
 	var r struct {
 		Success *bool  `json:"success"`

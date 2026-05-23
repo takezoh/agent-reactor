@@ -46,8 +46,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install codex 0.128.0
-        run: npm install -g @openai/codex@0.128.0
+      - name: Install codex 0.133.0
+        run: npm install -g @openai/codex@0.133.0
 
       - name: Install jq
         run: sudo apt-get install -y jq

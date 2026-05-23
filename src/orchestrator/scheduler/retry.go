@@ -30,8 +30,9 @@ func backoffDelay(attempt int, cfg wfconfig.Config) time.Duration {
 
 // retryFireReq is sent by a timer callback to the Run loop retry channel.
 type retryFireReq struct {
-	IssueID string
-	Attempt int
+	IssueID    string
+	Identifier string
+	Attempt    int
 }
 
 // scheduleRetry sets DueAtMS and Timer on entry, enqueues it in state, and arranges
@@ -39,10 +40,11 @@ type retryFireReq struct {
 func scheduleRetry(st *State, clk Clock, fireCh chan<- retryFireReq, ctx context.Context, entry RetryEntry, delay time.Duration) {
 	entry.DueAtMS = clk.Now().Add(delay).UnixMilli()
 	issueID := entry.IssueID
+	identifier := entry.Identifier
 	attempt := entry.Attempt
 	entry.Timer = RetryTimer{t: clk.NewTimer(delay, func() {
 		select {
-		case fireCh <- retryFireReq{IssueID: issueID, Attempt: attempt}:
+		case fireCh <- retryFireReq{IssueID: issueID, Identifier: identifier, Attempt: attempt}:
 		case <-ctx.Done():
 		}
 	})}

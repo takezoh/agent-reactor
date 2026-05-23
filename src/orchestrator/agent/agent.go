@@ -22,9 +22,13 @@ type stateRefresher interface {
 }
 
 const (
-	EventSessionStarted = "session_started"
-	EventTurnCompleted  = "turn_completed"
-	EventTurnFailed     = "turn_failed"
+	EventSessionStarted      = "session_started"
+	EventTurnCompleted       = "turn_completed"
+	EventTurnFailed          = "turn_failed"
+	EventTurnCancelled       = "turn_cancelled"
+	EventStartupFailed       = "startup_failed"
+	EventUnsupportedToolCall = "unsupported_tool_call"
+	EventTurnInputRequired   = "turn_input_required"
 )
 
 // Event carries a single agent lifecycle notification.
@@ -46,7 +50,8 @@ type procFunc func(ctx context.Context, dir string, env map[string]string, comma
 type Runner struct {
 	Workspace      *workspace.Manager
 	Cfg            wfconfig.Config
-	PromptTemplate string
+	PromptTemplate string        // static fallback; used when PromptLoader is nil
+	PromptLoader   func() string // called per-dispatch to pick up live WORKFLOW.md edits (SPEC §6.2)
 	Dispatcher     agentlaunch.Dispatcher
 	Tracker        stateRefresher
 	WorkerDone     chan<- scheduler.WorkerExit
@@ -79,6 +84,8 @@ func (r *Runner) Spawn(ctx context.Context, issue tracker.Issue, attempt int) (s
 	return r.spawnWith(ctx, issue, attempt, func(e Event) {
 		slog.Info("agent event",
 			"kind", e.Kind,
+			"issue_id", issue.ID,
+			"issue_identifier", issue.Identifier,
 			"session_id", e.SessionID,
 			"thread_id", e.ThreadID,
 			"turn_id", e.TurnID,

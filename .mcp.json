@@ -1,9 +1,36 @@
 {
   "mcpServers": {
+    "cloud-run": {
+      "type": "stdio",
+      "command": "/opt/roost/run/roost-bridge",
+      "args": [
+        "mcp-exec",
+        "cloud-run"
+      ]
+    },
+    "gcloud": {
+      "type": "stdio",
+      "command": "/opt/roost/run/roost-bridge",
+      "args": [
+        "mcp-exec",
+        "gcloud"
+      ]
+    },
     "observability": {
       "type": "stdio",
-      "command": "/opt/roost/run/roost",
-      "args": ["mcp-exec", "observability"]
+      "command": "/opt/roost/run/roost-bridge",
+      "args": [
+        "mcp-exec",
+        "observability"
+      ]
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "/opt/roost/run/roost-bridge",
+      "args": [
+        "mcp-exec",
+        "playwright"
+      ]
     }
   }
 }

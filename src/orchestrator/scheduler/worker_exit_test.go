@@ -13,7 +13,7 @@ func makeRunningScheduler(t *testing.T) (*Scheduler, *fakeClock, chan retryFireR
 	t.Helper()
 	st := NewState()
 	iss := tracker.Issue{ID: "1", Identifier: "P-1", State: "In Progress"}
-	if err := st.Dispatch(iss, 1, LiveSession{}, time.Now()); err != nil {
+	if err := st.Dispatch(iss, 0, LiveSession{}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	clk := newFakeClock(time.Now())
@@ -126,5 +126,49 @@ func TestHandleWorkerExit_Abnormal_EnqueuesBackoffRetry(t *testing.T) {
 	}
 	if entry.Attempt != 2 {
 		t.Errorf("want attempt=2 (incremented), got %d", entry.Attempt)
+	}
+}
+
+// TestWorkerExitNormal_ClaimedRetained verifies SPEC §7.1: a normal worker exit must
+// keep the issue in claimed (RetryQueued) so dispatchOnce cannot re-dispatch it.
+func TestWorkerExitNormal_ClaimedRetained(t *testing.T) {
+	st := NewState()
+	iss := tracker.Issue{ID: "1", Identifier: "P-1", State: "In Progress"}
+	if err := st.Dispatch(iss, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := st.WorkerExitNormal("1"); !ok {
+		t.Fatal("WorkerExitNormal: expected ok=true for running issue")
+	}
+
+	snap := st.Snapshot()
+	if _, ok := snap.Running["1"]; ok {
+		t.Error("want issue removed from running after normal exit")
+	}
+	if _, ok := snap.Claimed["1"]; !ok {
+		t.Error("want issue retained in claimed (RetryQueued) after normal exit (SPEC §7.1)")
+	}
+}
+
+// TestWorkerExitAbnormal_ClaimedRetained verifies SPEC §7.1: an abnormal worker exit must
+// keep the issue in claimed (RetryQueued) so dispatchOnce cannot re-dispatch it.
+func TestWorkerExitAbnormal_ClaimedRetained(t *testing.T) {
+	st := NewState()
+	iss := tracker.Issue{ID: "1", Identifier: "P-1", State: "In Progress"}
+	if err := st.Dispatch(iss, 1, LiveSession{}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := st.WorkerExitAbnormal("1", errors.New("failed"), 1); !ok {
+		t.Fatal("WorkerExitAbnormal: expected ok=true for running issue")
+	}
+
+	snap := st.Snapshot()
+	if _, ok := snap.Running["1"]; ok {
+		t.Error("want issue removed from running after abnormal exit")
+	}
+	if _, ok := snap.Claimed["1"]; !ok {
+		t.Error("want issue retained in claimed (RetryQueued) after abnormal exit (SPEC §7.1)")
 	}
 }

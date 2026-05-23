@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"errors"
+	"os"
 	"testing"
 )
 
@@ -31,6 +32,10 @@ func TestSPEC_17_2_CwdEqualsWorkspaceRoot(t *testing.T) {
 	p, err := m.Path("ISSUE-1")
 	if err != nil {
 		t.Fatalf("Path: %v", err)
+	}
+	// VerifyCWD resolves symlinks so the path must exist on disk.
+	if err := os.MkdirAll(p, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
 	}
 
 	if err := m.VerifyCWD("ISSUE-1", p); err != nil {

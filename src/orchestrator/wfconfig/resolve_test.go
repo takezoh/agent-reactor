@@ -336,6 +336,81 @@ func TestResolve_CodexPassthroughFields_Captured(t *testing.T) {
 	}
 }
 
+// SPEC §5.3.1: absent api_key falls back to the canonical env var LINEAR_API_KEY.
+func TestResolve_LinearAPIKey_CanonicalEnvFallback(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "sk-fallback")
+	raw := map[string]any{
+		"tracker": map[string]any{"kind": "linear"},
+	}
+	cfg, err := Resolve(raw, t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Tracker.APIKey != "sk-fallback" {
+		t.Errorf("APIKey = %q, want %q (canonical env fallback)", cfg.Tracker.APIKey, "sk-fallback")
+	}
+}
+
+// SPEC §5.3.1: api_key that expands to empty also falls back to LINEAR_API_KEY.
+func TestResolve_LinearAPIKey_EmptyResolvesToCanonicalEnv(t *testing.T) {
+	t.Setenv("MY_KEY", "")
+	t.Setenv("LINEAR_API_KEY", "sk-canonical")
+	raw := map[string]any{
+		"tracker": map[string]any{"kind": "linear", "api_key": "$MY_KEY"},
+	}
+	cfg, err := Resolve(raw, t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Tracker.APIKey != "sk-canonical" {
+		t.Errorf("APIKey = %q, want %q (canonical env fallback after empty expansion)", cfg.Tracker.APIKey, "sk-canonical")
+	}
+}
+
+// SPEC §5.3.1: an explicit api_key takes precedence over LINEAR_API_KEY.
+func TestResolve_LinearAPIKey_ExplicitKeyWins(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "sk-canonical")
+	raw := map[string]any{
+		"tracker": map[string]any{"kind": "linear", "api_key": "sk-explicit"},
+	}
+	cfg, err := Resolve(raw, t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Tracker.APIKey != "sk-explicit" {
+		t.Errorf("APIKey = %q, want %q (explicit key should win)", cfg.Tracker.APIKey, "sk-explicit")
+	}
+}
+
+func TestResolve_NonLinearTracker_NoCanonicalEnvFallback(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "sk-should-not-appear")
+	raw := map[string]any{
+		"tracker": map[string]any{"kind": "github"},
+	}
+	cfg, err := Resolve(raw, t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Tracker.APIKey != "" {
+		t.Errorf("APIKey = %q, want empty (non-linear tracker must not use LINEAR_API_KEY)", cfg.Tracker.APIKey)
+	}
+}
+
+// SPEC §5.3.1: when LINEAR_API_KEY is also absent, fallback yields empty string without error.
+func TestResolve_LinearAPIKey_FallbackEnvAbsent(t *testing.T) {
+	t.Setenv("LINEAR_API_KEY", "")
+	raw := map[string]any{
+		"tracker": map[string]any{"kind": "linear"},
+	}
+	cfg, err := Resolve(raw, t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Tracker.APIKey != "" {
+		t.Errorf("APIKey = %q, want empty when LINEAR_API_KEY is unset", cfg.Tracker.APIKey)
+	}
+}
+
 // SPEC §6.1: hook scripts are arbitrary shell command strings and must not be
 // rewritten at config time, even when the whole value is a single $VAR token.
 func TestResolve_HookScriptNotExpanded(t *testing.T) {

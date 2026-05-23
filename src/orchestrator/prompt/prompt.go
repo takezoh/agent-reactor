@@ -40,9 +40,14 @@ func Render(tmpl string, vars Vars) (string, error) {
 	if tmpl == "" {
 		return defaultPrompt, nil
 	}
+	// Liquid: 0 is truthy, nil triggers StrictVariables — use false as the first-run sentinel (SPEC §4.1.5/§5.4).
+	var attemptVal any = false
+	if vars.Attempt > 0 {
+		attemptVal = vars.Attempt
+	}
 	bindings := liquid.Bindings{
 		"issue":   toIssueMap(vars.Issue),
-		"attempt": vars.Attempt,
+		"attempt": attemptVal,
 	}
 	out, err := engine().ParseAndRenderString(tmpl, bindings)
 	if err != nil {
