@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -117,6 +118,17 @@ func makeFakeProc(fs *fakeServer) procFunc {
 	}
 }
 
+func makeRunnerWithCfg(t *testing.T, cfg wfconfig.Config, proc procFunc) *Runner {
+	t.Helper()
+	return &Runner{
+		Workspace:      workspace.New(cfg),
+		Cfg:            cfg,
+		PromptTemplate: "",
+		Dispatcher:     agentlaunch.DirectDispatcher{},
+		proc:           proc,
+	}
+}
+
 func makeRunner(t *testing.T, tmpl string, proc procFunc) *Runner {
 	t.Helper()
 	wsRoot := t.TempDir()
@@ -124,14 +136,9 @@ func makeRunner(t *testing.T, tmpl string, proc procFunc) *Runner {
 		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
 		Codex:     wfconfig.CodexConfig{Command: "unused-in-test"},
 	}
-	ws := workspace.New(cfg)
-	return &Runner{
-		Workspace:      ws,
-		Cfg:            cfg,
-		PromptTemplate: tmpl,
-		Dispatcher:     agentlaunch.DirectDispatcher{},
-		proc:           proc,
-	}
+	r := makeRunnerWithCfg(t, cfg, proc)
+	r.PromptTemplate = tmpl
+	return r
 }
 
 func collectEvents(t *testing.T, r *Runner, issue tracker.Issue) []Event {
@@ -262,6 +269,60 @@ func TestSpawn_beforeRunFailureAborts(t *testing.T) {
 	defer cancel()
 	_, err := r.spawnWith(ctx, iss, 1, func(Event) {})
 	assert.Error(t, err, "before_run failure should abort spawn")
+}
+
+func TestSPEC_9_4_AfterRunCalledOnBeforeRunFailure(t *testing.T) {
+	wsRoot := t.TempDir()
+	markerFile := filepath.Join(wsRoot, "after_run_called")
+	cfg := wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
+		Hooks: wfconfig.HooksConfig{
+			BeforeRun: "exit 1",
+			AfterRun:  "touch " + markerFile,
+			TimeoutMS: 2000,
+		},
+		Codex: wfconfig.CodexConfig{Command: "unused"},
+	}
+	iss := tracker.Issue{Identifier: "PROJ-AR1"}
+	// Pre-create workspace so Ensure succeeds before before_run hook runs.
+	require.NoError(t, os.MkdirAll(filepath.Join(wsRoot, iss.Identifier), 0o755))
+
+	r := makeRunnerWithCfg(t, cfg, makeFakeProc(&fakeServer{}))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := r.spawnWith(ctx, iss, 1, func(Event) {})
+	require.Error(t, err, "before_run failure should abort spawn")
+
+	_, statErr := os.Stat(markerFile)
+	assert.NoError(t, statErr, "after_run must be called even when before_run fails (SPEC §9.4)")
+}
+
+func TestSPEC_9_4_AfterRunCalledOnLaunchConnFailure(t *testing.T) {
+	wsRoot := t.TempDir()
+	markerFile := filepath.Join(wsRoot, "after_run_called")
+	cfg := wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
+		Hooks: wfconfig.HooksConfig{
+			AfterRun:  "touch " + markerFile,
+			TimeoutMS: 2000,
+		},
+		Codex: wfconfig.CodexConfig{Command: "unused"},
+	}
+	iss := tracker.Issue{Identifier: "PROJ-AR2"}
+
+	failProc := func(_ context.Context, _ string, _ map[string]string, _ string) (io.ReadCloser, io.WriteCloser, func(), error) {
+		return nil, nil, nil, errors.New("proc: simulated launch failure")
+	}
+	r := makeRunnerWithCfg(t, cfg, failProc)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := r.spawnWith(ctx, iss, 1, func(Event) {})
+	require.Error(t, err, "proc failure should abort spawn")
+
+	_, statErr := os.Stat(markerFile)
+	assert.NoError(t, statErr, "after_run must be called even when launchConn fails (SPEC §9.4)")
 }
 
 // ---- Dispatcher seam tests (Issue 015) ----
