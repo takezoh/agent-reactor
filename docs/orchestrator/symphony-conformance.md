@@ -86,6 +86,9 @@ Symphony SPEC v1 Draft への conformance の正本ドキュメント。
 | Usage and rate-limit telemetry extracted | `TestTurnHandler_UsageUsesTotalIgnoresLastPayload`, `TestTurnHandler_RateLimitReported` (`agent`) |
 | Token absolute totals used; same absolute value not double-counted | `TestSPEC_17_5_AbsoluteTokenNoDoubleCount` (`platform/metrics`) / `TestAccumulator_SingleThread_NoDoubleCount` |
 | Agent-switch event parity: shim emits §10.4 protocol method names | `TestSPEC_17_5_AgentSwitchEventParity` (`cmd/claude-app-server`) / `TestShim_ConformanceEventOrder` |
+| `thread/start` sends `approvalPolicy`, `sandbox`, `serviceName` per §10.2 | `TestSPEC_17_5_ThreadStartSendsApprovalPolicy`, `TestSPEC_17_5_ThreadStartSendsSandboxMode`, `TestSPEC_17_5_ThreadStartSendsServiceName` (`agent`) |
+| `turn/start` sends `approvalPolicy`, `sandboxPolicy` per §10.2 | `TestSPEC_17_5_TurnStartSendsApprovalPolicy`, `TestSPEC_17_5_TurnStartSendsSandboxPolicy` (`agent`) |
+| Empty policy config omits optional fields from wire | `TestSPEC_17_5_EmptyPolicyFieldsOmitted` (`agent`) |
 
 ### §17.6 Observability
 

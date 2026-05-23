@@ -187,7 +187,7 @@ func TestShim_OneTurn(t *testing.T) {
 	go func() { _ = clientConn.Run(context.Background(), nc) }()
 
 	require.NoError(t, codexclient.Initialize(clientConn))
-	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("hi")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("hi"), codexclient.TurnOptions{}))
 
 	waitForMethods(t, nc, []string{
 		codexschema.MethodThreadStarted,
@@ -207,7 +207,7 @@ func TestShim_SessionID(t *testing.T) {
 	go func() { _ = clientConn.Run(context.Background(), nc) }()
 
 	require.NoError(t, codexclient.Initialize(clientConn))
-	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("hi")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("hi"), codexclient.TurnOptions{}))
 
 	waitForMethods(t, nc, []string{
 		codexschema.MethodThreadStarted,
@@ -238,7 +238,7 @@ func TestShim_ContinuationResume(t *testing.T) {
 	require.NoError(t, codexclient.Initialize(clientConn))
 
 	// First turn: no threadId → new thread/turn.
-	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("first")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("first"), codexclient.TurnOptions{}))
 	waitForMethods(t, nc, []string{
 		codexschema.MethodThreadStarted,
 		codexschema.MethodTurnStarted,
@@ -247,7 +247,7 @@ func TestShim_ContinuationResume(t *testing.T) {
 	})
 
 	// Second turn: pass threadId → shim should call launcher with --resume session id.
-	require.NoError(t, codexclient.StartTurn(clientConn, "thread-1", "/ws", []byte("second")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "thread-1", "/ws", []byte("second"), codexclient.TurnOptions{}))
 	waitForMethods(t, nc, []string{
 		codexschema.MethodThreadStarted,
 		codexschema.MethodTurnStarted,
@@ -271,7 +271,7 @@ func TestShim_TurnFailed(t *testing.T) {
 	go func() { _ = clientConn.Run(context.Background(), nc) }()
 
 	require.NoError(t, codexclient.Initialize(clientConn))
-	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("fail me")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("fail me"), codexclient.TurnOptions{}))
 
 	waitForMethods(t, nc, []string{
 		codexschema.MethodThreadStarted,
@@ -296,7 +296,7 @@ func TestShim_NoResultEmitsTurnFailed(t *testing.T) {
 	go func() { _ = clientConn.Run(context.Background(), nc) }()
 
 	require.NoError(t, codexclient.Initialize(clientConn))
-	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("no result")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("no result"), codexclient.TurnOptions{}))
 
 	waitForMethods(t, nc, []string{
 		codexschema.MethodThreadStarted,
@@ -322,7 +322,7 @@ func TestShim_ToolEvents(t *testing.T) {
 	go func() { _ = clientConn.Run(context.Background(), nc) }()
 
 	require.NoError(t, codexclient.Initialize(clientConn))
-	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("run a tool")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("run a tool"), codexclient.TurnOptions{}))
 
 	waitForMethods(t, nc, []string{
 		codexschema.MethodThreadStarted,
@@ -366,7 +366,7 @@ func TestShim_ToolEventErrored(t *testing.T) {
 	go func() { _ = clientConn.Run(context.Background(), nc) }()
 
 	require.NoError(t, codexclient.Initialize(clientConn))
-	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("run a tool")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("run a tool"), codexclient.TurnOptions{}))
 
 	waitForMethods(t, nc, []string{
 		codexschema.MethodThreadStarted,
@@ -393,7 +393,7 @@ func TestShim_TokenUsage(t *testing.T) {
 	go func() { _ = clientConn.Run(context.Background(), nc) }()
 
 	require.NoError(t, codexclient.Initialize(clientConn))
-	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("hi")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("hi"), codexclient.TurnOptions{}))
 
 	waitForMethods(t, nc, []string{
 		codexschema.MethodThreadStarted,
@@ -433,7 +433,7 @@ func TestShim_TokenUsageCumulative(t *testing.T) {
 	go func() { _ = clientConn.Run(context.Background(), nc) }()
 
 	require.NoError(t, codexclient.Initialize(clientConn))
-	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("first")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("first"), codexclient.TurnOptions{}))
 	waitForMethods(t, nc, []string{
 		codexschema.MethodThreadStarted,
 		codexschema.MethodTurnStarted,
@@ -441,7 +441,7 @@ func TestShim_TokenUsageCumulative(t *testing.T) {
 		codexschema.MethodTurnCompleted,
 	})
 
-	require.NoError(t, codexclient.StartTurn(clientConn, "thread-1", "/ws", []byte("second")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "thread-1", "/ws", []byte("second"), codexclient.TurnOptions{}))
 	waitForMethods(t, nc, []string{
 		codexschema.MethodThreadStarted,
 		codexschema.MethodTurnStarted,
@@ -614,7 +614,7 @@ func TestShim_ConformanceEventOrder(t *testing.T) {
 	go func() { _ = clientConn.Run(context.Background(), nc) }()
 
 	require.NoError(t, codexclient.Initialize(clientConn))
-	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("full turn")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("full turn"), codexclient.TurnOptions{}))
 
 	// Full §10.4 sequence: thread lifecycle → turn start → item events → usage → turn end.
 	waitForMethods(t, nc, []string{
@@ -654,7 +654,7 @@ func TestShim_KillPropagation(t *testing.T) {
 	go func() { _ = clientConn.Run(context.Background(), nc) }()
 
 	require.NoError(t, codexclient.Initialize(clientConn))
-	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("block")))
+	require.NoError(t, codexclient.StartTurn(clientConn, "", "/ws", []byte("block"), codexclient.TurnOptions{}))
 
 	select {
 	case <-blocked:
@@ -787,10 +787,10 @@ func TestShim_dynamicToolRoundTrip(t *testing.T) {
 	require.NoError(t, codexclient.Initialize(clientConn))
 	tid, err := codexclient.StartThread(clientConn, "/ws", []any{map[string]any{
 		"name": "linear_graphql", "description": "Linear GraphQL", "inputSchema": map[string]any{"type": "object"},
-	}})
+	}}, codexclient.ThreadOptions{})
 	require.NoError(t, err)
 	require.Equal(t, "thread-1", tid)
-	require.NoError(t, codexclient.StartTurn(clientConn, tid, "/ws", []byte("work the issue")))
+	require.NoError(t, codexclient.StartTurn(clientConn, tid, "/ws", []byte("work the issue"), codexclient.TurnOptions{}))
 
 	waitForMethods(t, c.notificationCollector, []string{
 		codexschema.MethodThreadStarted,

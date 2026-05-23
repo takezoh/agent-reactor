@@ -75,7 +75,9 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 		return scheduler.LiveSession{}, err
 	}
 
-	ids, err := initSession(lr.conn, lr.startDir, rendered, r.dynamicToolSpecs(), lr.sessionReady, lr.doneCh)
+	threadOpts := r.buildThreadOptions(issue)
+	turnOpts := r.buildTurnOptions()
+	ids, err := initSession(lr.conn, lr.startDir, rendered, r.dynamicToolSpecs(), threadOpts, turnOpts, lr.sessionReady, lr.doneCh)
 	if err != nil {
 		cancel()
 		<-lr.doneCh
@@ -196,7 +198,7 @@ func (r *Runner) shouldContinue(ctx context.Context, issue tracker.Issue, turn i
 
 // nextTurn issues the next turn on the same thread and awaits turn/started.
 func (r *Runner) nextTurn(workerCtx context.Context, wp *workerParams, turn int) error {
-	if err := codexclient.StartTurn(wp.conn, wp.ids.threadID, wp.startDir, []byte(continuationPrompt)); err != nil {
+	if err := codexclient.StartTurn(wp.conn, wp.ids.threadID, wp.startDir, []byte(continuationPrompt), r.buildTurnOptions()); err != nil {
 		return fmt.Errorf("agent: start turn %d: %w", turn, err)
 	}
 	timer := time.NewTimer(spawnTimeout)
@@ -317,15 +319,15 @@ func (r *Runner) launchConn(ctx context.Context, frameID, wsPath, issueID string
 	}, nil
 }
 
-func initSession(conn *codexclient.Conn, wsPath, rendered string, dynamicTools []any, sessionReady <-chan sessionIDs, doneCh <-chan struct{}) (sessionIDs, error) {
+func initSession(conn *codexclient.Conn, wsPath, rendered string, dynamicTools []any, threadOpts codexclient.ThreadOptions, turnOpts codexclient.TurnOptions, sessionReady <-chan sessionIDs, doneCh <-chan struct{}) (sessionIDs, error) {
 	if err := codexclient.Initialize(conn); err != nil {
 		return sessionIDs{}, fmt.Errorf("agent: initialize: %w", err)
 	}
-	threadID, err := codexclient.StartThread(conn, wsPath, dynamicTools)
+	threadID, err := codexclient.StartThread(conn, wsPath, dynamicTools, threadOpts)
 	if err != nil {
 		return sessionIDs{}, fmt.Errorf("agent: start thread: %w", err)
 	}
-	if err := codexclient.StartTurn(conn, threadID, wsPath, []byte(rendered)); err != nil {
+	if err := codexclient.StartTurn(conn, threadID, wsPath, []byte(rendered), turnOpts); err != nil {
 		return sessionIDs{}, fmt.Errorf("agent: start turn: %w", err)
 	}
 
@@ -339,6 +341,30 @@ func initSession(conn *codexclient.Conn, wsPath, rendered string, dynamicTools [
 		return sessionIDs{}, errors.New("agent: timeout waiting for session start")
 	case <-doneCh:
 		return sessionIDs{}, errors.New("agent: codex exited before session started")
+	}
+}
+
+// buildThreadOptions constructs ThreadOptions from the WORKFLOW.md codex config
+// and the current issue (SPEC §10.2).
+func (r *Runner) buildThreadOptions(issue tracker.Issue) codexclient.ThreadOptions {
+	opts := codexclient.ThreadOptions{
+		ApprovalPolicy: r.Cfg.Codex.ApprovalPolicy,
+		SandboxMode:    r.Cfg.Codex.ThreadSandbox,
+	}
+	switch {
+	case issue.Identifier != "" && issue.Title != "":
+		opts.ServiceName = issue.Identifier + ": " + issue.Title
+	case issue.Identifier != "":
+		opts.ServiceName = issue.Identifier
+	}
+	return opts
+}
+
+// buildTurnOptions constructs TurnOptions from the WORKFLOW.md codex config (SPEC §10.2).
+func (r *Runner) buildTurnOptions() codexclient.TurnOptions {
+	return codexclient.TurnOptions{
+		ApprovalPolicy: r.Cfg.Codex.ApprovalPolicy,
+		SandboxPolicy:  r.Cfg.Codex.TurnSandboxPolicy,
 	}
 }
 
