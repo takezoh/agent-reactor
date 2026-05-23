@@ -15,12 +15,34 @@ type CandidateSource interface {
 	Candidates(ctx context.Context) ([]tracker.Issue, error)
 }
 
+// IssueRevalidator re-fetches current issue state before spawn (SPEC §16.4).
+// Satisfied by *orchestrator/tracker.Tracker via its RefreshStates method.
+type IssueRevalidator interface {
+	RefreshStates(ctx context.Context, ids []string) ([]tracker.Issue, error)
+}
+
 // SpawnFunc spawns a worker for the given issue and returns its session (injected by issue 013).
 type SpawnFunc func(ctx context.Context, issue tracker.Issue, attempt int) (LiveSession, error)
 
+// revalidateIssue re-fetches a single issue's current state from the tracker (SPEC §16.4).
+// Returns (nil, nil) when the issue is not found; (nil, err) on fetch failure.
+func revalidateIssue(ctx context.Context, rv IssueRevalidator, issueID string) (*tracker.Issue, error) {
+	issues, err := rv.RefreshStates(ctx, []string{issueID})
+	if err != nil {
+		return nil, err
+	}
+	for i := range issues {
+		if issues[i].ID == issueID {
+			return &issues[i], nil
+		}
+	}
+	return nil, nil
+}
+
 // dispatchOnce performs one dispatch pass: filter eligible, sort, allocate slots (SPEC §8.1–§8.3).
 // It consumes up to the available global and per-state slot counts.
-func dispatchOnce(ctx context.Context, cands []tracker.Issue, st *State, clk Clock, fireCh chan<- retryFireReq, spawn SpawnFunc, cfg wfconfig.Config) {
+// revalidator may be nil; when non-nil each issue is re-verified immediately before spawn (SPEC §16.4).
+func dispatchOnce(ctx context.Context, cands []tracker.Issue, st *State, clk Clock, fireCh chan<- retryFireReq, spawn SpawnFunc, cfg wfconfig.Config, revalidator IssueRevalidator) {
 	snap := st.Snapshot()
 	active := normSet(cfg.Tracker.ActiveStates)
 	terminal := normSet(cfg.Tracker.TerminalStates)
@@ -56,6 +78,26 @@ func dispatchOnce(ctx context.Context, cands []tracker.Issue, st *State, clk Clo
 		if err := st.Claim(iss, 0); err != nil {
 			// Duplicate claim — already claimed elsewhere; skip.
 			continue
+		}
+
+		// Re-verify issue state immediately before spawn (SPEC §16.4).
+		if revalidator != nil {
+			fresh, err := revalidateIssue(ctx, revalidator, iss.ID)
+			if err != nil {
+				slog.Warn("dispatch: revalidation error, skipping", "issue_id", iss.ID, "err", err)
+				st.ReleaseClaim(iss.ID)
+				continue
+			}
+			if fresh == nil {
+				slog.Info("dispatch: issue missing during revalidation, skipping", "issue_id", iss.ID)
+				st.ReleaseClaim(iss.ID)
+				continue
+			}
+			if norm := strings.ToLower(fresh.State); !active[norm] || terminal[norm] {
+				slog.Info("dispatch: issue no longer active, skipping", "issue_id", iss.ID, "state", fresh.State)
+				st.ReleaseClaim(iss.ID)
+				continue
+			}
 		}
 
 		session, err := spawn(ctx, iss, 0)

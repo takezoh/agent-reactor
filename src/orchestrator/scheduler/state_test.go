@@ -544,10 +544,9 @@ func TestIncrementTurnCount_ResetOnRespawn(t *testing.T) {
 	}
 	s.WorkerExitNormal("id41")
 
-	// Attempt 2: TurnCount must not carry over from attempt 1.
-	if err := s.Dispatch(issue, 2, LiveSession{}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	// Attempt 2: re-dispatch via the RetryQueued path (claimed is retained after
+	// WorkerExitNormal per SPEC §7.1, so Dispatch would be rejected as duplicate).
+	redispatchRetry(t, s, "id41", "PROJ-41", issue, 2)
 	s.IncrementTurnCount("id41")
 	snap := s.Snapshot()
 	if got := snap.Running["id41"].TurnCount; got != 1 {

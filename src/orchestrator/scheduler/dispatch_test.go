@@ -3,12 +3,39 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/takezoh/agent-roost/orchestrator/wfconfig"
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
+
+// fakeRevalidator implements IssueRevalidator for dispatch tests.
+type fakeRevalidator struct {
+	mu      sync.Mutex
+	issues  []tracker.Issue
+	callErr error
+	calls   int
+}
+
+func (f *fakeRevalidator) RefreshStates(_ context.Context, ids []string) ([]tracker.Issue, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.callErr != nil {
+		return nil, f.callErr
+	}
+	var out []tracker.Issue
+	for _, iss := range f.issues {
+		for _, id := range ids {
+			if iss.ID == id {
+				out = append(out, iss)
+			}
+		}
+	}
+	return out, nil
+}
 
 func dispCfg() wfconfig.Config {
 	return wfconfig.Config{
@@ -49,7 +76,7 @@ func TestDispatchOnce_EligibleIssueSpawned(t *testing.T) {
 	fireCh := make(chan retryFireReq, 4)
 
 	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg())
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), nil)
 
 	if spawn.callCount() != 1 {
 		t.Errorf("want 1 spawn, got %d", spawn.callCount())
@@ -75,7 +102,7 @@ func TestDispatchOnce_GlobalSlotsCap(t *testing.T) {
 	}
 	cfg := dispCfg()
 	cfg.Agent.MaxConcurrentAgents = 2
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, cfg)
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, cfg, nil)
 
 	if spawn.callCount() != 2 {
 		t.Errorf("want 2 spawns (global cap), got %d", spawn.callCount())
@@ -96,7 +123,7 @@ func TestDispatchOnce_PerStateSlotsCap(t *testing.T) {
 	}
 	cfg := dispCfg()
 	cfg.Agent.MaxConcurrentAgentsByState = map[string]int{"in progress": 1}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, cfg)
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, cfg, nil)
 
 	snap := st.Snapshot()
 	// "In Progress" cap=1, "Todo" uses global (3) — so 1 + 1 = 2 total
@@ -116,7 +143,7 @@ func TestDispatchOnce_SpawnFailSchedulesRetry(t *testing.T) {
 	fireCh := make(chan retryFireReq, 4)
 
 	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg())
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), nil)
 
 	snap := st.Snapshot()
 	if _, ok := snap.Running["1"]; ok {
@@ -130,6 +157,120 @@ func TestDispatchOnce_SpawnFailSchedulesRetry(t *testing.T) {
 	}
 }
 
+// --- Revalidation tests (SPEC §16.4) ---
+
+// TestDispatchOnce_RevalidationActiveProceeds verifies that an issue confirmed active is spawned.
+func TestDispatchOnce_RevalidationActiveProceeds(t *testing.T) {
+	st := NewState()
+	spawn := &fakeSpawn{}
+	clk := newFakeClock(time.Now())
+	fireCh := make(chan retryFireReq, 4)
+	rv := &fakeRevalidator{issues: []tracker.Issue{makeIssue("1", "In Progress")}}
+
+	cands := []tracker.Issue{makeIssue("1", "In Progress")}
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), rv)
+
+	if spawn.callCount() != 1 {
+		t.Errorf("want 1 spawn for active issue, got %d", spawn.callCount())
+	}
+	if rv.calls != 1 {
+		t.Errorf("want 1 revalidation call, got %d", rv.calls)
+	}
+}
+
+// TestDispatchOnce_RevalidationStaleSkipped verifies a stale (non-active) issue is skipped.
+func TestDispatchOnce_RevalidationStaleSkipped(t *testing.T) {
+	st := NewState()
+	spawn := &fakeSpawn{}
+	clk := newFakeClock(time.Now())
+	fireCh := make(chan retryFireReq, 4)
+	// Issue transitioned to "Done" between candidate fetch and dispatch.
+	rv := &fakeRevalidator{issues: []tracker.Issue{makeIssue("1", "Done")}}
+
+	cands := []tracker.Issue{makeIssue("1", "In Progress")}
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), rv)
+
+	if spawn.callCount() != 0 {
+		t.Errorf("want 0 spawns for stale issue, got %d", spawn.callCount())
+	}
+	snap := st.Snapshot()
+	if _, ok := snap.Claimed["1"]; ok {
+		t.Error("want claim released after stale revalidation")
+	}
+}
+
+// TestDispatchOnce_RevalidationMissingSkipped verifies a missing issue is skipped.
+func TestDispatchOnce_RevalidationMissingSkipped(t *testing.T) {
+	st := NewState()
+	spawn := &fakeSpawn{}
+	clk := newFakeClock(time.Now())
+	fireCh := make(chan retryFireReq, 4)
+	// Empty response — issue not found.
+	rv := &fakeRevalidator{issues: []tracker.Issue{}}
+
+	cands := []tracker.Issue{makeIssue("1", "In Progress")}
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), rv)
+
+	if spawn.callCount() != 0 {
+		t.Errorf("want 0 spawns for missing issue, got %d", spawn.callCount())
+	}
+	snap := st.Snapshot()
+	if _, ok := snap.Claimed["1"]; ok {
+		t.Error("want claim released for missing issue")
+	}
+}
+
+// TestDispatchOnce_RevalidationErrorSkipped verifies a revalidation error causes skip and claim release.
+func TestDispatchOnce_RevalidationErrorSkipped(t *testing.T) {
+	st := NewState()
+	spawn := &fakeSpawn{}
+	clk := newFakeClock(time.Now())
+	fireCh := make(chan retryFireReq, 4)
+	rv := &fakeRevalidator{callErr: errors.New("tracker unavailable")}
+
+	cands := []tracker.Issue{makeIssue("1", "In Progress")}
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), rv)
+
+	if spawn.callCount() != 0 {
+		t.Errorf("want 0 spawns on revalidation error, got %d", spawn.callCount())
+	}
+	snap := st.Snapshot()
+	if _, ok := snap.Claimed["1"]; ok {
+		t.Error("want claim released after revalidation error")
+	}
+}
+
+// TestDispatchOnce_RevalidationPartial verifies only revalidated-active issues are spawned
+// when multiple candidates exist but some are stale.
+func TestDispatchOnce_RevalidationPartial(t *testing.T) {
+	st := NewState()
+	spawn := &fakeSpawn{}
+	clk := newFakeClock(time.Now())
+	fireCh := make(chan retryFireReq, 4)
+	// Issue "2" went terminal; issue "1" is still active.
+	rv := &fakeRevalidator{issues: []tracker.Issue{
+		makeIssue("1", "In Progress"),
+		makeIssue("2", "Done"),
+	}}
+
+	cands := []tracker.Issue{
+		makeIssue("1", "In Progress"),
+		makeIssue("2", "In Progress"),
+	}
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), rv)
+
+	if spawn.callCount() != 1 {
+		t.Errorf("want 1 spawn (only active issue), got %d", spawn.callCount())
+	}
+	snap := st.Snapshot()
+	if _, ok := snap.Running["1"]; !ok {
+		t.Error("want issue 1 running")
+	}
+	if _, ok := snap.Claimed["2"]; ok {
+		t.Error("want claim released for stale issue 2")
+	}
+}
+
 func TestDispatchOnce_FirstRunAttemptIsZero(t *testing.T) {
 	st := NewState()
 	spawn := &fakeSpawn{}
@@ -137,7 +278,7 @@ func TestDispatchOnce_FirstRunAttemptIsZero(t *testing.T) {
 	fireCh := make(chan retryFireReq, 4)
 
 	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg())
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), nil)
 
 	if spawn.callCount() != 1 {
 		t.Fatalf("want 1 spawn, got %d", spawn.callCount())
@@ -161,7 +302,7 @@ func TestDispatchOnce_SpawnFail_FirstBackoff10s(t *testing.T) {
 
 	cfg := dispCfg()
 	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, cfg)
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, cfg, nil)
 
 	snap := st.Snapshot()
 	entry, ok := snap.RetryAttempts["1"]
@@ -246,7 +387,7 @@ func TestDispatchOnce_RetryQueuedNotRedispatched(t *testing.T) {
 
 	// Simulate a poll tick while the issue is still in the retry window.
 	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg())
+	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), nil)
 
 	// The spawn must NOT be called: issue is still claimed (RetryQueued).
 	if spawn.callCount() != 0 {

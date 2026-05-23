@@ -247,7 +247,7 @@ func (s *Scheduler) tickOnce(ctx context.Context) {
 		return
 	}
 
-	dispatchOnce(ctx, cands, s.state, s.clock, s.retryFire, s.deps.Spawn, cfg)
+	dispatchOnce(ctx, cands, s.state, s.clock, s.retryFire, s.deps.Spawn, cfg, s.tracker)
 }
 
 // reloadConfig reloads WORKFLOW.md and resolves config (§6.2).
