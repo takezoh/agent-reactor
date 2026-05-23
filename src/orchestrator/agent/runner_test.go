@@ -35,6 +35,7 @@ type fakeServer struct {
 	hangTurn         bool // if true, starts the session but never completes the turn
 	mu               sync.Mutex
 	lastCWD          string          // cwd from the most recent turn/start notification
+	lastMessage      string          // rendered prompt from the most recent turn/start notification
 	lastDynamicTools json.RawMessage // params from the most recent thread/start request
 	lastThreadParams json.RawMessage // full params from the most recent thread/start request
 	lastTurnParams   json.RawMessage // full params from the most recent turn/start notification
@@ -45,13 +46,15 @@ func (f *fakeServer) OnNotification(method string, params json.RawMessage) {
 		return
 	}
 
-	// Capture the cwd field and full params from the notification for test assertions.
+	// Capture cwd, rendered prompt, and full params for test assertions.
 	var p struct {
-		CWD string `json:"cwd"`
+		CWD     string `json:"cwd"`
+		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(params, &p); err == nil {
 		f.mu.Lock()
 		f.lastCWD = p.CWD
+		f.lastMessage = p.Message
 		f.mu.Unlock()
 	}
 	f.mu.Lock()
@@ -76,6 +79,12 @@ func (f *fakeServer) getLastCWD() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.lastCWD
+}
+
+func (f *fakeServer) getLastMessage() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastMessage
 }
 
 func (f *fakeServer) getLastThreadParams() json.RawMessage {
@@ -698,6 +707,72 @@ func TestSpawn_noDynamicToolsWhenLinearUnconfigured(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Empty(t, threadStartDynamicTools(t, fs))
+}
+
+// TestCurrentTemplate_loaderTakesPrecedence verifies that PromptLoader overrides
+// the static PromptTemplate field when both are set (SPEC §6.2).
+func TestCurrentTemplate_loaderTakesPrecedence(t *testing.T) {
+	r := &Runner{
+		PromptTemplate: "static template",
+		PromptLoader:   func() string { return "dynamic template" },
+	}
+	if got := r.currentTemplate(); got != "dynamic template" {
+		t.Errorf("want %q, got %q", "dynamic template", got)
+	}
+}
+
+// TestCurrentTemplate_fallbackToStatic verifies that PromptTemplate is used when
+// PromptLoader is nil (backward-compatible path used by tests and legacy callers).
+func TestCurrentTemplate_fallbackToStatic(t *testing.T) {
+	r := &Runner{
+		PromptTemplate: "static template",
+	}
+	if got := r.currentTemplate(); got != "static template" {
+		t.Errorf("want %q, got %q", "static template", got)
+	}
+}
+
+// TestSpawn_promptLoaderUsedPerDispatch verifies that when PromptLoader is set,
+// each spawnWith call renders with the latest value from the loader (SPEC §6.2).
+func TestSpawn_promptLoaderUsedPerDispatch(t *testing.T) {
+	var mu sync.Mutex
+	current := "first template {{ issue.identifier }}"
+	loader := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return current
+	}
+
+	wsRoot := t.TempDir()
+	cfg := wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
+		Codex:     wfconfig.CodexConfig{Command: "unused-in-test"},
+	}
+	fs := &fakeServer{}
+	r := &Runner{
+		Workspace:    workspace.New(cfg),
+		Cfg:          cfg,
+		PromptLoader: loader,
+		Dispatcher:   agentlaunch.DirectDispatcher{},
+		proc:         makeFakeProc(fs),
+	}
+
+	events := collectEvents(t, r, tracker.Issue{Identifier: "PROJ-PL1"})
+	require.GreaterOrEqual(t, len(events), 2)
+	assert.Equal(t, EventTurnCompleted, events[1].Kind)
+	assert.Equal(t, "first template PROJ-PL1", fs.getLastMessage())
+
+	// Swap the loader value; the next dispatch must pick it up immediately.
+	mu.Lock()
+	current = "second template {{ issue.identifier }}"
+	mu.Unlock()
+
+	fs2 := &fakeServer{}
+	r.proc = makeFakeProc(fs2)
+	events2 := collectEvents(t, r, tracker.Issue{Identifier: "PROJ-PL2"})
+	require.GreaterOrEqual(t, len(events2), 2)
+	assert.Equal(t, EventTurnCompleted, events2[1].Kind)
+	assert.Equal(t, "second template PROJ-PL2", fs2.getLastMessage())
 }
 
 // ---- §10.2 approval/sandbox policy and serviceName tests ----

@@ -157,7 +157,7 @@ func schedCfg() wfconfig.Config {
 func TestRunGracefulShutdown(t *testing.T) {
 	path := writeWorkflow(t)
 	cfg := wfconfig.Config{Polling: wfconfig.PollingConfig{IntervalMS: 1}}
-	s := New(path, cfg, Deps{})
+	s := New(path, cfg, "", Deps{})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
@@ -179,7 +179,7 @@ func TestRunGracefulShutdown(t *testing.T) {
 func TestRunContinuesAfterTickPreflightFailure(t *testing.T) {
 	path := writeWorkflow(t)
 	cfg := wfconfig.Config{Polling: wfconfig.PollingConfig{IntervalMS: 1}}
-	s := New(path, cfg, Deps{})
+	s := New(path, cfg, "", Deps{})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
@@ -210,7 +210,7 @@ func TestTickDispatchesEligibleIssues(t *testing.T) {
 	spawn := &fakeSpawn{}
 	clk := newFakeClock(time.Now())
 
-	s := New("", schedCfg(), minDeps(tr, spawn.fn, clk))
+	s := New("", schedCfg(), "", minDeps(tr, spawn.fn, clk))
 	s.workflowPath = writeWorkflow(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -271,8 +271,8 @@ func writeFrontMatter(t *testing.T, path string, content string) {
 // TestApplyIntervalUpdatesOnChange verifies that applyInterval resets the ticker
 // when lastGood has a different Polling.IntervalMS than s.interval.
 func TestApplyIntervalUpdatesOnChange(t *testing.T) {
-	path := writeWorkflow(t)           // validFrontMatter; default interval = 30000ms
-	s := New(path, schedCfg(), Deps{}) // schedCfg has interval 1ms
+	path := writeWorkflow(t)               // validFrontMatter; default interval = 30000ms
+	s := New(path, schedCfg(), "", Deps{}) // schedCfg has interval 1ms
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -302,7 +302,7 @@ func TestDispatchGatingOnBadReload(t *testing.T) {
 		refreshIssues: []ptrackerv.Issue{{ID: "1", Identifier: "P-1", State: "Done"}},
 	}
 	ws := &fakeWorkspace{}
-	s := New(path, schedCfg(), Deps{
+	s := New(path, schedCfg(), "", Deps{
 		Tracker:        tr,
 		Spawn:          spawn.fn,
 		Clock:          newFakeClock(time.Now()),
@@ -338,7 +338,7 @@ func TestDispatchResumesAfterRecovery(t *testing.T) {
 		{ID: "2", Identifier: "P-2", Title: "issue two", State: "In Progress"},
 	}}
 	spawn := &fakeSpawn{}
-	s := New(path, schedCfg(), minDeps(tr, spawn.fn, newFakeClock(time.Now())))
+	s := New(path, schedCfg(), "", minDeps(tr, spawn.fn, newFakeClock(time.Now())))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -365,7 +365,7 @@ func TestDegradedWarnEmittedOnce(t *testing.T) {
 	cap := installWarnCapture(t)
 
 	path := writeWorkflow(t)
-	s := New(path, schedCfg(), Deps{})
+	s := New(path, schedCfg(), "", Deps{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -400,7 +400,7 @@ func TestTickSpawnFailSchedulesRetry(t *testing.T) {
 	spawn := &fakeSpawn{err: context.DeadlineExceeded}
 	clk := newFakeClock(time.Now())
 
-	s := New("", schedCfg(), minDeps(tr, spawn.fn, clk))
+	s := New("", schedCfg(), "", minDeps(tr, spawn.fn, clk))
 	s.workflowPath = writeWorkflow(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -413,6 +413,71 @@ func TestTickSpawnFailSchedulesRetry(t *testing.T) {
 	}
 	if _, ok := snap.Claimed["1"]; ok {
 		t.Error("want claim released after spawn failure")
+	}
+}
+
+// TestReloadConfig_updatesLastGoodTemplate verifies that reloadConfig picks up
+// WORKFLOW.md body changes and stores them in lastGoodTemplate (SPEC §6.2).
+func TestReloadConfig_updatesLastGoodTemplate(t *testing.T) {
+	// Write WORKFLOW.md with initial body.
+	path := filepath.Join(t.TempDir(), "WORKFLOW.md")
+	const initialBody = "Work on {{ issue.identifier }}."
+	content := validFrontMatter + initialBody
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(path, schedCfg(), "", Deps{})
+
+	// First reload should capture the initial body.
+	_, ok := s.reloadConfig()
+	if !ok {
+		t.Fatal("reloadConfig should succeed on valid workflow")
+	}
+	if s.lastGoodTemplate != initialBody {
+		t.Errorf("want lastGoodTemplate %q, got %q", initialBody, s.lastGoodTemplate)
+	}
+
+	// Edit the body in-place; a second reload must reflect the change.
+	const updatedBody = "Updated: work on {{ issue.identifier }} now."
+	if err := os.WriteFile(path, []byte(validFrontMatter+updatedBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, ok = s.reloadConfig()
+	if !ok {
+		t.Fatal("reloadConfig should succeed after body update")
+	}
+	if s.lastGoodTemplate != updatedBody {
+		t.Errorf("want updated lastGoodTemplate %q, got %q", updatedBody, s.lastGoodTemplate)
+	}
+}
+
+// TestLastGoodTemplate_initialValue verifies that New seeds lastGoodTemplate from tmpl.
+func TestLastGoodTemplate_initialValue(t *testing.T) {
+	const initial = "initial prompt body"
+	s := New("", schedCfg(), initial, Deps{})
+	if got := s.LastGoodTemplate(); got != initial {
+		t.Errorf("want %q, got %q", initial, got)
+	}
+}
+
+// TestLastGoodTemplate_notOverwrittenOnBadReload verifies that a failed reload
+// does not clear the last-known-good template.
+func TestLastGoodTemplate_notOverwrittenOnBadReload(t *testing.T) {
+	path := writeWorkflow(t)
+	const initial = "stable template"
+	s := New(path, schedCfg(), initial, Deps{})
+
+	// Corrupt the workflow; reloadConfig must return the last-known-good and
+	// must not zero out lastGoodTemplate.
+	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slug: test-proj\n", ""))
+	_, ok := s.reloadConfig()
+	if ok {
+		t.Fatal("want reloadConfig to fail on invalid workflow")
+	}
+	if got := s.LastGoodTemplate(); got != initial {
+		t.Errorf("bad reload must not overwrite lastGoodTemplate: want %q, got %q", initial, got)
 	}
 }
 
@@ -429,7 +494,7 @@ func TestTickRevalidationSkipsStaleIssue(t *testing.T) {
 		refreshIssues: []ptrackerv.Issue{{ID: "1", Identifier: "P-1", Title: "issue", State: "Done"}},
 	}
 
-	s := New("", schedCfg(), Deps{
+	s := New("", schedCfg(), "", Deps{
 		Tracker:        tr,
 		Spawn:          spawn.fn,
 		Clock:          clk,
@@ -456,7 +521,7 @@ func TestHandleCodexActivity_TurnCompleted_IncrementsTurnCount(t *testing.T) {
 	issue := ptrackerv.Issue{ID: "tc-1", Identifier: "TC-1", Title: "t", State: "In Progress"}
 	session := LiveSession{SessionID: "s1"}
 
-	s := New("", schedCfg(), Deps{})
+	s := New("", schedCfg(), "", Deps{})
 	if err := s.state.Dispatch(issue, 1, session, time.Now()); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
@@ -486,7 +551,7 @@ func TestHandleCodexActivity_NonTurnCompleted_DoesNotIncrementTurnCount(t *testi
 	issue := ptrackerv.Issue{ID: "tc-2", Identifier: "TC-2", Title: "t", State: "In Progress"}
 	session := LiveSession{SessionID: "s2"}
 
-	s := New("", schedCfg(), Deps{})
+	s := New("", schedCfg(), "", Deps{})
 	if err := s.state.Dispatch(issue, 1, session, time.Now()); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}

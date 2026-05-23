@@ -17,7 +17,7 @@ func TestSPEC_17_1_LastKnownGoodOnInvalidReload(t *testing.T) {
 		{ID: "1", Identifier: "P-1", Title: "issue", State: "In Progress"},
 	}}
 	spawn := &fakeSpawn{}
-	s := New(path, schedCfg(), minDeps(tr, spawn.fn, newFakeClock(time.Now())))
+	s := New(path, schedCfg(), "", minDeps(tr, spawn.fn, newFakeClock(time.Now())))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -81,7 +81,7 @@ func TestSPEC_7_1_RetryQueuedStaysClaimed(t *testing.T) {
 		{ID: "1", Identifier: "P-1", Title: "issue", State: "In Progress"},
 	}}
 	spawn := &fakeSpawn{}
-	s := New(path, schedCfg(), minDeps(tr, spawn.fn, newFakeClock(time.Now())))
+	s := New(path, schedCfg(), "", minDeps(tr, spawn.fn, newFakeClock(time.Now())))
 	ctx := context.Background()
 
 	// Initial tick dispatches the issue.
