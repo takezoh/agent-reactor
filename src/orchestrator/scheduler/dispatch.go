@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -9,6 +10,8 @@ import (
 	"github.com/takezoh/agent-roost/orchestrator/wfconfig"
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
+
+var errNoSlots = errors.New("no available orchestrator slots")
 
 // CandidateSource abstracts the tracker for testability.
 type CandidateSource interface {
@@ -152,8 +155,9 @@ func handleRetryFire(ctx context.Context, req retryFireReq, tr CandidateSource, 
 	snap := st.Snapshot()
 	if availableGlobalSlots(snap, cfg) <= 0 || availablePerStateSlots(found.State, snap, cfg) <= 0 {
 		slog.Info("retry-fire: no available orchestrator slots, requeuing", "issue_id", req.IssueID)
-		entry := RetryEntry{IssueID: req.IssueID, Identifier: found.Identifier, Attempt: req.Attempt, Kind: RetryBackoff}
-		scheduleRetry(st, clk, fireCh, ctx, entry, continuationDelay)
+		nextAttempt := req.Attempt + 1
+		entry := RetryEntry{IssueID: req.IssueID, Identifier: found.Identifier, Attempt: nextAttempt, Kind: RetryBackoff, Err: errNoSlots}
+		scheduleRetry(st, clk, fireCh, ctx, entry, backoffDelay(nextAttempt, cfg))
 		return
 	}
 
