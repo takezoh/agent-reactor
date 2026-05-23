@@ -459,3 +459,67 @@ func TestProjectState_CodexTotals(t *testing.T) {
 		t.Errorf("seconds_running want 1834.2, got %v", totals["seconds_running"])
 	}
 }
+
+// TestStateEndpoint_TurnCount verifies that the running entry reflects the
+// TurnCount from RunAttempt (SPEC §4.1.6 / DEV-179).
+func TestStateEndpoint_TurnCount(t *testing.T) {
+	sched := &fakeScheduler{snap: scheduler.StateSnapshot{
+		Running: map[string]scheduler.RunAttempt{
+			"id-tc": {
+				Issue:     ptrackerv.Issue{ID: "id-tc", Identifier: "TC-1", State: "In Progress"},
+				Attempt:   1,
+				TurnCount: 3,
+			},
+		},
+		Claimed:       map[string]struct{}{},
+		RetryAttempts: map[string]scheduler.RetryEntry{},
+	}}
+	h := newMux(sched)
+	status, body := getBody(t, h, http.MethodGet, "/api/v1/state")
+	if status != http.StatusOK {
+		t.Fatalf("status %d, body: %s", status, body)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	running := resp["running"].([]any)
+	if len(running) != 1 {
+		t.Fatalf("running len want 1, got %d", len(running))
+	}
+	entry := running[0].(map[string]any)
+	if entry["turn_count"].(float64) != 3 {
+		t.Errorf("turn_count want 3, got %v", entry["turn_count"])
+	}
+}
+
+// TestIssueEndpoint_TurnCount verifies that the /api/v1/{identifier} running
+// detail also reflects the correct TurnCount (SPEC §4.1.6 / DEV-179).
+func TestIssueEndpoint_TurnCount(t *testing.T) {
+	sched := &fakeScheduler{snap: scheduler.StateSnapshot{
+		Running: map[string]scheduler.RunAttempt{
+			"id-tc2": {
+				Issue:     ptrackerv.Issue{ID: "id-tc2", Identifier: "TC-2", State: "In Progress"},
+				Attempt:   1,
+				TurnCount: 5,
+			},
+		},
+		Claimed:       map[string]struct{}{},
+		RetryAttempts: map[string]scheduler.RetryEntry{},
+	}}
+	h := newMux(sched)
+	status, body := getBody(t, h, http.MethodGet, "/api/v1/TC-2")
+	if status != http.StatusOK {
+		t.Fatalf("status %d, body: %s", status, body)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	running := resp["running"].(map[string]any)
+	if running["turn_count"].(float64) != 5 {
+		t.Errorf("running.turn_count want 5, got %v", running["turn_count"])
+	}
+}

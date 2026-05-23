@@ -103,6 +103,7 @@ func (h *turnHandler) OnNotification(method string, params json.RawMessage) {
 			d := now.Sub(started)
 			act.TurnDuration = &d
 		}
+		act.TurnCompleted = true
 		select {
 		case h.turnDone <- turnResult{}:
 		default:
@@ -170,8 +171,26 @@ func (h *turnHandler) OnServerRequest(id int64, method string, params json.RawMe
 		_ = h.conn.Reply(id, map[string]any{"decision": codexschema.ApprovalAcceptForSession})
 	case codexschema.MethodItemToolCall:
 		h.handleToolCall(id, params)
+	case codexschema.MethodItemToolRequestUserInput:
+		h.handleUserInputRequired(id)
 	default:
 		_ = h.conn.ReplyError(id, "unsupported")
+	}
+}
+
+// SPEC §10.5: automated orchestration cannot provide user input; hard-fail the turn.
+func (h *turnHandler) handleUserInputRequired(id int64) {
+	_ = h.conn.ReplyError(id, "user input required: automated orchestration cannot provide user input")
+	if h.report != nil {
+		h.report(scheduler.CodexActivity{
+			IssueID:   h.issueID,
+			Event:     "turn_input_required",
+			Timestamp: time.Now(),
+		})
+	}
+	select {
+	case h.turnDone <- turnResult{failed: true, err: errors.New("user input required")}:
+	default:
 	}
 }
 

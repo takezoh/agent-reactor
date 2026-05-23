@@ -70,7 +70,7 @@ func projectRunningEntry(run scheduler.RunAttempt) runningEntry {
 		IssueIdentifier: run.Issue.Identifier,
 		State:           run.Issue.State,
 		SessionID:       run.Session.SessionID,
-		TurnCount:       0, // turn counter not tracked; shape maintained
+		TurnCount:       run.TurnCount,
 		LastEvent:       run.LastCodexEvent,
 		LastMessage:     run.LastCodexMessage,
 		StartedAt:       formatTime(run.StartedAt),
@@ -141,7 +141,7 @@ func projectRunningIssue(run scheduler.RunAttempt, workspaceRoot string) *issueR
 		},
 		Running: &runningDetail{
 			SessionID:   run.Session.SessionID,
-			TurnCount:   0,
+			TurnCount:   run.TurnCount,
 			State:       run.Issue.State,
 			StartedAt:   formatTime(run.StartedAt),
 			LastEvent:   run.LastCodexEvent,

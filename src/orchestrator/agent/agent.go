@@ -83,6 +83,8 @@ func (r *Runner) Spawn(ctx context.Context, issue tracker.Issue, attempt int) (s
 	return r.spawnWith(ctx, issue, attempt, func(e Event) {
 		slog.Info("agent event",
 			"kind", e.Kind,
+			"issue_id", issue.ID,
+			"issue_identifier", issue.Identifier,
 			"session_id", e.SessionID,
 			"thread_id", e.ThreadID,
 			"turn_id", e.TurnID,

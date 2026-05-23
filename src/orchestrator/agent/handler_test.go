@@ -21,14 +21,19 @@ import (
 
 // --- Activity tracking tests (§13.5 / §8.5) ---
 
-func TestTurnHandler_ActivityReportedOnEveryNotification(t *testing.T) {
-	var got []scheduler.CodexActivity
-	h := &turnHandler{
-		issueID:      "iss-1",
+func newTestHandler(t *testing.T, issueID string, got *[]scheduler.CodexActivity) *turnHandler {
+	t.Helper()
+	return &turnHandler{
+		issueID:      issueID,
 		sessionReady: make(chan sessionIDs, 1),
 		turnDone:     make(chan turnResult, 1),
-		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
+		report:       func(a scheduler.CodexActivity) { *got = append(*got, a) },
 	}
+}
+
+func TestTurnHandler_ActivityReportedOnEveryNotification(t *testing.T) {
+	var got []scheduler.CodexActivity
+	h := newTestHandler(t, "iss-1", &got)
 
 	before := time.Now()
 	h.OnNotification("some/method", nil)
@@ -47,12 +52,7 @@ func TestTurnHandler_ActivityReportedOnEveryNotification(t *testing.T) {
 // the delta-style "last" payload must be ignored; only "total" (absolute) is used.
 func TestTurnHandler_UsageUsesTotalIgnoresLastPayload(t *testing.T) {
 	var got []scheduler.CodexActivity
-	h := &turnHandler{
-		issueID:      "iss-2",
-		sessionReady: make(chan sessionIDs, 1),
-		turnDone:     make(chan turnResult, 1),
-		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
-	}
+	h := newTestHandler(t, "iss-2", &got)
 
 	params, _ := json.Marshal(map[string]any{
 		"threadId": "thread1",
@@ -82,12 +82,7 @@ func TestTurnHandler_UsageUsesTotalIgnoresLastPayload(t *testing.T) {
 
 func TestTurnHandler_RateLimitReported(t *testing.T) {
 	var got []scheduler.CodexActivity
-	h := &turnHandler{
-		issueID:      "iss-3",
-		sessionReady: make(chan sessionIDs, 1),
-		turnDone:     make(chan turnResult, 1),
-		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
-	}
+	h := newTestHandler(t, "iss-3", &got)
 
 	resetsAt := int64(1234567890000)
 	params, _ := json.Marshal(map[string]any{
@@ -109,12 +104,7 @@ func TestTurnHandler_RateLimitReported(t *testing.T) {
 
 func TestTurnHandler_TurnDurationTracked(t *testing.T) {
 	var got []scheduler.CodexActivity
-	h := &turnHandler{
-		issueID:      "iss-4",
-		sessionReady: make(chan sessionIDs, 1),
-		turnDone:     make(chan turnResult, 1),
-		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
-	}
+	h := newTestHandler(t, "iss-4", &got)
 
 	params, _ := json.Marshal(map[string]any{"turnId": "t1"})
 	h.OnNotification("turn/started", params)
@@ -127,14 +117,23 @@ func TestTurnHandler_TurnDurationTracked(t *testing.T) {
 	require.Greater(t, *got[1].TurnDuration, time.Duration(0))
 }
 
+func TestTurnHandler_TurnCompletedFlag(t *testing.T) {
+	var got []scheduler.CodexActivity
+	h := newTestHandler(t, "iss-7", &got)
+
+	h.OnNotification("item/agentMessage/delta", nil)
+	require.False(t, got[0].TurnCompleted, "non-turn/completed event must not set TurnCompleted")
+
+	h.OnNotification("turn/started", nil)
+	require.False(t, got[1].TurnCompleted, "turn/started must not set TurnCompleted")
+
+	h.OnNotification("turn/completed", nil)
+	require.True(t, got[2].TurnCompleted, "turn/completed must set TurnCompleted=true")
+}
+
 func TestTurnHandler_AgentMessageDeltaRecorded(t *testing.T) {
 	var got []scheduler.CodexActivity
-	h := &turnHandler{
-		issueID:      "iss-5",
-		sessionReady: make(chan sessionIDs, 1),
-		turnDone:     make(chan turnResult, 1),
-		report:       func(a scheduler.CodexActivity) { got = append(got, a) },
-	}
+	h := newTestHandler(t, "iss-5", &got)
 
 	params, _ := json.Marshal(map[string]any{
 		"delta":    "hello world",
@@ -209,17 +208,17 @@ func (s *toolCallServer) OnNotification(method string, _ json.RawMessage) {
 	}()
 }
 
-// makeToolCallProc wires runner ↔ toolCallServer via io.Pipe, same pattern as
-// makeFakeProc in runner_test.go.
-func makeToolCallProc(ts *toolCallServer) procFunc {
+// makeConnectedProc wires a codexclient.Handler to a pipe-based Conn, calls setSrv with the
+// resulting Server, and returns a procFunc. It mirrors the pattern in makeFakeProc.
+func makeConnectedProc(h codexclient.Handler, setSrv func(*codexclient.Server)) procFunc {
 	return func(ctx context.Context, _ string, _ map[string]string, _ string) (io.ReadCloser, io.WriteCloser, func(), error) {
 		pr1, pw1 := io.Pipe()
 		pr2, pw2 := io.Pipe()
 		serverConn := codexclient.NewConn(codexclient.StdioTransport(pr2, pw1), 2*time.Second)
-		ts.srv = codexclient.NewServer(serverConn)
+		setSrv(codexclient.NewServer(serverConn))
 		go func() {
 			defer pw2.Close()
-			_ = serverConn.Run(ctx, ts)
+			_ = serverConn.Run(ctx, h)
 		}()
 		go func() {
 			<-ctx.Done()
@@ -227,6 +226,10 @@ func makeToolCallProc(ts *toolCallServer) procFunc {
 		}()
 		return pr1, pw2, func() {}, nil
 	}
+}
+
+func makeToolCallProc(ts *toolCallServer) procFunc {
+	return makeConnectedProc(ts, func(s *codexclient.Server) { ts.srv = s })
 }
 
 func makeLinearServer(t *testing.T, respBody string) *lineargql.Client {
@@ -247,7 +250,7 @@ func makeRunnerWithLinear(t *testing.T, lc *lineargql.Client, proc procFunc) *Ru
 }
 
 func testIssue() tracker.Issue {
-	return tracker.Issue{Identifier: "PROJ-H1", Title: "handler test issue"}
+	return tracker.Issue{ID: "issue-h1", Identifier: "PROJ-H1", Title: "handler test issue"}
 }
 
 func spawnAndWaitForToolReply(t *testing.T, r *Runner, ts *toolCallServer) {
@@ -326,4 +329,120 @@ func TestHandleToolCall_linearDisabled_replyError(t *testing.T) {
 	spawnAndWaitForToolReply(t, r, ts)
 
 	assert.NotEmpty(t, ts.replyErr, "disabled linear_graphql should return a JSON-RPC error")
+}
+
+// --- user-input-required hard fail tests (SPEC §10.5) ---
+
+// userInputRequiredServer sends item/tool/requestUserInput after turn/start and captures the reply error.
+type userInputRequiredServer struct {
+	srv      *codexclient.Server
+	replyErr string
+	done     chan struct{}
+}
+
+func (s *userInputRequiredServer) OnServerRequest(id int64, method string, _ json.RawMessage) {
+	switch method {
+	case codexschema.MethodInitialize:
+		_ = s.srv.Conn().Reply(id, map[string]any{})
+	case codexschema.MethodThreadStart:
+		_ = s.srv.Conn().Reply(id, map[string]any{"thread": map[string]any{"id": testThreadID}})
+	}
+}
+
+func (s *userInputRequiredServer) OnNotification(method string, _ json.RawMessage) {
+	if method != codexschema.MethodTurnStart {
+		return
+	}
+	_ = s.srv.EmitThreadStarted(testThreadID, "/ws")
+	_ = s.srv.EmitTurnStarted(testThreadID, testTurnID)
+
+	go func() {
+		defer close(s.done)
+		_, err := s.srv.Conn().Request(codexschema.MethodItemToolRequestUserInput, map[string]any{
+			"itemId":    "item-1",
+			"threadId":  testThreadID,
+			"turnId":    testTurnID,
+			"questions": []map[string]any{},
+		})
+		if err != nil {
+			s.replyErr = err.Error()
+		}
+		// Do NOT emit turn/completed — the orchestrator is expected to hard-fail.
+	}()
+}
+
+func makeUserInputRequiredProc(s *userInputRequiredServer) procFunc {
+	return makeConnectedProc(s, func(srv *codexclient.Server) { s.srv = srv })
+}
+
+// TestHandleUserInputRequired_hardFails verifies the SPEC §10.5 documented posture:
+// when item/tool/requestUserInput is received, the turn is hard-failed and the
+// orchestrator does not stall waiting for user input.
+func TestHandleUserInputRequired_hardFails(t *testing.T) {
+	s := &userInputRequiredServer{done: make(chan struct{})}
+	r := makeRunner(t, "", makeUserInputRequiredProc(s))
+
+	workerDone := make(chan scheduler.WorkerExit, 1)
+	r.WorkerDone = workerDone
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := r.spawnWith(ctx, testIssue(), 1, func(Event) {})
+	require.NoError(t, err)
+
+	var exit scheduler.WorkerExit
+	select {
+	case exit = <-workerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout: turn did not hard-fail on user-input-required")
+	}
+
+	assert.Error(t, exit.Err, "worker exit must carry an error for user-input-required")
+	assert.Contains(t, exit.Err.Error(), "user input required")
+
+	// The orchestrator must also have replied with a JSON-RPC error to the agent.
+	select {
+	case <-s.done:
+	case <-time.After(time.Second):
+		t.Fatal("timeout: agent did not receive reply to requestUserInput")
+	}
+	assert.NotEmpty(t, s.replyErr, "agent must receive a JSON-RPC error for requestUserInput")
+}
+
+// TestHandleUserInputRequired_activityEmitted verifies that the turn_input_required
+// activity event is emitted when the agent sends item/tool/requestUserInput.
+func TestHandleUserInputRequired_activityEmitted(t *testing.T) {
+	s := &userInputRequiredServer{done: make(chan struct{})}
+	actCh := make(chan scheduler.CodexActivity, 16)
+
+	r := makeRunner(t, "", makeUserInputRequiredProc(s))
+	r.CodexActivity = actCh
+
+	workerDone := make(chan scheduler.WorkerExit, 1)
+	r.WorkerDone = workerDone
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := r.spawnWith(ctx, testIssue(), 1, func(Event) {})
+	require.NoError(t, err)
+
+	select {
+	case <-workerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for worker to exit")
+	}
+
+	// By the time workerDone fires, report() has already sent to actCh (before turnDone was signalled).
+	close(actCh)
+
+	var found bool
+	for a := range actCh {
+		if a.Event == "turn_input_required" {
+			found = true
+			assert.Equal(t, testIssue().ID, a.IssueID)
+		}
+	}
+	assert.True(t, found, "turn_input_required activity must be emitted")
 }
