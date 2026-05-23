@@ -328,7 +328,7 @@ func (b *Backend) bindThread(frameID state.FrameID, startDir, worktreePath strin
 		b.mu.Unlock()
 		return threadID, nil
 	}
-	if err := codexclient.StartTurn(b.conn, "", startDir, stdin); err != nil {
+	if err := codexclient.StartTurn(b.conn, "", startDir, stdin, codexclient.TurnOptions{}); err != nil {
 		return "", err
 	}
 	return "", nil

@@ -32,6 +32,27 @@ func (s *State) Claim(issue tracker.Issue, attempt int) error {
 	return nil
 }
 
+// ClaimFromRetry promotes a RetryQueued issue back to claimed for re-dispatch (SPEC §7.1).
+// The issue must be in retryAttempts and claimed (retained by WorkerExit*) but not running.
+// Returns ErrDuplicateDispatch if the issue is not in a valid RetryQueued state.
+func (s *State) ClaimFromRetry(issueID string, attempt int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.retryAttempts[issueID]; !ok {
+		return ErrDuplicateDispatch
+	}
+	if _, ok := s.running[issueID]; ok {
+		return ErrDuplicateDispatch
+	}
+	if _, ok := s.claimed[issueID]; !ok {
+		// claimed must be retained by WorkerExit* (§7.1); missing = broken invariant.
+		return ErrDuplicateDispatch
+	}
+	delete(s.retryAttempts, issueID)
+	return nil
+}
+
 // MarkRunning promotes an already-claimed issue to running after spawn succeeds (SPEC §16.4).
 // startedAt is recorded for stall detection (§8.5 Part A).
 func (s *State) MarkRunning(issueID string, issue tracker.Issue, attempt int, session LiveSession, startedAt time.Time) {
@@ -86,7 +107,8 @@ func (s *State) WorkerExitNormal(issueID string) (RetryEntry, bool) {
 		return RetryEntry{}, false
 	}
 	delete(s.running, issueID)
-	delete(s.claimed, issueID)
+	// claimed is retained: SPEC §7.1 "claimed contains Running or RetryQueued".
+	// ReleaseClaim is the only terminal removal path (§7.3).
 	// usage and runtime intentionally kept for cross-retry accumulation (§13.5 B'').
 
 	return RetryEntry{
@@ -111,7 +133,8 @@ func (s *State) WorkerExitAbnormal(issueID string, err error, attempt int) (Retr
 		return RetryEntry{}, false
 	}
 	delete(s.running, issueID)
-	delete(s.claimed, issueID)
+	// claimed is retained: SPEC §7.1 "claimed contains Running or RetryQueued".
+	// ReleaseClaim is the only terminal removal path (§7.3).
 	// usage and runtime intentionally kept for cross-retry accumulation (§13.5 B'').
 
 	return RetryEntry{
@@ -154,6 +177,20 @@ func (s *State) EnqueueRetry(entry RetryEntry) {
 	defer s.mu.Unlock()
 
 	s.retryAttempts[entry.IssueID] = entry
+}
+
+// IncrementTurnCount increments the completed turn counter for a running attempt (SPEC §4.1.6).
+// No-op if issueID is not running.
+func (s *State) IncrementTurnCount(issueID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	run, ok := s.running[issueID]
+	if !ok {
+		return
+	}
+	run.TurnCount++
+	s.running[issueID] = run
 }
 
 // UpdateCodexActivity records the latest codex notification for stall detection (SPEC §8.5 Part A).

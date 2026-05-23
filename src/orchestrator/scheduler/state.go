@@ -58,8 +58,9 @@ type RunAttempt struct {
 	Issue   tracker.Issue // snapshot at dispatch time
 	Session LiveSession
 
-	Attempt int
-	Phase   RunPhase
+	Attempt   int
+	Phase     RunPhase
+	TurnCount int // number of turns completed in this attempt (SPEC §4.1.6)
 
 	StartedAt time.Time
 

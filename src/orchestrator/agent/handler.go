@@ -23,8 +23,9 @@ type sessionIDs struct {
 func (s sessionIDs) sessionID() string { return s.threadID + "-" + s.turnID }
 
 type turnResult struct {
-	failed bool
-	err    error
+	failed    bool
+	cancelled bool
+	err       error
 }
 
 // toolCallParams is the shape of DynamicToolCallParams from the codex protocol.
@@ -55,11 +56,13 @@ type turnHandler struct {
 	linearClient  *lineargql.Client // nil when linear_graphql is not configured
 	mu            sync.Mutex
 	threadID      string
+	turnID        string    // protected by mu
 	turnStartedAt time.Time // protected by mu; set on turn/started, cleared on turn/completed
 	sessionReady  chan<- sessionIDs
 	turnDone      chan<- turnResult
 	issueID       string
 	report        func(scheduler.CodexActivity)
+	emitEvent     func(Event) // nil when event emission is not wired
 }
 
 func (h *turnHandler) OnNotification(method string, params json.RawMessage) {
@@ -82,6 +85,7 @@ func (h *turnHandler) OnNotification(method string, params json.RawMessage) {
 			// thread/started notification preceded it; keep h.threadID current.
 			h.threadID = tid
 		}
+		h.turnID = turnID
 		threadID := h.threadID
 		h.turnStartedAt = now
 		h.mu.Unlock()
@@ -99,6 +103,7 @@ func (h *turnHandler) OnNotification(method string, params json.RawMessage) {
 			d := now.Sub(started)
 			act.TurnDuration = &d
 		}
+		act.TurnCompleted = true
 		select {
 		case h.turnDone <- turnResult{}:
 		default:
@@ -166,8 +171,26 @@ func (h *turnHandler) OnServerRequest(id int64, method string, params json.RawMe
 		_ = h.conn.Reply(id, map[string]any{"decision": codexschema.ApprovalAcceptForSession})
 	case codexschema.MethodItemToolCall:
 		h.handleToolCall(id, params)
+	case codexschema.MethodItemToolRequestUserInput:
+		h.handleUserInputRequired(id)
 	default:
 		_ = h.conn.ReplyError(id, "unsupported")
+	}
+}
+
+// SPEC §10.5: automated orchestration cannot provide user input; hard-fail the turn.
+func (h *turnHandler) handleUserInputRequired(id int64) {
+	_ = h.conn.ReplyError(id, "user input required: automated orchestration cannot provide user input")
+	if h.report != nil {
+		h.report(scheduler.CodexActivity{
+			IssueID:   h.issueID,
+			Event:     "turn_input_required",
+			Timestamp: time.Now(),
+		})
+	}
+	select {
+	case h.turnDone <- turnResult{failed: true, err: errors.New("user input required")}:
+	default:
 	}
 }
 
@@ -178,6 +201,20 @@ func (h *turnHandler) handleToolCall(id int64, params json.RawMessage) {
 		return
 	}
 	if p.Tool != "linear_graphql" || h.linearClient == nil {
+		h.mu.Lock()
+		threadID := h.threadID
+		turnID := h.turnID
+		h.mu.Unlock()
+		if h.emitEvent != nil {
+			ids := sessionIDs{threadID: threadID, turnID: turnID}
+			h.emitEvent(Event{
+				Kind:      EventUnsupportedToolCall,
+				SessionID: ids.sessionID(),
+				ThreadID:  ids.threadID,
+				TurnID:    ids.turnID,
+				Timestamp: time.Now(),
+			})
+		}
 		_ = h.conn.ReplyError(id, "unknown tool: "+p.Tool)
 		return
 	}

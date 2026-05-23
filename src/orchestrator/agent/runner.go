@@ -44,9 +44,21 @@ type workerParams struct {
 }
 
 func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int, emit func(Event)) (scheduler.LiveSession, error) {
-	wsPath, err := r.prepareWorkspace(ctx, issue.Identifier)
+	wsPath, err := r.ensureWorkspace(ctx, issue.Identifier)
 	if err != nil {
 		return scheduler.LiveSession{}, err
+	}
+
+	// AfterRun must fire on every exit path from here (SPEC §9.4); committed transfers ownership to runLoop.
+	committed := false
+	defer func() {
+		if !committed {
+			r.Workspace.AfterRun(ctx, issue.Identifier)
+		}
+	}()
+
+	if err := r.Workspace.BeforeRun(ctx, issue.Identifier); err != nil {
+		return scheduler.LiveSession{}, fmt.Errorf("agent: before run: %w", err)
 	}
 
 	rendered, err := r.renderPrompt(issue, attempt)
@@ -57,20 +69,33 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 	frameID := fmt.Sprintf("%s#%d", issue.Identifier, attempt)
 
 	workerCtx, cancel := context.WithCancel(ctx)
-	lr, err := r.launchConn(workerCtx, frameID, wsPath, issue.ID)
+	lr, err := r.launchConn(workerCtx, frameID, wsPath, issue.ID, emit)
 	if err != nil {
 		cancel()
 		return scheduler.LiveSession{}, err
 	}
 
-	ids, err := initSession(lr.conn, lr.startDir, rendered, r.dynamicToolSpecs(), lr.sessionReady, lr.doneCh)
+	threadOpts := r.buildThreadOptions(issue)
+	turnOpts := r.buildTurnOptions()
+	ids, err := initSession(lr.conn, lr.startDir, rendered, r.dynamicToolSpecs(), threadOpts, turnOpts, lr.sessionReady, lr.doneCh)
 	if err != nil {
 		cancel()
 		<-lr.doneCh
+		emit(Event{
+			Kind:      EventStartupFailed,
+			Timestamp: time.Now(),
+			Err:       err,
+		})
 		return scheduler.LiveSession{}, err
 	}
 
-	worker := &Worker{cancel: cancel, done: lr.doneCh, cleanup: lr.cleanup}
+	worker := &Worker{
+		cancel:          cancel,
+		done:            lr.doneCh,
+		cleanup:         lr.cleanup,
+		issueID:         issue.ID,
+		issueIdentifier: issue.Identifier,
+	}
 
 	wp := workerParams{
 		issue:        issue,
@@ -85,6 +110,7 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 		worker:       worker,
 		emit:         emit,
 	}
+	committed = true
 	go r.runLoop(workerCtx, wp)
 
 	emit(Event{
@@ -109,7 +135,11 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 func (r *Runner) runLoop(ctx context.Context, wp workerParams) {
 	var loopErr error
 	for turn := 1; ; turn++ {
-		result := r.awaitTurn(wp)
+		result := r.awaitTurn(ctx, wp)
+		if result.cancelled {
+			wp.emit(r.turnCancelledEvent(wp.ids))
+			break
+		}
 		if result.failed {
 			wp.emit(r.turnFailedEvent(wp.ids, result.err))
 			loopErr = result.err
@@ -130,8 +160,10 @@ func (r *Runner) runLoop(ctx context.Context, wp workerParams) {
 }
 
 // awaitTurn waits for the current turn to complete, applying per-turn timeout.
-// Timeout and unexpected process exit are mapped to turnResult{failed:true}.
-func (r *Runner) awaitTurn(wp workerParams) turnResult {
+// Timeout maps to turnResult{failed:true}; context cancellation (intentional kill)
+// maps to turnResult{cancelled:true}; unexpected process exit maps to
+// turnResult{failed:true}.
+func (r *Runner) awaitTurn(ctx context.Context, wp workerParams) turnResult {
 	var timeoutCh <-chan time.Time
 	if r.Cfg.Codex.TurnTimeoutMS > 0 {
 		timer := time.NewTimer(time.Duration(r.Cfg.Codex.TurnTimeoutMS) * time.Millisecond)
@@ -147,6 +179,10 @@ func (r *Runner) awaitTurn(wp workerParams) turnResult {
 		<-wp.doneCh
 		return turnResult{failed: true, err: fmt.Errorf("turn timeout exceeded (%dms)", r.Cfg.Codex.TurnTimeoutMS)}
 	case <-wp.doneCh:
+		// Check if the process exited due to intentional context cancellation.
+		if ctx.Err() != nil {
+			return turnResult{cancelled: true}
+		}
 		select {
 		case result := <-wp.turnDone:
 			return result
@@ -183,7 +219,7 @@ func (r *Runner) shouldContinue(ctx context.Context, issue tracker.Issue, turn i
 
 // nextTurn issues the next turn on the same thread and awaits turn/started.
 func (r *Runner) nextTurn(workerCtx context.Context, wp *workerParams, turn int) error {
-	if err := codexclient.StartTurn(wp.conn, wp.ids.threadID, wp.startDir, []byte(continuationPrompt)); err != nil {
+	if err := codexclient.StartTurn(wp.conn, wp.ids.threadID, wp.startDir, []byte(continuationPrompt), r.buildTurnOptions()); err != nil {
 		return fmt.Errorf("agent: start turn %d: %w", turn, err)
 	}
 	timer := time.NewTimer(spawnTimeout)
@@ -222,16 +258,14 @@ func (r *Runner) sendWorkerExit(issueID string, attempt int, exitErr error) {
 	}
 }
 
-func (r *Runner) prepareWorkspace(ctx context.Context, identifier string) (string, error) {
+// Caller must arrange AfterRun on any subsequent failure once this succeeds (SPEC §9.4/§9.5).
+func (r *Runner) ensureWorkspace(ctx context.Context, identifier string) (string, error) {
 	wsPath, err := r.Workspace.Ensure(ctx, identifier)
 	if err != nil {
 		return "", fmt.Errorf("agent: workspace ensure: %w", err)
 	}
 	if err := r.Workspace.VerifyCWD(identifier, wsPath); err != nil {
 		return "", fmt.Errorf("agent: verify cwd: %w", err)
-	}
-	if err := r.Workspace.BeforeRun(ctx, identifier); err != nil {
-		return "", fmt.Errorf("agent: before run: %w", err)
 	}
 	return wsPath, nil
 }
@@ -251,7 +285,7 @@ func (r *Runner) renderPrompt(issue tracker.Issue, attempt int) (string, error) 
 	return rendered, nil
 }
 
-func (r *Runner) launchConn(ctx context.Context, frameID, wsPath, issueID string) (*launchResult, error) {
+func (r *Runner) launchConn(ctx context.Context, frameID, wsPath, issueID string, emit func(Event)) (*launchResult, error) {
 	plan := agentlaunch.LaunchPlan{
 		Command: r.Cfg.Codex.Command,
 		Env:     map[string]string{},
@@ -294,6 +328,7 @@ func (r *Runner) launchConn(ctx context.Context, frameID, wsPath, issueID string
 		turnDone:     turnDone,
 		issueID:      issueID,
 		report:       report,
+		emitEvent:    emit,
 	}
 
 	doneCh := make(chan struct{})
@@ -313,15 +348,15 @@ func (r *Runner) launchConn(ctx context.Context, frameID, wsPath, issueID string
 	}, nil
 }
 
-func initSession(conn *codexclient.Conn, wsPath, rendered string, dynamicTools []any, sessionReady <-chan sessionIDs, doneCh <-chan struct{}) (sessionIDs, error) {
+func initSession(conn *codexclient.Conn, wsPath, rendered string, dynamicTools []any, threadOpts codexclient.ThreadOptions, turnOpts codexclient.TurnOptions, sessionReady <-chan sessionIDs, doneCh <-chan struct{}) (sessionIDs, error) {
 	if err := codexclient.Initialize(conn); err != nil {
 		return sessionIDs{}, fmt.Errorf("agent: initialize: %w", err)
 	}
-	threadID, err := codexclient.StartThread(conn, wsPath, dynamicTools)
+	threadID, err := codexclient.StartThread(conn, wsPath, dynamicTools, threadOpts)
 	if err != nil {
 		return sessionIDs{}, fmt.Errorf("agent: start thread: %w", err)
 	}
-	if err := codexclient.StartTurn(conn, threadID, wsPath, []byte(rendered)); err != nil {
+	if err := codexclient.StartTurn(conn, threadID, wsPath, []byte(rendered), turnOpts); err != nil {
 		return sessionIDs{}, fmt.Errorf("agent: start turn: %w", err)
 	}
 
@@ -338,9 +373,33 @@ func initSession(conn *codexclient.Conn, wsPath, rendered string, dynamicTools [
 	}
 }
 
-func (r *Runner) turnCompletedEvent(ids sessionIDs) Event {
+// buildThreadOptions constructs ThreadOptions from the WORKFLOW.md codex config
+// and the current issue (SPEC §10.2).
+func (r *Runner) buildThreadOptions(issue tracker.Issue) codexclient.ThreadOptions {
+	opts := codexclient.ThreadOptions{
+		ApprovalPolicy: r.Cfg.Codex.ApprovalPolicy,
+		SandboxMode:    r.Cfg.Codex.ThreadSandbox,
+	}
+	switch {
+	case issue.Identifier != "" && issue.Title != "":
+		opts.ServiceName = issue.Identifier + ": " + issue.Title
+	case issue.Identifier != "":
+		opts.ServiceName = issue.Identifier
+	}
+	return opts
+}
+
+// buildTurnOptions constructs TurnOptions from the WORKFLOW.md codex config (SPEC §10.2).
+func (r *Runner) buildTurnOptions() codexclient.TurnOptions {
+	return codexclient.TurnOptions{
+		ApprovalPolicy: r.Cfg.Codex.ApprovalPolicy,
+		SandboxPolicy:  r.Cfg.Codex.TurnSandboxPolicy,
+	}
+}
+
+func newTurnEvent(kind string, ids sessionIDs) Event {
 	return Event{
-		Kind:      EventTurnCompleted,
+		Kind:      kind,
 		SessionID: ids.sessionID(),
 		ThreadID:  ids.threadID,
 		TurnID:    ids.turnID,
@@ -348,13 +407,16 @@ func (r *Runner) turnCompletedEvent(ids sessionIDs) Event {
 	}
 }
 
+func (r *Runner) turnCompletedEvent(ids sessionIDs) Event {
+	return newTurnEvent(EventTurnCompleted, ids)
+}
+
 func (r *Runner) turnFailedEvent(ids sessionIDs, err error) Event {
-	return Event{
-		Kind:      EventTurnFailed,
-		SessionID: ids.sessionID(),
-		ThreadID:  ids.threadID,
-		TurnID:    ids.turnID,
-		Timestamp: time.Now(),
-		Err:       err,
-	}
+	e := newTurnEvent(EventTurnFailed, ids)
+	e.Err = err
+	return e
+}
+
+func (r *Runner) turnCancelledEvent(ids sessionIDs) Event {
+	return newTurnEvent(EventTurnCancelled, ids)
 }

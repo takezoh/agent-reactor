@@ -25,7 +25,7 @@ func TestSPEC_17_5_AgentSwitchEventParity(t *testing.T) {
 	if err := codexclient.Initialize(clientConn); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
-	if err := codexclient.StartTurn(clientConn, "", "/ws", []byte("hi")); err != nil {
+	if err := codexclient.StartTurn(clientConn, "", "/ws", []byte("hi"), codexclient.TurnOptions{}); err != nil {
 		t.Fatalf("StartTurn: %v", err)
 	}
 

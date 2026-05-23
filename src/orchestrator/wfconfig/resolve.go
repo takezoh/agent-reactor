@@ -2,6 +2,7 @@ package wfconfig
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 )
 
@@ -42,6 +43,10 @@ func Resolve(raw map[string]any, workflowDir string) (Config, error) {
 // $VAR references are resolved by the shell at execution time.
 func expandFields(c *Config) {
 	c.Tracker.APIKey = expandAPIKey(c.Tracker.APIKey)
+	// SPEC §5.3.1: fall back to LINEAR_API_KEY for kind=linear when api_key is empty.
+	if c.Tracker.Kind == "linear" && c.Tracker.APIKey == "" {
+		c.Tracker.APIKey = os.Getenv("LINEAR_API_KEY")
+	}
 	c.Workspace.Root = expandPath(c.Workspace.Root)
 }
 

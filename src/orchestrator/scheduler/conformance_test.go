@@ -72,3 +72,38 @@ func TestSPEC_17_4_ContinuationFixed1s(t *testing.T) {
 		t.Errorf("continuationDelay = %v, want 1s", continuationDelay)
 	}
 }
+
+// SPEC §7.1 / §7.4 — claimed always contains RetryQueued issues; dispatchOnce must not
+// re-dispatch during the backoff window regardless of how many ticks fire.
+func TestSPEC_7_1_RetryQueuedStaysClaimed(t *testing.T) {
+	path := writeWorkflow(t)
+	tr := &fakeTracker{issues: []ptrackerv.Issue{
+		{ID: "1", Identifier: "P-1", Title: "issue", State: "In Progress"},
+	}}
+	spawn := &fakeSpawn{}
+	s := New(path, schedCfg(), "", minDeps(tr, spawn.fn, newFakeClock(time.Now())))
+	ctx := context.Background()
+
+	// Initial tick dispatches the issue.
+	s.tickOnce(ctx)
+	if spawn.callCount() != 1 {
+		t.Fatalf("want 1 spawn after first tick, got %d", spawn.callCount())
+	}
+
+	// Worker exits normally — issue enters RetryQueued, claimed is retained.
+	s.handleWorkerExit(ctx, WorkerExit{IssueID: "1", Err: nil})
+	snap := s.state.Snapshot()
+	if _, ok := snap.Claimed["1"]; !ok {
+		t.Fatal("SPEC §7.1: want issue retained in claimed after WorkerExitNormal")
+	}
+
+	// Simulate multiple ticks during the retry backoff window.
+	for range 3 {
+		s.tickOnce(ctx)
+	}
+
+	// No additional spawns: the issue is still RetryQueued / claimed.
+	if spawn.callCount() != 1 {
+		t.Errorf("SPEC §7.4: want 0 additional spawns during retry window, got %d extra", spawn.callCount()-1)
+	}
+}
