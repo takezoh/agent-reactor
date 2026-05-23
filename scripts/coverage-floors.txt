@@ -41,6 +41,7 @@ github.com/takezoh/agent-roost/procio                       95
 github.com/takezoh/agent-roost/proto                        85
 github.com/takezoh/agent-roost/proto/sessions               80
 github.com/takezoh/agent-roost/runtime                      55
+github.com/takezoh/agent-roost/runtime/framereg             100
 github.com/takezoh/agent-roost/runtime/subsystem            15
 github.com/takezoh/agent-roost/runtime/subsystem/cli        70
 github.com/takezoh/agent-roost/runtime/subsystem/stream     50
