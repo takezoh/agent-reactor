@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -46,6 +47,12 @@ func newClient(endpoint, apiKey string, hc *http.Client) *Client {
 func (c *Client) Execute(ctx context.Context, query string, variables json.RawMessage) (*Result, error) {
 	if query == "" {
 		return errResult("query must not be empty"), nil
+	}
+	if err := validateSingleOperation(query); err != nil {
+		return errResult(err.Error()), nil
+	}
+	if err := validateVariablesObject(variables); err != nil {
+		return errResult(err.Error()), nil
 	}
 	if c.apiKey == "" {
 		return errResult("linear API key not configured"), nil
@@ -93,4 +100,202 @@ func (c *Client) Execute(ctx context.Context, query string, variables json.RawMe
 func errResult(msg string) *Result {
 	errs, _ := json.Marshal([]map[string]string{{"message": msg}})
 	return &Result{Success: false, Errors: errs}
+}
+
+// validateSingleOperation returns an error if the document contains more than
+// one GraphQL operation definition (SPEC §10.5 MUST: single operation).
+// Fragment definitions do not count as operations.
+func validateSingleOperation(query string) error {
+	if countOperations(query) > 1 {
+		return errors.New("query must contain exactly one GraphQL operation")
+	}
+	return nil
+}
+
+// validateVariablesObject returns an error if variables is present (non-null,
+// non-empty) and is not a JSON object (SPEC §10.5 MUST: variables-object).
+func validateVariablesObject(vars json.RawMessage) error {
+	trimmed := bytes.TrimSpace(vars)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	if trimmed[0] != '{' {
+		return errors.New("variables must be a JSON object")
+	}
+	return nil
+}
+
+// gqlScanState is the lexer mode for handling strings and comments.
+type gqlScanState int
+
+const (
+	gqlssNormal      gqlScanState = iota
+	gqlssString                   // inside "…"
+	gqlssBlockString              // inside """…"""
+	gqlssComment                  // inside #…\n
+)
+
+// gqlDocState tracks where we are in the GraphQL document structure.
+type gqlDocState int
+
+const (
+	gqldsIdle      gqlDocState = iota
+	gqldsOperation             // saw query/mutation/subscription; awaiting {
+	gqldsFragment              // saw fragment; awaiting {
+	gqldsBody                  // inside { } at depth ≥ 1
+)
+
+// gqlScanner is a lightweight GraphQL document scanner used by countOperations.
+type gqlScanner struct {
+	src         string
+	i           int
+	ss          gqlScanState
+	ds          gqlDocState
+	bodyDepth   int // brace depth inside gqldsBody
+	headerDepth int // combined ( ) { } nesting in operation/fragment header
+	count       int // operation definitions found so far
+}
+
+// countOperations counts GraphQL operation definitions in src. It respects
+// string literals (including block strings) and comments so that keywords
+// inside those constructs are correctly ignored.
+//
+// Named operations begin with "query", "mutation", or "subscription".
+// Anonymous operations begin with "{" at document depth 0.
+// "fragment" definitions are skipped and do not contribute to the count.
+func countOperations(src string) int {
+	sc := &gqlScanner{src: src}
+	n := len(src)
+	for sc.i < n {
+		if !sc.advanceLexer() {
+			sc.advanceDoc()
+		}
+	}
+	return sc.count
+}
+
+// advanceLexer handles the current position when the scanner is inside a string
+// or comment. Returns true when a character was consumed, false when the caller
+// should proceed with document-level scanning.
+func (sc *gqlScanner) advanceLexer() bool {
+	ch := sc.src[sc.i]
+	switch sc.ss {
+	case gqlssComment:
+		if ch == '\n' {
+			sc.ss = gqlssNormal
+		}
+		sc.i++
+		return true
+	case gqlssString:
+		if ch == '\\' {
+			sc.i += 2
+		} else {
+			if ch == '"' {
+				sc.ss = gqlssNormal
+			}
+			sc.i++
+		}
+		return true
+	case gqlssBlockString:
+		if sc.i+2 < len(sc.src) && sc.src[sc.i] == '"' && sc.src[sc.i+1] == '"' && sc.src[sc.i+2] == '"' {
+			sc.ss = gqlssNormal
+			sc.i += 3
+		} else {
+			sc.i++
+		}
+		return true
+	}
+	return false
+}
+
+// advanceDoc handles one document-level character in normal (non-string,
+// non-comment) scan mode.
+func (sc *gqlScanner) advanceDoc() { //nolint:cyclop
+	ch := sc.src[sc.i]
+	n := len(sc.src)
+	switch {
+	case ch == '#':
+		sc.ss = gqlssComment
+		sc.i++
+	case sc.i+2 < n && sc.src[sc.i] == '"' && sc.src[sc.i+1] == '"' && sc.src[sc.i+2] == '"':
+		sc.ss = gqlssBlockString
+		sc.i += 3
+	case ch == '"':
+		sc.ss = gqlssString
+		sc.i++
+	case ch == '(' && (sc.ds == gqldsOperation || sc.ds == gqldsFragment):
+		sc.headerDepth++
+		sc.i++
+	case ch == ')' && (sc.ds == gqldsOperation || sc.ds == gqldsFragment):
+		if sc.headerDepth > 0 {
+			sc.headerDepth--
+		}
+		sc.i++
+	case ch == '{':
+		sc.openBrace()
+	case ch == '}':
+		sc.closeBrace()
+	case sc.ds == gqldsIdle && isGQLIdentRune(ch):
+		sc.consumeIdent()
+	default:
+		sc.i++
+	}
+}
+
+func (sc *gqlScanner) openBrace() {
+	switch sc.ds {
+	case gqldsIdle:
+		sc.count++
+		sc.ds = gqldsBody
+		sc.bodyDepth = 1
+	case gqldsOperation, gqldsFragment:
+		if sc.headerDepth > 0 {
+			// Inside variable-definition parens; this is an input object literal.
+			sc.headerDepth++
+		} else {
+			sc.ds = gqldsBody
+			sc.bodyDepth = 1
+			sc.headerDepth = 0
+		}
+	case gqldsBody:
+		sc.bodyDepth++
+	}
+	sc.i++
+}
+
+func (sc *gqlScanner) closeBrace() {
+	switch sc.ds {
+	case gqldsOperation, gqldsFragment:
+		if sc.headerDepth > 0 {
+			sc.headerDepth--
+		}
+	case gqldsBody:
+		sc.bodyDepth--
+		if sc.bodyDepth == 0 {
+			sc.ds = gqldsIdle
+		}
+	}
+	sc.i++
+}
+
+func (sc *gqlScanner) consumeIdent() {
+	j := sc.i
+	n := len(sc.src)
+	for j < n && isGQLIdentRune(sc.src[j]) {
+		j++
+	}
+	switch sc.src[sc.i:j] {
+	case "query", "mutation", "subscription":
+		sc.count++
+		sc.ds = gqldsOperation
+		sc.headerDepth = 0
+	case "fragment":
+		sc.ds = gqldsFragment
+		sc.headerDepth = 0
+	}
+	sc.i = j
+}
+
+func isGQLIdentRune(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
