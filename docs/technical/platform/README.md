@@ -22,6 +22,14 @@ Because it sits below both services, `platform/` is where tool-specific knowledg
 | `platform/agent/` | Shared agent launch interfaces (e.g. `codexclient/`). |
 | `platform/credproxy/` | Credential providers (AWS SSO, gcloud CLI, ssh-agent) — the external `credproxy` library; the only place tool-specific credential env var names live. |
 
+## Per-subsystem deep dives
+
+- **[spawn-and-launch.md](spawn-and-launch.md)** — `agentlaunch` + `procgroup` + `pathmap`. The layer that turns a command string into a running process: `LaunchPlan`/`WrappedLaunch`/`Dispatcher`/`Spawn`, process-group lifecycle and orphan reaping, container↔host path translation.
+- **[brokers.md](brokers.md)** — implementation of `hostexec` + `mcpproxy` + `credproxy`: SCM_RIGHTS proxied execution, JSON-RPC tool gating, per-project tokens. The security model is in [sandbox.md](sandbox.md).
+- **[agent-protocol.md](agent-protocol.md)** — `agent/codexclient` + `codexschema` (v1/v2) + `lib/codex` + `lib/claude`. The Codex app-server stdio protocol, the turn sequence, and the claude-app-server shim's translation.
+- **[sandbox.md](sandbox.md)** — `sandbox/` backends: per-project devcontainer isolation, image resolution, credential proxy.
+- Cross-cutting enforcement (import boundaries, length limits, runtime gates, feature flags) is in [guardrails.md](../guardrails.md).
+
 ## Feature flags
 
 The `features/` mechanism lives here because it must be importable by the pure `state/` core without pulling in third-party packages. There are two independent flag mechanisms (runtime vs compile-time) — see [ARCHITECTURE.md → Feature Flags](../../../ARCHITECTURE.md) for how to add each.

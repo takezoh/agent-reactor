@@ -16,6 +16,9 @@ Import direction (enforced by `depguard`, `src/.golangci.yml`): `cmd/* → clien
 ## Per-layer deep dives
 
 - **[platform/](platform/README.md)** — shared infrastructure
+  - [Spawn & launch](platform/spawn-and-launch.md) — `agentlaunch`/`procgroup`/`pathmap`: the command-string → process launch layer
+  - [Brokers](platform/brokers.md) — `hostexec`/`mcpproxy`/`credproxy`: host mediation and policy enforcement
+  - [Agent protocol](platform/agent-protocol.md) — `codexclient`/`codexschema`/`lib`: the Codex app-server stdio protocol
   - [Sandbox backends](platform/sandbox.md) — per-project devcontainer isolation, image resolution, credential proxy
 - **[client/](client/README.md)** — the roost session lifecycle manager
   - [Process model](client/process-model.md) — daemon/TUI processes, pane layout, rendering boundary
@@ -24,3 +27,7 @@ Import direction (enforced by `depguard`, `src/.golangci.yml`): `cmd/* → clien
   - [Interfaces](client/interfaces.md) — Go type definitions, data files, source tree
 - **[orchestrator/](orchestrator/README.md)** — the autonomous Symphony pipeline
   - [Symphony conformance](orchestrator/symphony-conformance.md) — SPEC §17 ↔ test table and documented posture
+
+## Cross-cutting
+
+- **[Guardrails](guardrails.md)** — a cross-cutting catalogue of the enforcement mechanisms that keep the architecture honest: import boundaries (10 depguard rules), no mutexes in `state/`, function/file length, the orchestrator's runtime gates (preflight / eligibility / slot / claim), security brokers, feature flags, and the wire-format convention.

@@ -23,6 +23,7 @@ All documentation is organized by **audience × architecture layer** under [`doc
 - **Users** — [user guide](docs/user/README.md): [getting started](docs/user/getting-started.md), [roost TUI](docs/user/roost-tui.md), [orchestrator](docs/user/orchestrator.md), [sandbox](docs/user/sandbox.md)
 - **Agents / contributors** — [agent guide](docs/agent/README.md): [contributing](docs/agent/contributing.md), [WORKFLOW.md authoring](docs/agent/workflow-authoring.md), [testing](docs/agent/testing.md)
 - **Technical (per layer)** — [platform/](docs/technical/platform/README.md) · [client/](docs/technical/client/README.md) · [orchestrator/](docs/technical/orchestrator/README.md)
+- **Cross-cutting** — [guardrails](docs/technical/guardrails.md): the enforcement side of this document (depguard rules, length limits, runtime gates, feature-flag mechanics)
 
 ## Layer Structure
 
@@ -41,6 +42,8 @@ cmd/           Binary entry points — cmd/roost/, cmd/roost-bridge/, cmd/orches
 - `client/*` does not import `orchestrator/*`
 - `orchestrator/*` does not import `client/*`
 
+The full set of `depguard` rules (including the intra-`client/` isolation rules) and every other enforcement mechanism are catalogued in [guardrails](docs/technical/guardrails.md).
+
 ### The layers at a glance
 
 - **[`platform/`](docs/technical/platform/README.md)** — shared base: the agent-launch primitive (`agentlaunch`: argv-based `Spawn` + `SplitArgs`, host/container `Dispatcher`, on `procgroup`), sandbox backends, host-exec and MCP-proxy brokers, path translation, logger, feature flags, tool wrappers (`lib/<tool>`), trackers, metrics, credential providers. Tool-specific knowledge is allowed here so it stays out of the generic layers above. Agent-agnostic launch lives here; per-agent command construction stays in `lib/<tool>`, while transport, `codexclient.Conn`, and `Handler` remain per-layer.
@@ -53,7 +56,7 @@ The daemon and TUI are separate processes communicating via typed IPC (`proto`) 
 
 ## Feature Flags
 
-Experimental features are gated by one of **two independent mechanisms**. They share no key space — pick one based on whether the experimental code should physically exist in the binary.
+Experimental features are gated by one of **two independent mechanisms**. They share no key space — pick one based on whether the experimental code should physically exist in the binary. ([guardrails → feature flags](docs/technical/guardrails.md#6-feature-flags) has the step-by-step add procedure.)
 
 | Mechanism | Where defined | Toggle | Code in binary? | Use when |
 |---|---|---|---|---|
