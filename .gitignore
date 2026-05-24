@@ -3,6 +3,10 @@ roost-bridge
 sockbridge
 /orchestrator
 /claude-app-server
+src/roost
+src/roost-bridge
+src/orchestrator
+src/claude-app-server
 notify.ps1
 roost.log
 .codex
