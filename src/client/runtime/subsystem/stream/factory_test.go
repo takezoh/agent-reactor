@@ -103,7 +103,7 @@ func TestFactory_RemoveStopsAndDeletesBackend(t *testing.T) {
 }
 
 func TestBackend_BindThreadRegistersMultipleFrameBindings(t *testing.T) {
-	b := New(nil, "stream:session:sess1", "sess1", "/workspace/agent-roost",
+	b := New(nil, nil, "stream:session:sess1", "sess1", "/workspace/agent-roost",
 		"codex", nil, "", false, false,
 		"/tmp/codex.sock", "/opt/roost/run/codex.sock", LoopbackPort,
 		func() state.FrameID { return "" }, 0,

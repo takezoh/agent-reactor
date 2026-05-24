@@ -3,7 +3,6 @@ package agent
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"time"
 
@@ -41,10 +40,8 @@ type Event struct {
 	Err       error
 }
 
-// procFunc launches the agent subprocess and returns its stdout/stdin plus a
-// wait func that reaps the process. wait must be called once the read loop has
-// drained stdout (i.e. after conn.Run returns) to avoid leaking a zombie.
-type procFunc func(ctx context.Context, dir string, env map[string]string, command string) (stdout io.ReadCloser, stdin io.WriteCloser, wait func(), err error)
+// spawnFunc launches the agent subprocess given a WrappedLaunch. Injectable for testing.
+type spawnFunc func(ctx context.Context, w agentlaunch.WrappedLaunch, opts agentlaunch.SpawnOptions) (agentlaunch.SpawnResult, error)
 
 // Runner builds scheduler.SpawnFunc-compatible spawn calls for the orchestrator.
 type Runner struct {
@@ -57,7 +54,7 @@ type Runner struct {
 	WorkerDone     chan<- scheduler.WorkerExit
 	CodexActivity  chan<- scheduler.CodexActivity
 	LinearClient   *lineargql.Client // nil disables the linear_graphql tool (SPEC §10.5)
-	proc           procFunc
+	spawn          spawnFunc
 }
 
 // New returns a Runner wired with the real exec subprocess.
@@ -75,7 +72,7 @@ func New(ws *workspace.Manager, cfg wfconfig.Config, tmpl string, d agentlaunch.
 		Dispatcher:     d,
 		Tracker:        tr,
 		LinearClient:   lc,
-		proc:           realProc,
+		spawn:          agentlaunch.Spawn,
 	}
 }
 

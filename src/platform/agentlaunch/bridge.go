@@ -2,14 +2,8 @@ package agentlaunch
 
 import (
 	"fmt"
-)
 
-// codex stream bridge constants — same protocol values as client/driver.CodexApp*
-// (copied here so platform/ does not depend on client/).
-const (
-	streamSockPrefix   = "codex-"
-	streamSockSuffix   = ".sock"
-	streamLoopbackPort = 8282
+	"github.com/takezoh/agent-roost/platform/lib/codex"
 )
 
 // ContainerStreamBridgeCmd returns the postCreate shell command that starts the
@@ -22,6 +16,6 @@ const (
 func ContainerStreamBridgeCmd(containerRunDir string) string {
 	return fmt.Sprintf(
 		"%s sockbridge -listen 127.0.0.1:%d -route-dir %s -route-prefix %s -route-suffix %s &",
-		ContainerBinaryPath, streamLoopbackPort, containerRunDir, streamSockPrefix, streamSockSuffix,
+		ContainerBinaryPath, codex.LoopbackPort, containerRunDir, codex.SockPrefix, codex.SockSuffix,
 	)
 }

@@ -27,6 +27,7 @@ import (
 	cstream "github.com/takezoh/agent-roost/client/runtime/subsystem/stream"
 	"github.com/takezoh/agent-roost/client/runtime/worker"
 	"github.com/takezoh/agent-roost/client/state"
+	"github.com/takezoh/agent-roost/platform/agentlaunch"
 	"github.com/takezoh/agent-roost/platform/features"
 	"github.com/takezoh/agent-roost/platform/pathmap"
 	"github.com/takezoh/agent-roost/platform/procgroup"
@@ -79,6 +80,11 @@ type Config struct {
 	// Launcher wraps agent launch plans before they reach tmux, enabling
 	// sandbox implementations. nil falls back to DirectLauncher (no-op).
 	Launcher AgentLauncher
+
+	// StreamDispatcher applies sandbox/container wrapping for codex app-server
+	// launches (stdio, non-TTY). Separate from Launcher which uses TTY=true for
+	// interactive tmux panes. nil falls back to direct (no-op) dispatch.
+	StreamDispatcher agentlaunch.Dispatcher
 
 	// StreamReadTimeout overrides the codex app-server JSON-RPC read timeout.
 	// Zero uses the 15 s default in codexclient.NewConn.
@@ -277,6 +283,7 @@ func (r *Runtime) registerSubsystemFactories() {
 		state.LaunchSubsystemCLI: clisubsystem.NewFactory(),
 		state.LaunchSubsystemStream: cstream.NewFactory(cstream.FactoryConfig{
 			Runtime:          r,
+			Dispatcher:       r.cfg.StreamDispatcher,
 			ResolveSockPaths: r.resolveStreamSockPaths,
 			IsContainer:      func(project string) bool { return launcher(r.cfg).IsContainer(project) },
 			ActiveFrameID:    func() state.FrameID { return r.activeFrameID },

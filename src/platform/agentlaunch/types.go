@@ -4,8 +4,13 @@ import "context"
 
 // LaunchPlan carries the pure launch parameters. ForceHost replaces the
 // client/state SandboxOverride == SandboxOverrideHost sentinel.
+//
+// Argv, when non-nil, holds the structured argv for Spawn (no host-side shell).
+// Command is the shell-joined string form used by tmux pane launchers.
+// Both are populated by per-agent lib builders; callers choose which to use.
 type LaunchPlan struct {
 	Command   string
+	Argv      []string
 	Env       map[string]string
 	StartDir  string
 	Project   string
@@ -21,8 +26,12 @@ type Mount struct {
 // applied. Command/StartDir/Env are handed to the caller's spawn layer (a tmux
 // backend for roost, a direct stdio exec for the orchestrator);
 // Cleanup is called when the launch is torn down.
+//
+// Argv, when non-nil, is the argv for Spawn (no host-side shell). Command is the
+// shell-joined equivalent for tmux pane launchers. Dispatchers populate both.
 type WrappedLaunch struct {
 	Command          string
+	Argv             []string
 	StartDir         string
 	Env              map[string]string
 	Cleanup          func(context.Context) error

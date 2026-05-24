@@ -61,8 +61,8 @@ func (s *scriptedServer) OnServerRequest(id int64, method string, _ json.RawMess
 }
 
 // makeScriptedProc wires a runner to a scriptedServer over an in-memory pipe.
-func makeScriptedProc(ss *scriptedServer) procFunc {
-	return func(ctx context.Context, dir string, env map[string]string, command string) (io.ReadCloser, io.WriteCloser, func(), error) {
+func makeScriptedProc(ss *scriptedServer) spawnFunc {
+	return func(ctx context.Context, _ agentlaunch.WrappedLaunch, _ agentlaunch.SpawnOptions) (agentlaunch.SpawnResult, error) {
 		pr1, pw1 := io.Pipe()
 		pr2, pw2 := io.Pipe()
 
@@ -77,7 +77,7 @@ func makeScriptedProc(ss *scriptedServer) procFunc {
 			<-ctx.Done()
 			_ = pw1.Close()
 		}()
-		return pr1, pw2, func() {}, nil
+		return agentlaunch.SpawnResult{Stdout: pr1, Stdin: pw2, Wait: func() error { return nil }}, nil
 	}
 }
 
@@ -106,7 +106,7 @@ func (f *fakeStateRefresher) callCount() int {
 }
 
 // makeLoopRunner builds a Runner with multi-turn support for loop tests.
-func makeLoopRunner(t *testing.T, maxTurns int, proc procFunc, tr stateRefresher) *Runner {
+func makeLoopRunner(t *testing.T, maxTurns int, spawn spawnFunc, tr stateRefresher) *Runner {
 	t.Helper()
 	wsRoot := t.TempDir()
 	cfg := wfconfig.Config{
@@ -120,7 +120,7 @@ func makeLoopRunner(t *testing.T, maxTurns int, proc procFunc, tr stateRefresher
 		Cfg:        cfg,
 		Dispatcher: agentlaunch.DirectDispatcher{},
 		Tracker:    tr,
-		proc:       proc,
+		spawn:      spawn,
 	}
 }
 

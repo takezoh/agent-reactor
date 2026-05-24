@@ -112,9 +112,9 @@ func (f *fakeServer) OnServerRequest(id int64, method string, params json.RawMes
 	}
 }
 
-// makeFakeProc returns a procFunc that wires runner ↔ fakeServer via io.Pipe.
-func makeFakeProc(fs *fakeServer) procFunc {
-	return func(ctx context.Context, dir string, env map[string]string, command string) (io.ReadCloser, io.WriteCloser, func(), error) {
+// makeFakeProc returns a spawnFunc that wires runner ↔ fakeServer via io.Pipe.
+func makeFakeProc(fs *fakeServer) spawnFunc {
+	return func(ctx context.Context, w agentlaunch.WrappedLaunch, _ agentlaunch.SpawnOptions) (agentlaunch.SpawnResult, error) {
 		// runner reads pr1; server reads pr2
 		pr1, pw1 := io.Pipe()
 		pr2, pw2 := io.Pipe()
@@ -132,35 +132,35 @@ func makeFakeProc(fs *fakeServer) procFunc {
 
 		// The stdio transport is not context-aware; emulate process death on
 		// cancellation by closing the runner's read end so its loop sees EOF
-		// (a real bash subprocess dies and EOFs its stdout the same way).
+		// (a real subprocess dies and EOFs its stdout the same way).
 		go func() {
 			<-ctx.Done()
 			_ = pw1.Close()
 		}()
 
-		return pr1, pw2, func() {}, nil
+		return agentlaunch.SpawnResult{Stdout: pr1, Stdin: pw2, Wait: func() error { return nil }}, nil
 	}
 }
 
-func makeRunnerWithCfg(t *testing.T, cfg wfconfig.Config, proc procFunc) *Runner {
+func makeRunnerWithCfg(t *testing.T, cfg wfconfig.Config, spawn spawnFunc) *Runner {
 	t.Helper()
 	return &Runner{
 		Workspace:      workspace.New(cfg),
 		Cfg:            cfg,
 		PromptTemplate: "",
 		Dispatcher:     agentlaunch.DirectDispatcher{},
-		proc:           proc,
+		spawn:          spawn,
 	}
 }
 
-func makeRunner(t *testing.T, tmpl string, proc procFunc) *Runner {
+func makeRunner(t *testing.T, tmpl string, spawn spawnFunc) *Runner {
 	t.Helper()
 	wsRoot := t.TempDir()
 	cfg := wfconfig.Config{
 		Workspace: wfconfig.WorkspaceConfig{Root: wsRoot},
 		Codex:     wfconfig.CodexConfig{Command: "unused-in-test"},
 	}
-	r := makeRunnerWithCfg(t, cfg, proc)
+	r := makeRunnerWithCfg(t, cfg, spawn)
 	r.PromptTemplate = tmpl
 	return r
 }
@@ -238,7 +238,7 @@ func TestSpawn_turnTimeoutKillsAndFails(t *testing.T) {
 		Cfg:            cfg,
 		PromptTemplate: "",
 		Dispatcher:     agentlaunch.DirectDispatcher{},
-		proc:           makeFakeProc(fs),
+		spawn:          makeFakeProc(fs),
 	}
 	iss := tracker.Issue{Identifier: "PROJ-T"}
 
@@ -287,7 +287,7 @@ func TestSpawn_beforeRunFailureAborts(t *testing.T) {
 		Cfg:            cfg,
 		PromptTemplate: "",
 		Dispatcher:     agentlaunch.DirectDispatcher{},
-		proc:           makeFakeProc(&fakeServer{}),
+		spawn:          makeFakeProc(&fakeServer{}),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -335,8 +335,8 @@ func TestSPEC_9_4_AfterRunCalledOnLaunchConnFailure(t *testing.T) {
 	}
 	iss := tracker.Issue{Identifier: "PROJ-AR2"}
 
-	failProc := func(_ context.Context, _ string, _ map[string]string, _ string) (io.ReadCloser, io.WriteCloser, func(), error) {
-		return nil, nil, nil, errors.New("proc: simulated launch failure")
+	failProc := func(_ context.Context, _ agentlaunch.WrappedLaunch, _ agentlaunch.SpawnOptions) (agentlaunch.SpawnResult, error) {
+		return agentlaunch.SpawnResult{}, errors.New("proc: simulated launch failure")
 	}
 	r := makeRunnerWithCfg(t, cfg, failProc)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -407,7 +407,7 @@ func TestSpawn_dispatcherWrapInvoked(t *testing.T) {
 		Cfg:            cfg,
 		PromptTemplate: "",
 		Dispatcher:     d,
-		proc:           makeFakeProc(fs),
+		spawn:          makeFakeProc(fs),
 	}
 	iss := tracker.Issue{Identifier: "PROJ-D1"}
 
@@ -447,7 +447,7 @@ func TestSpawn_perProjectContainerKey(t *testing.T) {
 			Cfg:            cfg,
 			PromptTemplate: "",
 			Dispatcher:     d,
-			proc:           makeFakeProc(fs),
+			spawn:          makeFakeProc(fs),
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_, err := r.spawnWith(ctx, tracker.Issue{Identifier: id}, 1, func(Event) {})
@@ -474,19 +474,21 @@ func TestSpawn_wrappedFieldsPropagateToProc(t *testing.T) {
 		Codex:     wfconfig.CodexConfig{Command: "original"},
 	}
 
-	var gotDir, gotCmd string
+	var gotDir string
+	var gotArgv []string
 	var gotEnv map[string]string
-	capturingProc := func(ctx context.Context, dir string, env map[string]string, command string) (io.ReadCloser, io.WriteCloser, func(), error) {
-		gotDir = dir
-		gotEnv = env
-		gotCmd = command
-		return makeFakeProc(fs)(ctx, dir, env, command)
+	capturingProc := func(ctx context.Context, w agentlaunch.WrappedLaunch, opts agentlaunch.SpawnOptions) (agentlaunch.SpawnResult, error) {
+		gotDir = w.StartDir
+		gotEnv = w.Env
+		gotArgv = w.Argv
+		return makeFakeProc(fs)(ctx, w, opts)
 	}
 
 	overrideDir := t.TempDir()
 	d := &fakeDispatcher{
 		wrapped: agentlaunch.WrappedLaunch{
 			Command:  "overridden-cmd",
+			Argv:     []string{"overridden-cmd"},
 			StartDir: overrideDir,
 			Env:      map[string]string{"MY_KEY": "MY_VAL"},
 		},
@@ -496,7 +498,7 @@ func TestSpawn_wrappedFieldsPropagateToProc(t *testing.T) {
 		Cfg:            cfg,
 		PromptTemplate: "",
 		Dispatcher:     d,
-		proc:           capturingProc,
+		spawn:          capturingProc,
 	}
 	iss := tracker.Issue{Identifier: "PROJ-D2"}
 
@@ -505,7 +507,7 @@ func TestSpawn_wrappedFieldsPropagateToProc(t *testing.T) {
 	_, err := r.spawnWith(ctx, iss, 1, func(Event) {})
 	require.NoError(t, err)
 
-	assert.Equal(t, "overridden-cmd", gotCmd)
+	assert.Equal(t, []string{"overridden-cmd"}, gotArgv)
 	assert.Equal(t, overrideDir, gotDir)
 	assert.Equal(t, "MY_VAL", gotEnv["MY_KEY"])
 	// Direct-mode regression guard: when wrapped.StartDir equals the host path,
@@ -539,7 +541,7 @@ func TestSpawn_cleanupCalledOnceAfterTurnCompleted(t *testing.T) {
 		Cfg:            cfg,
 		PromptTemplate: "",
 		Dispatcher:     d,
-		proc:           makeFakeProc(fs),
+		spawn:          makeFakeProc(fs),
 	}
 	iss := tracker.Issue{Identifier: "PROJ-CL1"}
 
@@ -581,7 +583,7 @@ func TestSpawn_cleanupCalledOnceOnKill(t *testing.T) {
 		Cfg:            cfg,
 		PromptTemplate: "",
 		Dispatcher:     d,
-		proc:           makeFakeProc(fs),
+		spawn:          makeFakeProc(fs),
 	}
 	iss := tracker.Issue{Identifier: "PROJ-CL2"}
 
@@ -624,7 +626,7 @@ func TestSpawn_startTurnUsesWrappedStartDir(t *testing.T) {
 		Cfg:            cfg,
 		PromptTemplate: "",
 		Dispatcher:     d,
-		proc:           makeFakeProc(fs),
+		spawn:          makeFakeProc(fs),
 	}
 	iss := tracker.Issue{Identifier: "PROJ-SDC"}
 
@@ -654,7 +656,7 @@ func TestSpawn_startTurnUsesWrappedStartDir_directFallback(t *testing.T) {
 		Cfg:            cfg,
 		PromptTemplate: "",
 		Dispatcher:     d,
-		proc:           makeFakeProc(fs),
+		spawn:          makeFakeProc(fs),
 	}
 	iss := tracker.Issue{Identifier: "PROJ-SDD"}
 
@@ -754,7 +756,7 @@ func TestSpawn_promptLoaderUsedPerDispatch(t *testing.T) {
 		Cfg:          cfg,
 		PromptLoader: loader,
 		Dispatcher:   agentlaunch.DirectDispatcher{},
-		proc:         makeFakeProc(fs),
+		spawn:          makeFakeProc(fs),
 	}
 
 	events := collectEvents(t, r, tracker.Issue{Identifier: "PROJ-PL1"})
@@ -768,7 +770,7 @@ func TestSpawn_promptLoaderUsedPerDispatch(t *testing.T) {
 	mu.Unlock()
 
 	fs2 := &fakeServer{}
-	r.proc = makeFakeProc(fs2)
+	r.spawn = makeFakeProc(fs2)
 	events2 := collectEvents(t, r, tracker.Issue{Identifier: "PROJ-PL2"})
 	require.GreaterOrEqual(t, len(events2), 2)
 	assert.Equal(t, EventTurnCompleted, events2[1].Kind)
@@ -834,7 +836,7 @@ func makeRunnerWithCodex(t *testing.T, codexCfg wfconfig.CodexConfig, fs *fakeSe
 		Cfg:            cfg,
 		PromptTemplate: "",
 		Dispatcher:     agentlaunch.DirectDispatcher{},
-		proc:           makeFakeProc(fs),
+		spawn:          makeFakeProc(fs),
 	}
 }
 

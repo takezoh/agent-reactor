@@ -13,18 +13,15 @@ type fakeRuntime struct {
 }
 
 func (f *fakeRuntime) Enqueue(e state.Event) { f.events = append(f.events, e) }
-func (f *fakeRuntime) ContainerExecConfig(context.Context, string) (*ContainerExecConfig, error) {
-	return nil, nil
-}
 
 func TestStopBeforeStartIsNoop(t *testing.T) {
-	b := New(&fakeRuntime{}, "sid", "sess1", "/p", "codex", nil, "", false, false, "/sock", "/csock", 0, nil, 0)
+	b, _ := newTestBackend()
 	// Never Started: cancel and done are nil. Stop must not panic or block.
 	b.Stop(context.Background())
 }
 
 func TestStopCancelsAndWaitsForReap(t *testing.T) {
-	b := New(&fakeRuntime{}, "sid", "sess1", "/p", "codex", nil, "", false, false, "/sock", "/csock", 0, nil, 0)
+	b, _ := newTestBackend()
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 	b.done = make(chan struct{})
 	// Emulate waitProcess: closes done once the subsystem ctx is cancelled.
@@ -46,7 +43,7 @@ func TestStopCancelsAndWaitsForReap(t *testing.T) {
 }
 
 func TestBackendKindAndBridgePort(t *testing.T) {
-	b := New(&fakeRuntime{}, "sid", "sess1", "/p", "codex", nil, "", false, false, "/sock", "/csock", 1234, nil, 0)
+	b := New(&fakeRuntime{}, nil, "sid", "sess1", "/p", "codex", nil, "", false, false, "/sock", "/csock", 1234, nil, 0)
 	if b.Kind() != state.LaunchSubsystemStream {
 		t.Errorf("Kind = %v", b.Kind())
 	}
@@ -56,7 +53,7 @@ func TestBackendKindAndBridgePort(t *testing.T) {
 }
 
 func TestReleaseFrameAndLookup(t *testing.T) {
-	b := New(&fakeRuntime{}, "sid", "sess1", "/p", "codex", nil, "", false, false, "/sock", "/csock", 0, nil, 0)
+	b, _ := newTestBackend()
 	b.mu.Lock()
 	b.frames["f1"] = &frameBinding{frameID: "f1", threadID: "t1"}
 	b.threads["t1"] = "f1"
@@ -105,16 +102,5 @@ func TestFactoryRange(t *testing.T) {
 	})
 	if count != 1 {
 		t.Errorf("early-stop visited %d, want 1", count)
-	}
-}
-
-func TestIsContainerProject(t *testing.T) {
-	b := New(&fakeRuntime{}, "sid", "sess1", "/p", "codex", nil, "", false, false, "/sock", "/csock", 0, nil, 0)
-	ok, err := b.isContainerProject(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok {
-		t.Errorf("nil container config should be host mode")
 	}
 }

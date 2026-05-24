@@ -9,7 +9,7 @@ import (
 
 func newTestBackend() (*Backend, *fakeRuntime) {
 	fr := &fakeRuntime{}
-	b := New(fr, "sid", "sess1", "/p", "codex", nil, "", false, false, "/sock", "/csock", 0,
+	b := New(fr, nil, "sid", "sess1", "/p", "codex", nil, "", false, false, "/sock", "/csock", 0,
 		func() state.FrameID { return "" }, 0)
 	return b, fr
 }

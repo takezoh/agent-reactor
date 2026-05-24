@@ -123,7 +123,7 @@ func buildRuntime(ctx context.Context, cfg *config.Config, client *tmux.Client, 
 
 	featureSet := features.FromConfig(cfg.Features.Enabled, features.All())
 	sbResolver := platformconfig.NewSandboxResolver(cfg.Sandbox)
-	agentLauncher, err := newAgentLauncher(ctx, cfg.Sandbox, sbResolver, cfg.Projects, dataDir, sockPath)
+	agentLauncher, streamDispatcher, err := newAgentLauncher(ctx, cfg.Sandbox, sbResolver, cfg.Projects, dataDir, sockPath)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -144,6 +144,7 @@ func buildRuntime(ctx context.Context, cfg *config.Config, client *tmux.Client, 
 		Tap:               paneTap,
 		Features:          featureSet,
 		Launcher:          agentLauncher,
+		StreamDispatcher:  streamDispatcher,
 		StreamReadTimeout: time.Duration(cfg.Codex.ReadTimeoutMs) * time.Millisecond,
 	})
 	rt.SetAliases(cfg.Session.Aliases)
@@ -337,17 +338,22 @@ func shouldKeepRuntimeAliveAfterAttach(err error, sessionExists bool) bool {
 	return err != nil && sessionExists
 }
 
-// newAgentLauncher returns the AgentLauncher for the configured sandbox mode.
-// Routes each launch to direct or devcontainer based on the effective config
-// for that project (user scope + optional project scope).
-func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, resolver *platformconfig.SandboxResolver, projects platformconfig.ProjectsConfig, dataDir, sockPath string) (runtime.AgentLauncher, error) {
+// newAgentLauncher returns the AgentLauncher (TTY, for tmux panes) and
+// StreamDispatcher (non-TTY, for codex app-server stdio) for the configured
+// sandbox mode. Both dispatchers share the same devcontainer manager so
+// container provisioning is consistent.
+func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, resolver *platformconfig.SandboxResolver, projects platformconfig.ProjectsConfig, dataDir, sockPath string) (runtime.AgentLauncher, agentlaunch.Dispatcher, error) {
 	d := &agentlaunch.SandboxDispatcher{
+		Resolver: resolver,
+		Direct:   agentlaunch.DirectDispatcher{SockPath: sockPath},
+	}
+	sd := &agentlaunch.SandboxDispatcher{
 		Resolver: resolver,
 		Direct:   agentlaunch.DirectDispatcher{SockPath: sockPath},
 	}
 	if sb.Mode == "devcontainer" {
 		if _, err := exec.LookPath("docker"); err != nil {
-			return nil, fmt.Errorf("sandbox: devcontainer mode requires docker in PATH: %w", err)
+			return nil, nil, fmt.Errorf("sandbox: devcontainer mode requires docker in PATH: %w", err)
 		}
 		currentHost := os.Getenv("DOCKER_HOST")
 		if host := platformconfig.ResolveDockerHost(
@@ -368,7 +374,7 @@ func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, reso
 			MCPSock: agentlaunch.ContainerMCPSockPath,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("sandbox: start in-process credproxy: %w", err)
+			return nil, nil, fmt.Errorf("sandbox: start in-process credproxy: %w", err)
 		}
 		// credproxy providers run under a child of this ctx (the daemon context).
 		// The coordinator's defer cancel() on graceful shutdown cascades into
@@ -385,9 +391,16 @@ func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, reso
 			dataDir,
 			true, // TUI runs agents in interactive tmux panes: allocate a TTY
 		)
+		sd.Devcontainer = agentlaunch.NewDevcontainerLauncher(mgr,
+			func(project string) platformconfig.SandboxConfig { return resolver.Resolve(project) },
+			func(project string) *platformconfig.SandboxConfig { return resolver.ResolveProjectScope(project) },
+			runner,
+			dataDir,
+			false, // stream daemon uses stdio JSON-RPC: no TTY
+		)
 		slog.Info("sandbox: devcontainer backend enabled")
 	}
-	return runtime.NewDispatcherAdapter(d), nil
+	return runtime.NewDispatcherAdapter(d), sd, nil
 }
 
 // resolveShellDisplayFromValues picks the display name (basename) for the

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -17,14 +16,14 @@ import (
 	"github.com/takezoh/agent-roost/client/runtime/subsystem"
 	"github.com/takezoh/agent-roost/client/state"
 	"github.com/takezoh/agent-roost/platform/agent/codexclient"
+	"github.com/takezoh/agent-roost/platform/agentlaunch"
+	libcodex "github.com/takezoh/agent-roost/platform/lib/codex"
 	"github.com/takezoh/agent-roost/platform/procgroup"
 )
 
 const (
 	serverDialTimeout    = 15 * time.Second
-	containerEnsureLimit = 120 * time.Second // matches devcontainer_launcher.containerEnsureTimeout; cannot share due to import cycle
-
-	resumePhasePending  = "resume_pending"
+resumePhasePending  = "resume_pending"
 	resumePhaseAttached = "attached"
 
 	// stopGrace bounds how long Stop waits for the read loop + process Wait to
@@ -34,21 +33,9 @@ const (
 )
 
 // RuntimeHook is implemented by *runtime.Runtime and lets the stream backend
-// enqueue events and build container server commands without a circular import.
+// enqueue events without a circular import.
 type RuntimeHook interface {
 	Enqueue(event state.Event)
-	// ContainerExecConfig returns docker exec parameters for the project's devcontainer,
-	// or nil if the project runs directly on the host.
-	ContainerExecConfig(ctx context.Context, project string) (*ContainerExecConfig, error)
-}
-
-// ContainerExecConfig carries the docker exec parameters needed to run a
-// command inside the project container.
-type ContainerExecConfig struct {
-	ContainerID string
-	User        string // empty = default user
-	WorkDir     string // empty = default cwd
-	PreExec     string // shell command to run before the binary (mise/asdf init), may be empty
 }
 
 // Backend is the codex app-server stream subsystem. One instance exists per
@@ -56,6 +43,7 @@ type ContainerExecConfig struct {
 // WebSocket-over-UDS connection, and per-frame thread bindings.
 type Backend struct {
 	runtime       RuntimeHook
+	dispatcher    agentlaunch.Dispatcher
 	subsystemID   state.SubsystemID
 	sessionID     state.SessionID
 	project       string
@@ -69,7 +57,7 @@ type Backend struct {
 	cancel        context.CancelFunc // cancels ctx → reaps read loop + process group
 	done          chan struct{}      // closed when waitProcess returns (process reaped)
 	tracker       *procgroup.Tracker // records pgids for crash-path reaping; may be nil
-	cmd           *exec.Cmd
+	spawnRes      agentlaunch.SpawnResult
 	conn          *codexclient.Conn
 	sockPath      string // UDS path dialed by daemon (host-side)
 	containerSock string // UDS path inside container
@@ -99,6 +87,7 @@ type frameBinding struct {
 // New constructs a Backend. Call Start before calling BindFrame.
 func New(
 	rt RuntimeHook,
+	dispatcher agentlaunch.Dispatcher,
 	subsystemID state.SubsystemID,
 	sessionID state.SessionID,
 	project, serverBin string,
@@ -112,6 +101,7 @@ func New(
 ) *Backend {
 	return &Backend{
 		runtime:       rt,
+		dispatcher:    dispatcher,
 		subsystemID:   subsystemID,
 		sessionID:     sessionID,
 		project:       project,
@@ -146,26 +136,23 @@ func (b *Backend) Start(ctx context.Context) error {
 	// read loop and SIGKILLs the app-server process group.
 	b.ctx, b.cancel = context.WithCancel(ctx)
 	b.done = make(chan struct{})
-	cmd, err := b.buildServerCommand(ctx)
+
+	res, serverErrBuf, err := b.spawnServer(ctx)
 	if err != nil {
 		b.cancel()
 		return err
 	}
-	var serverErrBuf strings.Builder
-	cmd.Stderr = newPrefixWriter(&serverErrBuf, 8192)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
+
 	t, err := codexclient.DialUDS(b.sockPath, serverDialTimeout)
 	if err != nil {
 		b.cancel()
-		_ = cmd.Wait()
+		_ = res.Wait()
 		slog.Error("stream backend: app-server dial failed",
 			"subsystem", b.subsystemID, "sock", b.sockPath,
-			"stderr", strings.TrimSpace(serverErrBuf.String()))
+			"stderr", strings.TrimSpace(serverErrBuf))
 		return err
 	}
-	b.cmd = cmd
+	b.spawnRes = res
 	b.conn = codexclient.NewConn(t, b.readTimeout)
 	go func() {
 		if err := b.conn.Run(b.ctx, b); err != nil {
@@ -182,12 +169,46 @@ func (b *Backend) Start(ctx context.Context) error {
 	return nil
 }
 
+// spawnServer wraps the app-server using the dispatcher and spawns the process.
+func (b *Backend) spawnServer(ctx context.Context) (agentlaunch.SpawnResult, string, error) {
+	sockPath := b.sockPath
+	if b.dispatcher != nil && b.dispatcher.IsContainer(b.project) {
+		sockPath = b.containerSock
+	}
+	argv := libcodex.AppServerListenArgs(b.serverBin, sockPath, b.serverArgs, b.sandboxed)
+
+	plan := agentlaunch.LaunchPlan{
+		Command:  strings.Join(argv, " "),
+		Argv:     argv,
+		Project:  b.project,
+		StartDir: "",
+	}
+
+	var wrapped agentlaunch.WrappedLaunch
+	var err error
+	if b.dispatcher != nil {
+		wrapped, err = b.dispatcher.Wrap(ctx, string(b.subsystemID), plan)
+		if err != nil {
+			return agentlaunch.SpawnResult{}, "", fmt.Errorf("stream backend: dispatch wrap: %w", err)
+		}
+	} else {
+		wrapped = agentlaunch.WrappedLaunch{Argv: argv}
+	}
+
+	var errBuf strings.Builder
+	res, err := agentlaunch.Spawn(b.ctx, wrapped, agentlaunch.SpawnOptions{
+		InheritEnv: true,
+		Stderr:     newPrefixWriter(&errBuf, 8192),
+	})
+	return res, errBuf.String(), err
+}
+
 // trackProcessGroups records the app-server pgid so a future boot's
 // PruneOrphans reaps it if this daemon dies without a graceful Stop.
 // No-op when tracker is nil.
 func (b *Backend) trackProcessGroups() {
-	if b.cmd != nil && b.cmd.Process != nil {
-		b.tracker.Track(b.cmd.Process.Pid)
+	if b.spawnRes.PID != 0 {
+		b.tracker.Track(b.spawnRes.PID)
 	}
 }
 
@@ -225,7 +246,7 @@ func (b *Backend) BindFrame(ctx context.Context, req subsystem.BindRequest) (sub
 	if err != nil {
 		return subsystem.BindResult{}, err
 	}
-	result.Plan.Command = BuildRemoteCommand(b.bridgePort, b.sessionID, threadID, startDir)
+	result.Plan.Command = strings.Join(libcodex.RemoteAttachArgs(b.bridgePort, string(b.sessionID), threadID, startDir), " ")
 	result.Plan.Stdin = nil
 	result.Plan.Stream.ResumeThreadID = threadID
 	return result, nil
@@ -270,40 +291,6 @@ func (b *Backend) OnServerRequest(id int64, method string, params json.RawMessag
 	b.handleRequest(id, method, params)
 }
 
-func (b *Backend) isContainerProject(ctx context.Context) (bool, error) {
-	cfg, err := b.runtime.ContainerExecConfig(ctx, b.project)
-	return cfg != nil, err
-}
-
-func (b *Backend) buildServerCommand(ctx context.Context) (*exec.Cmd, error) {
-	args := buildServerArgs(b.serverArgs, b.sandboxed, b.sockPath)
-	containerCtx, cancel := context.WithTimeout(ctx, containerEnsureLimit)
-	defer cancel()
-	containerCfg, err := b.runtime.ContainerExecConfig(containerCtx, b.project)
-	if err != nil {
-		return nil, err
-	}
-	if containerCfg == nil {
-		return procgroup.Command(procgroup.Spec{Ctx: b.ctx, Bin: b.serverBin, Args: args}), nil
-	}
-	containerArgs := buildServerArgs(b.serverArgs, b.sandboxed, b.containerSock)
-	execArgs := []string{"exec", "-i"}
-	if containerCfg.User != "" {
-		execArgs = append(execArgs, "-u", containerCfg.User)
-	}
-	if containerCfg.WorkDir != "" {
-		execArgs = append(execArgs, "-w", containerCfg.WorkDir)
-	}
-	execArgs = append(execArgs, containerCfg.ContainerID)
-	if containerCfg.PreExec != "" {
-		serverCmdline := shellJoinArgv(append([]string{b.serverBin}, containerArgs...))
-		execArgs = append(execArgs, "bash", "-lc", containerCfg.PreExec+"; exec "+serverCmdline)
-	} else {
-		execArgs = append(execArgs, b.serverBin)
-		execArgs = append(execArgs, containerArgs...)
-	}
-	return procgroup.Command(procgroup.Spec{Ctx: b.ctx, Bin: "docker", Args: execArgs}), nil
-}
 
 // bindThread associates a new frame with a thread in the app-server and
 // returns the thread ID bound (either resumed or empty if a new thread).
@@ -343,9 +330,9 @@ func (b *Backend) bindThread(frameID state.FrameID, startDir, worktreePath strin
 
 func (b *Backend) waitProcess() {
 	defer close(b.done)
-	err := b.cmd.Wait()
-	if b.cmd.Process != nil {
-		b.tracker.Untrack(b.cmd.Process.Pid)
+	err := b.spawnRes.Wait()
+	if b.spawnRes.PID != 0 {
+		b.tracker.Untrack(b.spawnRes.PID)
 	}
 	if err != nil {
 		slog.Error("stream backend exited", "subsystem", b.subsystemID, "err", err)

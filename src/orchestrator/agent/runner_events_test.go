@@ -99,9 +99,9 @@ func (s *startupFailServer) OnNotification(method string, _ json.RawMessage) {
 	}
 }
 
-func makeStartupFailProc() (procFunc, *startupFailServer) {
+func makeStartupFailProc() (spawnFunc, *startupFailServer) {
 	ss := &startupFailServer{}
-	proc := func(ctx context.Context, dir string, env map[string]string, command string) (io.ReadCloser, io.WriteCloser, func(), error) {
+	proc := func(ctx context.Context, _ agentlaunch.WrappedLaunch, _ agentlaunch.SpawnOptions) (agentlaunch.SpawnResult, error) {
 		pr1, pw1 := io.Pipe()
 		pr2, pw2 := io.Pipe()
 
@@ -117,7 +117,7 @@ func makeStartupFailProc() (procFunc, *startupFailServer) {
 			<-ctx.Done()
 			_ = pw1.Close()
 		}()
-		return pr1, pw2, func() {}, nil
+		return agentlaunch.SpawnResult{Stdout: pr1, Stdin: pw2, Wait: func() error { return nil }}, nil
 	}
 	return proc, ss
 }
@@ -137,7 +137,7 @@ func TestSpawn_startupFailedEmitsEvent(t *testing.T) {
 		Cfg:            cfg,
 		PromptTemplate: "",
 		Dispatcher:     agentlaunch.DirectDispatcher{},
-		proc:           proc,
+		spawn:          proc,
 	}
 	iss := tracker.Issue{Identifier: "PROJ-SF"}
 

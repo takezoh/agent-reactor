@@ -104,8 +104,16 @@ func (l *DevcontainerLauncher) Wrap(ctx context.Context, frameID string, plan La
 		return WrappedLaunch{}, fmt.Errorf("devcontainer launcher: build command: %w", err)
 	}
 
+	// Tokenize the generated docker exec command string into argv for Spawn.
+	// BuildLaunchCommand produces well-formed single-quoted tokens that SplitArgs handles correctly.
+	argv, err := SplitArgs(cmd)
+	if err != nil {
+		return WrappedLaunch{}, fmt.Errorf("devcontainer launcher: tokenize command: %w", err)
+	}
+
 	return WrappedLaunch{
 		Command:          cmd,
+		Argv:             argv,
 		StartDir:         workDir,
 		Env:              outEnv,
 		Cleanup:          l.makeCleanup(frameID, inst),

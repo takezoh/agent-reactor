@@ -16,6 +16,7 @@ func (d DirectDispatcher) Wrap(_ context.Context, _ string, plan LaunchPlan) (Wr
 	}
 	return WrappedLaunch{
 		Command:  plan.Command,
+		Argv:     plan.Argv,
 		StartDir: plan.StartDir,
 		Env:      merged,
 	}, nil

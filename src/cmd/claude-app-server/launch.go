@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	claudecli "github.com/takezoh/agent-roost/platform/lib/claude/cli"
 	"github.com/takezoh/agent-roost/platform/procgroup"
 )
 
@@ -15,19 +16,6 @@ import (
 //   - appendSystemPrompt, when non-empty, is passed via --append-system-prompt.
 //   - extraEnv is appended to the inherited environment (e.g. TOOL_BRIDGE_SOCKET).
 type claudeLauncher func(ctx context.Context, cwd, resumeSessionID, appendSystemPrompt, prompt string, extraEnv []string) (io.ReadCloser, func() error, error)
-
-// claudeArgs builds the claude CLI argv. --verbose is mandatory: current claude
-// versions reject `-p --output-format stream-json` without it ("requires --verbose").
-func claudeArgs(resumeSessionID, appendSystemPrompt, prompt string) []string {
-	args := []string{"-p", "--output-format", "stream-json", "--verbose"}
-	if appendSystemPrompt != "" {
-		args = append(args, "--append-system-prompt", appendSystemPrompt)
-	}
-	if resumeSessionID != "" {
-		args = append(args, "--resume", resumeSessionID)
-	}
-	return append(args, prompt)
-}
 
 func realLaunch(ctx context.Context, cwd, resumeSessionID, appendSystemPrompt, prompt string, extraEnv []string) (io.ReadCloser, func() error, error) {
 	bin := os.Getenv("CLAUDE_BIN")
@@ -45,7 +33,7 @@ func realLaunch(ctx context.Context, cwd, resumeSessionID, appendSystemPrompt, p
 	cmd := procgroup.Command(procgroup.Spec{
 		Ctx:  ctx,
 		Bin:  bin,
-		Args: claudeArgs(resumeSessionID, appendSystemPrompt, prompt),
+		Args: claudecli.AppServerArgs(resumeSessionID, appendSystemPrompt, prompt),
 		Dir:  cwd,
 		Env:  env,
 	})

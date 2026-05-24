@@ -298,8 +298,13 @@ func (r *Runner) renderPrompt(issue tracker.Issue, attempt int) (string, error) 
 }
 
 func (r *Runner) launchConn(ctx context.Context, frameID, wsPath, issueID string, emit func(Event)) (*launchResult, error) {
+	argv, err := agentlaunch.SplitArgs(r.Cfg.Codex.Command)
+	if err != nil {
+		return nil, fmt.Errorf("agent: parse command: %w", err)
+	}
 	plan := agentlaunch.LaunchPlan{
 		Command: r.Cfg.Codex.Command,
+		Argv:    argv,
 		Env:     map[string]string{},
 		// StartDir is the per-issue workspace (agent cwd); Project is the
 		// workspace root so every issue shares one per-project devcontainer.
@@ -312,10 +317,12 @@ func (r *Runner) launchConn(ctx context.Context, frameID, wsPath, issueID string
 		return nil, fmt.Errorf("agent: dispatch wrap: %w", err)
 	}
 
-	stdout, stdin, wait, err := r.proc(ctx, wrapped.StartDir, wrapped.Env, wrapped.Command)
+	res, err := r.spawn(ctx, wrapped, agentlaunch.SpawnOptions{InheritEnv: true})
 	if err != nil {
 		return nil, err
 	}
+	stdout, stdin := res.Stdout, res.Stdin
+	wait := func() { _ = res.Wait() }
 
 	readTimeout := time.Duration(r.Cfg.Codex.ReadTimeoutMS) * time.Millisecond
 	tr := codexclient.StdioTransport(stdout, stdin)

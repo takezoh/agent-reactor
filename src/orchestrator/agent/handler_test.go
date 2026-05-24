@@ -16,6 +16,7 @@ import (
 	"github.com/takezoh/agent-roost/orchestrator/scheduler"
 	"github.com/takezoh/agent-roost/platform/agent/codexclient"
 	"github.com/takezoh/agent-roost/platform/agent/codexschema"
+	"github.com/takezoh/agent-roost/platform/agentlaunch"
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
@@ -209,9 +210,9 @@ func (s *toolCallServer) OnNotification(method string, _ json.RawMessage) {
 }
 
 // makeConnectedProc wires a codexclient.Handler to a pipe-based Conn, calls setSrv with the
-// resulting Server, and returns a procFunc. It mirrors the pattern in makeFakeProc.
-func makeConnectedProc(h codexclient.Handler, setSrv func(*codexclient.Server)) procFunc {
-	return func(ctx context.Context, _ string, _ map[string]string, _ string) (io.ReadCloser, io.WriteCloser, func(), error) {
+// resulting Server, and returns a spawnFunc. It mirrors the pattern in makeFakeProc.
+func makeConnectedProc(h codexclient.Handler, setSrv func(*codexclient.Server)) spawnFunc {
+	return func(ctx context.Context, _ agentlaunch.WrappedLaunch, _ agentlaunch.SpawnOptions) (agentlaunch.SpawnResult, error) {
 		pr1, pw1 := io.Pipe()
 		pr2, pw2 := io.Pipe()
 		serverConn := codexclient.NewConn(codexclient.StdioTransport(pr2, pw1), 2*time.Second)
@@ -224,11 +225,11 @@ func makeConnectedProc(h codexclient.Handler, setSrv func(*codexclient.Server)) 
 			<-ctx.Done()
 			_ = pw1.Close()
 		}()
-		return pr1, pw2, func() {}, nil
+		return agentlaunch.SpawnResult{Stdout: pr1, Stdin: pw2, Wait: func() error { return nil }}, nil
 	}
 }
 
-func makeToolCallProc(ts *toolCallServer) procFunc {
+func makeToolCallProc(ts *toolCallServer) spawnFunc {
 	return makeConnectedProc(ts, func(s *codexclient.Server) { ts.srv = s })
 }
 
@@ -242,9 +243,9 @@ func makeLinearServer(t *testing.T, respBody string) *lineargql.Client {
 	return lineargql.New(srv.URL, "test-token")
 }
 
-func makeRunnerWithLinear(t *testing.T, lc *lineargql.Client, proc procFunc) *Runner {
+func makeRunnerWithLinear(t *testing.T, lc *lineargql.Client, spawn spawnFunc) *Runner {
 	t.Helper()
-	r := makeRunner(t, "", proc)
+	r := makeRunner(t, "", spawn)
 	r.LinearClient = lc
 	return r
 }
@@ -371,7 +372,7 @@ func (s *userInputRequiredServer) OnNotification(method string, _ json.RawMessag
 	}()
 }
 
-func makeUserInputRequiredProc(s *userInputRequiredServer) procFunc {
+func makeUserInputRequiredProc(s *userInputRequiredServer) spawnFunc {
 	return makeConnectedProc(s, func(srv *codexclient.Server) { s.srv = srv })
 }
 

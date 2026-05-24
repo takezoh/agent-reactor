@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/takezoh/agent-roost/client/state"
+	claudecli "github.com/takezoh/agent-roost/platform/lib/claude/cli"
 )
 
 // Claude driver: event-driven status producer for the Claude Code CLI.
@@ -156,7 +157,7 @@ func (d ClaudeDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, 
 	}
 	req, command := resolveWorktreeRequest(baseCommand, options, "--worktree")
 	command = strings.TrimSpace(command)
-	command = ensureClaudeSandboxFlag(command, sandboxed)
+	command = claudecli.SandboxFlags(command, sandboxed)
 	if mode != state.LaunchModeColdStart || cs.ClaudeSessionID == "" {
 		if mode == state.LaunchModeColdStart {
 			slog.Debug("claude: coldstart without resume", "project", project, "reason", "no_session_id")
@@ -200,29 +201,6 @@ func (d ClaudeDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, 
 		Options:  state.LaunchOptions{},
 		Stdin:    options.InitialInput,
 	}, nil
-}
-
-const (
-	claudeSandboxSkipFlag = "--allow-dangerously-skip-permissions"
-	claudeAutoModeFlag    = "--enable-auto-mode"
-)
-
-// ensureClaudeSandboxFlag enforces sandbox-required flag adjustments:
-//   - strips --enable-auto-mode (conflicts with bypass-permissions semantics)
-//   - appends --allow-dangerously-skip-permissions unless already present
-//
-// devcontainer sandboxes block the permission prompt that normally gates
-// tool use, making the bypass flag mandatory; auto-mode therefore becomes
-// redundant/conflicting and is removed.
-func ensureClaudeSandboxFlag(command string, sandboxed bool) string {
-	if !sandboxed {
-		return command
-	}
-	command = stripFlagToken(command, claudeAutoModeFlag)
-	if hasFlagToken(command, claudeSandboxSkipFlag) {
-		return command
-	}
-	return appendFlag(command, claudeSandboxSkipFlag, true)
 }
 
 func isAlphanumHyphen(s string) bool {
