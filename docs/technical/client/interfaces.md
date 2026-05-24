@@ -101,7 +101,7 @@ Hook-driven agents (Claude, Gemini) receive `DEvHook`. Stream-backed agents (Cod
 
 Driver is a **value-type plugin**: no goroutines, no I/O, no mutexes. Per-frame state is embedded on each `SessionFrame.Driver` as a `DriverState` value, and round-trips as arguments and return values of `Driver.Step`. Side effects are returned as `[]Effect` and executed by the runtime's Effect interpreter.
 
-**Launch plan is resolved in the reducer, not the runtime.** `reduceCreateSession` (or `handlePendingCreate` for planner-gated flows) calls `Driver.PrepareLaunch` synchronously, writes the normalized `LaunchOptions` onto the frame, and bakes `launch.Command` / `launch.StartDir` / `launch.Options` into `EffSpawnTmuxWindow`. The runtime interprets the effect verbatim and never calls driver methods, keeping driver-specific logic entirely inside the pure functional core.
+**Launch plan is resolved in the reducer, not the runtime.** `reduceCreateSession` (or `handlePendingCreate` for planner-gated flows) calls `Driver.PrepareLaunch` synchronously, writes the normalized `LaunchOptions` onto the frame, and bakes `launch.Command` / `launch.StartDir` / `launch.Options` into `EffSpawnTmuxWindow`. The runtime interprets the effect verbatim and never calls driver methods, keeping driver-specific logic entirely inside the pure functional core. (`LaunchPlan` and `WrappedLaunch` also carry `Argv []string` for `agentlaunch.Spawn`; the tmux pane path uses `Command`.)
 
 ```go
 // state/view/status.go — canonical Status definition (stdlib-only; no state import)
@@ -366,10 +366,20 @@ src/
 │   └── sync_test.go     Integration: proto.CmdNamePeer* == state.EventPeer* (divergence detection)
 ├── client/tools/
 │   └── tools.go         Tool + Param + ToolContext + Registry + DefaultRegistry
+├── platform/agentlaunch/
+│   ├── spawn.go         Spawn — argv-direct process launch (no host shell), SpawnResult{Stdout,Stdin,Wait,PID}
+│   ├── splitargs.go     SplitArgs — POSIX shell-word tokenizer (single/double quotes, backslash-escape)
+│   ├── types.go         LaunchPlan{Command,Argv,…} / WrappedLaunch{Command,Argv,…} — dual representation
+│   ├── devcontainer.go  DevcontainerLauncher — Wrap produces docker exec argv (TTY conditional on consumer)
+│   ├── direct.go        DirectDispatcher — pass-through (no-op wrapping)
+│   └── bridge.go        ContainerStreamBridgeCmd — sockbridge postCreate command
 ├── platform/lib/
+│   ├── codex/
+│   │   └── argv.go      Per-agent argv builders: AppServerListenArgs / RemoteAttachArgs / ParseCommand([]string) / ShellJoinArgv / CommandConfig / driver constants
 │   ├── claude/
 │   │   ├── command.go   Claude subcommand handler (registers "claude" in init)
-│   │   ├── cli/         Claude CLI launch command assembly (ResumeCommand etc.)
+│   │   ├── cli/
+│   │   │   └── argv.go  SandboxFlags (strip --enable-auto-mode, append skip flag) / AppServerArgs (resume + append-system-prompt ordering)
 │   │   ├── setup.go     Hook registration/removal in Claude settings.json
 │   │   └── transcript/  Claude JSONL transcript parsing + diff tracking
 │   ├── git/

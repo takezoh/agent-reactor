@@ -79,7 +79,7 @@ Symphony SPEC v1 Draft への conformance の正本ドキュメント。
 
 | チェック項目 | テスト |
 |---|---|
-| Launch command uses workspace cwd and invokes `bash -lc <codex.command>` | `TestSpawn_sessionStartedAndTurnCompleted` (`agent`) |
+| Launch command uses workspace cwd; `codex.command` is tokenized via `SplitArgs` and spawned argv-direct through `agentlaunch.Spawn` (no host shell); container mode wraps the argv in `docker exec` | `TestSpawn_sessionStartedAndTurnCompleted` (`agent`) |
 | Thread/turn identities extracted and used to emit `session_started` | `TestSPEC_17_5_SessionIDFormat` (`agent`) / `TestShim_SessionID` (`cmd/claude-app-server`) |
 | Request/response read timeout enforced | `TestSpawn_turnTimeoutKillsAndFails` (`agent`) |
 | Unsupported dynamic tool calls rejected without stalling | `TestHandleToolCall_unknownTool_replyError` (`agent`) |

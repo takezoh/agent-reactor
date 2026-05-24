@@ -2,7 +2,7 @@
 
 The orchestrator is a **TUI-less**, **single-authority** background service that implements the [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md). It polls a Linear tracker, dispatches coding agents to per-issue workspaces, reconciles running/stalled sessions, and exposes a read-only observability HTTP server (§13.7 — mandatory in our implementation).
 
-It lives entirely inside `orchestrator/`, does **not** import `client/`, and shares `platform/` (logger, metrics, tracker/linear, agent/codexclient, sandbox) with roost. The boundary is enforced by the `depguard` rule `client-no-orchestrator` and its converse.
+It lives entirely inside `orchestrator/`, does **not** import `client/`, and shares `platform/` (logger, metrics, tracker/linear, agent/codexclient, agentlaunch, lib/codex, sandbox) with roost. The boundary is enforced by the `depguard` rule `client-no-orchestrator` and its converse.
 
 User-facing operation (running it, the `WORKFLOW.md` config, agent selection) is in the [orchestrator user guide](../../user/orchestrator.md). Authoring the driving prompt is in [WORKFLOW.md authoring](../../agent/workflow-authoring.md).
 
@@ -29,7 +29,7 @@ On startup `cmd/orchestrator` loads the workflow, resolves config, runs a **pref
 1. **Reconcile (Part A — stall detection):** running attempts that exceeded their stall/turn timeout are killed → `WorkerExitAbnormal` → retry enqueued.
 2. **Reconcile (Part B — tracker refresh):** re-fetch tracker state; issues that left an active state are killed or continued accordingly.
 3. **Dispatch:** fetch candidate issues → filter by eligibility (blockers, active state) → sort (priority, creation time) → allocate free slots (`agent.max_concurrent_agents`) → spawn.
-4. **Spawn:** prepare the per-issue workspace (running `after_create` hooks), render the prompt, launch the agent, and stream the turn.
+4. **Spawn:** prepare the per-issue workspace (running `after_create` hooks), render the prompt, launch the agent via `agentlaunch.Spawn` (argv-direct, no host shell; `codex.command` is tokenized by `SplitArgs` then wrapped by `Dispatcher`), and stream the turn.
 5. **Worker exit:** normal exit enqueues a *continuation* retry (fixed 1s); abnormal exit / timeout enqueues a *backoff* retry (`min(10000 × 2^(n-1), max)` ms).
 
 The observability HTTP server (when enabled) reads the same scheduler snapshot.
@@ -56,7 +56,7 @@ Transition functions live in `scheduler/state_transitions.go` (`Claim`, `MarkRun
 
 ## Agent protocol
 
-The `agent.command` (Codex `app-server` or `claude-app-server`) is driven over the Codex app-server stdio protocol. Both emit the same event sequence — `thread/started → turn/started → item/* → thread/tokenUsage/updated → turn/completed` — so the scheduler is agent-agnostic. The `claude-app-server` shim wraps a Claude agent as a drop-in app-server; approval/sandbox policy hints are logged but not enforced (isolation is provided by the devcontainer, see [sandbox.md](../platform/sandbox.md)).
+The `agent.command` (Codex `app-server` or `claude-app-server`) is driven over the Codex app-server stdio protocol. The runner tokenizes the command string via `agentlaunch.SplitArgs`, wraps via `Dispatcher.Wrap`, and spawns via `agentlaunch.Spawn` (argv stdio; no host-side shell). Both emit the same event sequence — `thread/started → turn/started → item/* → thread/tokenUsage/updated → turn/completed` — so the scheduler is agent-agnostic. The `claude-app-server` shim wraps a Claude agent as a drop-in app-server; approval/sandbox policy hints are logged but not enforced (isolation is provided by the devcontainer, see [sandbox.md](../platform/sandbox.md)).
 
 ## Conformance
 
