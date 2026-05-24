@@ -206,4 +206,4 @@ The map key (`observability`) is the MCP server alias. At container launch roost
 
 `allow`/`deny` patterns match the tool name with `*` as wildcard and use deny-first, default-deny semantics. User-scope and project-scope server maps are merged; project entries override user entries on the same alias.
 
-See [Sandbox Backends](sandbox.md) for the architecture, security model, and lifecycle internals.
+See [Sandbox Backends](../technical/platform/sandbox.md) for the architecture, security model, and lifecycle internals.

@@ -11,7 +11,7 @@ Symphony SPEC 実装の全体ロードマップと進捗。設計の詳細は [0
 M2 で claude-app-server shim が完成し `codex.command` での agent 切替を実証。M3 で continuation loop (020)、
 metrics+stall (021)、observability HTTP server (022)、WORKFLOW.md hot reload (023) を実装・archive 済み。
 M4 (P9) で SPEC §17 conformance test 群（canonical `TestSPEC_*` マーカー + §17.8 実 Linear profile）と
-`docs/orchestrator/symphony-conformance.md`（SPEC §17 ↔ test 対応表 + posture）、orchestrator サービスの
+`docs/technical/orchestrator/symphony-conformance.md`（SPEC §17 ↔ test 対応表 + posture）、orchestrator サービスの
 位置付け doc（AGENTS.md / ARCHITECTURE.md）を整備（025/026、archive 済み）。
 **唯一の残件は P8b `linear_graphql` (024) の tool advertise**: handler + wiring は実装済だが、pinned codex 0.133.0 で
 `DynamicToolSpec` が schema 上 orphan（request からの `$ref` 参照ゼロ）のため宣言できず、実機 codex から到達不能。

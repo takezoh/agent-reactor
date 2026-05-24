@@ -1,44 +1,28 @@
 # Architecture
 
+This is the canonical overview of the system: its vision, design principles, the three-layer structure, and the cross-cutting conventions (feature flags, side-effect naming, dependencies). **Per-layer deep dives** — terminology, package responsibilities, design decisions, and dependency graphs — live under [`docs/technical/`](docs/technical/README.md).
+
 ## Vision
 
 When running AI agents across multiple projects, you lose track of which agents are working, which are waiting for input, and which need tool approval. Switching between them in raw tmux is slow and error-prone. roost solves this: launch sessions in seconds, see their status at a glance, and switch instantly.
 
-roost is a session lifecycle manager — not an agent orchestrator. It does not control what agents do; it gives you visibility and fast access to all of them from a single tmux-based TUI.
+roost is a session lifecycle manager — not an agent orchestrator. It does not control what agents do; it gives you visibility and fast access to all of them from a single tmux-based TUI. The separate `orchestrator` binary *does* drive agents autonomously, against an issue tracker — a different concern in a different layer.
 
 ## Design Principles
 
 - **Functional Core / Imperative Shell**: All state transitions are expressed as a pure function `state.Reduce(state, event) → (state', effects)`. I/O is emitted as `Effect` values and interpreted by a single event loop (runtime). No goroutines, mutexes, or actors exist in the state layer
 - **Driver as Value Type**: Drivers are stateless plugins. Per-frame state is embedded as a `DriverState` value on each `SessionFrame` and round-trips through `Driver.Step`. No goroutines. Drivers run synchronously inside `state.Reduce`; the only permitted synchronous I/O is **bounded read-only filesystem stat** (e.g. checking whether a resume file exists before building a launch command). Subprocess execution, network I/O, and writes must be returned as `[]Effect` and dispatched via the worker pool
 - **Single event loop**: State mutation is exclusively owned by one goroutine. Long-lived I/O readers may only emit events — they never read or write state. The worker pool (discrete jobs) and stream readers (continuous sources) are both concrete instances of this general principle. No mutexes are needed outside these sources
-- **Driver/Connector/Subsystem isolation**: Concepts specific to `driver/`, `connector/`, and tool-specific helpers in `lib/<tool>/` must not leak into `state/`, `runtime/`, `tui/`, `proto/`, or `sandbox/`. TUI never branches on driver or connector name. `sandbox/` backends are tool-agnostic and never import `driver/` or `lib/<tool>/`. Tool-specific host paths (e.g. `~/.claude*`) must not be hardcoded in any Go source — they live in user config (`~/.roost/settings.toml`). `main.go` only wires generic values from config into runtime/sandbox; it does not embed tool-specific defaults. Tool-specific environment variable names (`AWS_*`, `ANTHROPIC_*`, `GOOGLE_*`, `OPENAI_*`, etc.) must not appear as string literals in `state/`, `runtime/`, `sandbox/`, `tui/`, or `proto/` — they live exclusively in the external `credproxy` library's `providers/<name>/` packages, the local `hostexec/` package, or `lib/<tool>/`; generic layers compose these via provider-supplied helpers. Subsystem-specific backend implementations (e.g. the `stream` subsystem that fronts codex app-server) live in `runtime/subsystem/<kind>/` and are the only files permitted to import `driver/<tool>` — all other files in `runtime/` must not import `driver/`. The subsystem kind names (`cli`, `stream`) and `SubsystemID` bookkeeping exist in `runtime/` and `state/`; subsystem implementations themselves do not. **Enforcement**: import-boundary violations are caught by `depguard` (see `.golangci.yml`); driver command name strings, env variable name literals, and connector name literals in generic layers are caught by `runtime/isolation_test.go`
+- **Driver/Connector/Subsystem isolation**: Concepts specific to `driver/`, `connector/`, and tool-specific helpers in `lib/<tool>/` must not leak into `state/`, `runtime/`, `tui/`, `proto/`, or `sandbox/`. TUI never branches on driver or connector name. `sandbox/` backends are tool-agnostic and never import `driver/` or `lib/<tool>/`. Tool-specific host paths (e.g. `~/.claude*`) must not be hardcoded in any Go source — they live in user config (`~/.roost/settings.toml`). `main.go` only wires generic values from config into runtime/sandbox; it does not embed tool-specific defaults. Tool-specific environment variable names (`AWS_*`, `ANTHROPIC_*`, `GOOGLE_*`, `OPENAI_*`, etc.) must not appear as string literals in `state/`, `runtime/`, `sandbox/`, `tui/`, or `proto/` — they live exclusively in the external `credproxy` library's `providers/<name>/` packages, the local `hostexec/` package, or `lib/<tool>/`. Subsystem-specific backends (e.g. the `stream` subsystem fronting codex app-server) live in `runtime/subsystem/<kind>/` and are the only files permitted to import `driver/<tool>`. The subsystem kind names (`cli`, `stream`) and `SubsystemID` bookkeeping exist in `runtime/` and `state/`; subsystem implementations themselves do not. **Enforcement**: import-boundary violations are caught by `depguard` (see `src/.golangci.yml`); name-literal leaks are caught by `runtime/isolation_test.go`
 - **No fallbacks**: Do not synthesize "if source A is unavailable, use B". Until `Driver.Step` updates the state, the status does not change
 
 ## Documentation
 
-- [Process Model, tmux Layout, Rendering Responsibilities](docs/process-model.md) — Daemon/TUI process structure, pane layout, rendering boundary between Driver and TUI
-- [Inter-Process Communication and Tool System](docs/ipc.md) — IPC message format, command list, concurrency model (event loop + worker pool), Tool abstraction, proto type extension guidelines
-- [State Monitoring](docs/state-monitoring.md) — State detection via Driver plugins, Claude/Generic driver, persistence/restoration
-- [Interface and File Reference](docs/interfaces.md) — Go type definitions, data files, source tree
-- [Sandbox Backends](docs/sandbox.md) — per-project devcontainer isolation, image resolution from devcontainer.json, devcontainer.json support, credential proxy
-- [Testing](docs/testing.md) — testability as a design constraint, Tier-based coverage targets per package
+All documentation is organized by **audience × architecture layer** under [`docs/`](docs/README.md):
 
-## Terminology
-
-| Term | Meaning | tmux Entity |
-|------|---------|-------------|
-| **Session** | A unit of work for an AI agent. `state.Session` owns a stack of execution **frames** (`[]SessionFrame`). The active frame is always the stack tail; the root frame is the stack base and defines the session's existence — if the root frame dies, the session is deleted | None directly (frames hold the tmux panes) |
-| **Frame** | One execution context within a session. Each frame carries its own `Command`, `LaunchOptions`, `DriverState`, `SubsystemID`, and `TargetID`. For CLI agents the target is one process/session; for Codex the target is one App Server thread. Frame death truncates the stack from that frame onward; push-driver appends a new frame on top of the active frame | Logical execution target. The visible pane is owned by the subsystem, not by the frame |
-| **Subsystem** | Runtime-owned execution backend. Subsystems implement `Start/BindFrame/ReleaseFrame/Stop`: `cli` manages single-process pane launch and worktree lifecycle for CLI agents; `stream` fronts long-lived structured backends such as Codex App Server. `BindFrame` is called synchronously before tmux spawn and resolves worktree paths into `Plan.StartDir`. `ReleaseFrame` destroys any managed worktree when a frame is released. Subsystems own goroutines and I/O; Drivers are pure per-frame plugins with no I/O. **Subsystems are the only layer that knows whether a frame runs on the host or inside a container** — `SubsystemID` is opaque to Runtime/Driver/Frame, generated by the subsystem `Factory` (registered once at Runtime construction) and written onto the frame via `EvTmuxPaneSpawned`. Each `SessionFrame` carries both a `DriverState` (pure) and a `SubsystemID` (opaque key into `Runtime.subsystems`) | Usually one tmux **pane** per subsystem |
-| **Control Session** | The tmux session that houses all of roost | tmux **session** (`roost`) |
-| **Pane** | Control panes within Window 0 | tmux **pane** (`0.0`, `0.1`, `0.2`) |
-| **Connector** | A per-daemon external service integration plugin. Fetches data from external services like GitHub/Linear/Jira and displays it in the TUI. While Drivers are per-frame, Connectors have one instance per daemon | None (holds no tmux resources) |
-| **Warm start** | Runtime startup while a tmux session is alive. Restores the frame stack from `sessions.json`, rebinds each frame to its live tmux pane via tmux session-level env vars, and truncates any session at the first frame whose pane has vanished (dropping the whole session if the root frame is missing). Sandbox containers are adopted as-is | Reuses existing tmux session/pane and reuses surviving containers |
-| **Cold start** | Runtime startup when the tmux session is gone (PC reboot / tmux server death / explicit shutdown). Restores the frame stack from `sessions.json` and respawns each frame's pane in root-to-tail order via `Driver.PrepareLaunch(LaunchModeColdStart, …)`, using the persisted `LaunchOptions`. **Any container that survived from a previous run is discarded; sandboxes are provisioned fresh** so `postCreate`-launched daemons (sockbridge, codex app-server) are guaranteed to be present | Creates new tmux session/window and fresh containers |
-
-Hereafter, "session" refers to a roost session. tmux sessions are explicitly noted as "tmux session."
-
-Runtime startup is always either a Warm start or a Cold start; there is no separate first-launch branch (if sessions.json does not exist, it simply Cold starts with an empty session list).
+- **Users** — [user guide](docs/user/README.md): [getting started](docs/user/getting-started.md), [roost TUI](docs/user/roost-tui.md), [orchestrator](docs/user/orchestrator.md), [sandbox](docs/user/sandbox.md)
+- **Agents / contributors** — [agent guide](docs/agent/README.md): [contributing](docs/agent/contributing.md), [WORKFLOW.md authoring](docs/agent/workflow-authoring.md), [testing](docs/agent/testing.md)
+- **Technical (per layer)** — [platform/](docs/technical/platform/README.md) · [client/](docs/technical/client/README.md) · [orchestrator/](docs/technical/orchestrator/README.md)
 
 ## Layer Structure
 
@@ -51,117 +35,21 @@ orchestrator/  Symphony SPEC implementation — poll/dispatch/reconcile + observ
 cmd/           Binary entry points — cmd/roost/, cmd/roost-bridge/, cmd/orchestrator/, cmd/claude-app-server/
 ```
 
-Import direction: `cmd/*` → `client/*` + `orchestrator/*` + `platform/*` → (no reverse). `client/*` must not import `orchestrator/*`. `platform/*` must not import `client/*` or `orchestrator/*`. Enforced by `depguard` (see `src/.golangci.yml`).
+**Import direction**: `cmd/*` → `client/*` + `orchestrator/*` + `platform/*` → (no reverse). The three-layer boundary is enforced by `depguard` (see `src/.golangci.yml`, rules `platform-no-client-or-orchestrator` and `client-no-orchestrator`):
 
-### `platform/` — shared base
-
-```
-platform/sandbox/      Project-level sandbox backends (generic Manager[I]). devcontainer/ implements per-project container lifecycle via docker — see docs/sandbox.md
-platform/hostexec/     Host-exec broker (`container.Provider` for running allowlisted host binaries on behalf of container processes via SCM_RIGHTS stdio forwarding)
-platform/mcpproxy/     MCP proxy broker (`container.Provider` for running MCP servers on the host with JSON-RPC stdio relayed into the container; tool-level policy enforcement; generates a `.mcp.json` overlay so Claude Code routes the configured aliases through the broker automatically)
-                       Credential providers (AWS SSO, gcloud CLI, ssh-agent) live in the external `credproxy` library
-platform/pathmap/      Container↔host path translation using WrappedLaunch.Mounts
-platform/logger/       slog initialization + log file management
-platform/features/     Feature flags — Flag/Set types (runtime), build-tag const (compile-time). No external deps
-platform/lib/          External tool integration — git, github, codex CLI wrapper, claude CLI wrapper, gemini, wsl, openurl, notify, …
-```
-
-### `client/` — roost-specific
-
-```
-client/state/          Pure domain layer — State, Event, Effect, Reduce (no I/O, no goroutine)
-client/state/view/     Wire-safe view types — Status, View, Card, Tag, ConnectorSection, etc. (stdlib-only; no state import)
-client/driver/         Driver implementations — value-type Driver plugins + per-frame DriverState. No I/O
-client/connector/      Connector implementations — value-type Connector plugins + per-daemon ConnectorState. No I/O
-client/runtime/        Imperative shell — single event loop, Effect interpreter, backend abstraction
-client/runtime/worker/ Worker pool — slow I/O job execution (haiku, transcript parse, git, github fetch)
-client/runtime/subsystem/ `Subsystem` and `Factory` interfaces, shared worktree utilities. Subsystem implementations — `cli` and `stream`. The only location in `client/runtime/` permitted to import `client/driver/<tool>`
-client/proto/          Typed IPC wire layer — Command / Response / ServerEvent sum types + codec. No state import (imports state/view only)
-client/proto/sessions/ Session management helpers — sessions.Client wraps proto.Client with session-management methods. Imports state
-client/tools/          Palette tools — Tool abstraction for TUI + DefaultRegistry
-client/tui/            Presentation layer — Bubbletea UI state management, rendering, key input
-client/config/         Configuration — TOML loading, DataDir injection, SandboxResolver (user + per-project mode resolution)
-client/cli/            Subcommand registry — tool-specific subcommands registered via init()
-client/lib/peers/      Peers MCP server (roost-specific IPC)
-client/lib/claude/transcript/ Claude transcript renderer (depends on client/state for TUI integration)
-client/lib/codex/transcript/  Codex transcript renderer (depends on client/state for TUI integration)
-```
-
-### `orchestrator/` — Symphony SPEC implementation
-
-The orchestrator is a **TUI-less**, **single-authority** background service that implements the [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md). It:
-
-- Polls a Linear tracker, dispatches coding agents to per-issue workspaces, reconciles running/stalled sessions, and exposes a read-only observability HTTP server (SPEC §13.7 — mandatory in our implementation).
-- Lives entirely inside `orchestrator/`; does **not** import `client/`.
-- Shares `platform/` (logger, metrics, tracker/linear, agent/codexclient, sandbox, …) with roost.
-
-```
-orchestrator/workflowfile/  WORKFLOW.md YAML front matter + body loader (SPEC §5)
-orchestrator/wfconfig/      Config resolution, defaults, $VAR expansion (SPEC §6)
-orchestrator/scheduler/     Poll loop, dispatch, retry/backoff, reconcile (SPEC §7 §8 §16)
-orchestrator/tracker/       Tracker adapter wrapper (→ platform/tracker/linear/)
-orchestrator/workspace/     Per-issue workspace directory + lifecycle hooks (SPEC §9)
-orchestrator/agent/         Agent runner + event handler (SPEC §10)
-orchestrator/prompt/        Liquid-compatible prompt template renderer (SPEC §12)
-orchestrator/httpserver/    Observability HTTP server — /api/v1/state, /api/v1/refresh (SPEC §13.7)
-orchestrator/lineargql/     linear_graphql client-side tool handler (SPEC §10.5, advertise blocked)
-```
-
-SPEC component ↔ Go package の詳細対応は [`docs/orchestrator/symphony-conformance.md`](docs/orchestrator/symphony-conformance.md) および [`plans/05-conformance.md`](plans/05-conformance.md) を参照。
-
-Three-layer boundary enforced by `depguard` (see `src/.golangci.yml` rules `platform-no-client-or-orchestrator` and `client-no-orchestrator`):
 - `platform/*` imports neither `client/*` nor `orchestrator/*`
 - `client/*` does not import `orchestrator/*`
 - `orchestrator/*` does not import `client/*`
 
-Files matching `client/state/reduce_*.go` host state-machine dispatch tables. They are exempt from the 80-line function limit (see AGENTS.md) because forced extraction of dispatch arms produces single-use helpers that fragment the state machine without adding clarity. File-length (500 lines) and naming rules still apply.
+### The layers at a glance
 
-The daemon process and TUI process are separate processes that communicate via typed IPC (`proto` package) over a Unix socket. The daemon exposes two physical endpoints: the **host endpoint** (`<dataDir>/roost.sock`, SO_PEERCRED auth) serves TUI, CLI, and palette clients; the **container endpoint** (`<dataDir>/run/<project-hash>/roost.sock`, bearer-token auth) serves sandboxed agent processes and currently accepts `hook-event` and `subsystem-event`. See [IPC](docs/ipc.md) and [Sandbox Backends](docs/sandbox.md).
+- **[`platform/`](docs/technical/platform/README.md)** — shared base: sandbox backends, host-exec and MCP-proxy brokers, path translation, logger, feature flags, tool wrappers (`lib/<tool>`), trackers, metrics, credential providers. Tool-specific knowledge is allowed here so it stays out of the generic layers above.
+- **[`client/`](docs/technical/client/README.md)** — all of roost: the pure `state/` domain core, `runtime/` imperative shell, value-type `driver/` and `connector/` plugins, `runtime/subsystem/` (`cli` and `stream`), the `proto/` IPC wire layer, and the Bubbletea `tui/`. Terminology, the design-decision log, and the full dependency graph are documented there.
+- **[`orchestrator/`](docs/technical/orchestrator/README.md)** — a TUI-less, single-authority service implementing the [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md): `workflowfile/`, `wfconfig/`, `scheduler/` (poll/dispatch/reconcile), `workspace/`, `agent/`, `prompt/`, `httpserver/`, `lineargql/`. It shares `platform/` with roost but does not import `client/`. SPEC ↔ package correspondence and deviation posture: [`docs/technical/orchestrator/symphony-conformance.md`](docs/technical/orchestrator/symphony-conformance.md) and [`plans/05-conformance.md`](plans/05-conformance.md).
 
-Code dependency direction:
-- `main` → `runtime`, `driver`, `connector`, `proto`, `tools`, `tmux`, `config`, `logger`
-- `runtime` → `state` (calls Reduce), `proto` (wire encode/decode), `runtime/worker` (Pool + Dispatch), `runtime/subsystem` (interface only — no concrete subsystem imports)
-- `runtime/subsystem/<kind>` → `state`, `driver/<tool>` (constants/socket paths only), `lib/*`, `sandbox/`
-- `runtime/worker` → `state` (JobID, JobInput, EvJobResult). Does not import driver/connector/lib
-- `state` is self-contained — imports no third-party packages; only stdlib and stdlib-only internal packages (`features`, `uiproc`) are permitted (pure functional core)
-- `state/view` imports only stdlib — wire-safe types that can be used without pulling in the full state layer
-- `state` re-exports `state/view` types as type aliases (transparent to all existing callers)
-- `driver` → `state` (DriverStateBase embed, Effect/View types), `runtime/worker` (RegisterRunner), `lib/*` (implementation)
-- `connector` → `state` (ConnectorStateBase embed, Effect types), `runtime/worker` (RegisterRunner), `lib/*` (implementation)
-- `proto` → `state/view` only (carries Status enum, View/ConnectorSection types on wire). Does **not** import `state`
-- `proto/sessions` → `proto` + `state` (session-management helpers; not used by roost-bridge). The `make verify-bridge-deps` CI target enforces that roost-bridge's dependency graph contains no `state`, `uiproc`, or `features` packages
-- `tools` → `proto/sessions` (sessions.Client calls)
-- `tui` → `proto/sessions` (sessions.Client + SessionInfo + ConnectorInfo), `proto` (wire types), `state` (Status/View/ConnectorSection/TabRenderer types), `tools` (ToolRegistry). Does not import driver/connector/lib
-- `lib/claude/command.go` (hook bridge) → `event` (sends CmdEvent via event.Send), `config`
-- `lib/claude/transcript` → `state` (registers TabRenderer factory via RegisterTabRenderer)
-- `cli/` provides a subcommand registry. Tool-specific subcommands are registered in `cli/<tool>.go` via `init()`, keeping driver names out of `main`; `main` dispatches via `cli.Dispatch`
-- `event/send.go` (event subcommand) → `proto` (sends CmdEvent), `cli` (registers "event" subcommand)
-- `state.Session` owns a stack of `SessionFrame` values, each carrying its own DriverState plus `SubsystemID` / `TargetID`. Reduce routes session-level events by sessionID and frame-level events (hooks, subsystem events, frame lifecycle) by frameID, and passes them to the owning frame's `Driver.Step`
-- `state.State.Connectors` holds per-daemon ConnectorState. Reduce routes by connector name and passes to Connector.Step
-- `runtime.AgentLauncher` wraps every `LaunchPlan` before tmux spawn. `SandboxDispatcher` selects `DirectLauncher` or `DevcontainerLauncher` per project via `config.SandboxResolver`; the devcontainer launcher adapts `sandbox/devcontainer.Manager` and returns a `WrappedLaunch{Command, Env, Mounts, ContainerSockDir, Cleanup}`
-- `lib/pathmap` translates container↔host paths at the IPC boundary using the bind-mount table captured in `WrappedLaunch.Mounts`, so hook events from sandboxed agents land at the same paths as host frames. `state/`, `tui/`, and `proto/` see only host paths
+Files matching `client/state/reduce_*.go` host state-machine dispatch tables. They are exempt from the 80-line function limit (see [AGENTS.md](AGENTS.md)) because forced extraction of dispatch arms fragments the state machine without adding clarity. File-length (500 lines) and naming rules still apply.
 
-## Design Decisions
-
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Palette implementation approach | tmux popup (separate process) | Crash isolation. As a Bubbletea submodel, panics would be shared within the TUI |
-| Ctrl+C disabling | Consume KeyPressMsg | Prevents accidental termination of the resident process. Pane becomes inoperable until respawn |
-| No optimistic updates | Do not modify UI state on IPC error | Auto-recovers on next poll. Avoids risk of state inconsistency |
-| shutdown (`C-b q`) behavior | `EffReleaseFrameSandboxes` (drain all container cleanups) then `EffKillSession`; sessions.json is preserved | Containers must be destroyed before the tmux session is killed so they receive a clean stop signal. sessions.json is preserved to restore sessions on next cold start. `detach` emits only `EffDetachClient` — no sandbox release — so containers survive for warm-restart adoption. See [Detach vs Shutdown](docs/process-model.md#detach-vs-shutdown) and [Sandbox Backends](docs/sandbox.md). |
-| Claude startup on Cold start | Assemble `claude --resume <id>` inside `Driver.PrepareLaunch(LaunchModeColdStart, …)` using the persisted `LaunchOptions` | Claude-specific `--resume` knowledge is confined to the driver. The resolved launch plan is baked into `EffSpawnTmuxWindow` so the runtime never calls drivers |
-| Launch plan resolution layer | Reducer (pure), with one bootstrap exception | `Driver.PrepareLaunch` runs synchronously inside `state.Reduce`, and the resolved command / start_dir / normalized options are written to `EffSpawnTmuxWindow`. The runtime interprets the effect verbatim without touching drivers, keeping driver-specific logic entirely in the pure functional core. **Exception**: during cold-start `RecreateAll` (`runtime/bootstrap_coldstart.go`), `PrepareLaunch` is called directly from the bootstrap goroutine before the event loop starts — no other goroutine reads state at that point so there is no consistency risk. All subsequent plan resolutions (new session, push-driver) go through the reducer as normal. |
-| Resident tracking | `SubsystemID -> Subsystem` (`subsystems` map), `FrameID -> Subsystem` (`frameSubsystems` map), `FrameID -> TargetID` | A single sync.Map (`subsystems`) holds every live Subsystem keyed by its opaque SubsystemID, dispatched via per-kind Factories registered in `runtime.New`. The `frameSubsystems` map routes `ReleaseFrame` calls from `executeKillSessionWindow` to the owning subsystem without needing to know the subsystem kind. Shutdown (`EffReleaseFrameSandboxes`) ranges `subsystems` and calls `Stop` on each — kind-independent. CLI uses one Subsystem per project; the stream subsystem maps many frames (threads) onto one Subsystem per (sandbox-mode × project) |
-| IPC timeout | Not set on the protocol itself | Runtime-side I/O (tmux/git/gh subprocesses via `exec.CommandContext`, `worker.Pool.Stop()` bounded to 500 ms) is fully ctx-scoped, so detach and exit never hang. A pure event-loop deadlock still requires external restart |
-| Frame ownership of DriverState | Each `SessionFrame` holds its own `DriverState` value, updated in-place by `Driver.Step` within Reduce | Session lifetime outlives any single frame; letting frames own their DriverState lets `push-driver` layer a fresh driver context on top and lets frame death truncate only that slice of the stack. Updates happen inside Reduce so inconsistency between frame metadata and DriverState is structurally impossible |
-| Identifying the target of hook events | Inject a frame-scoped env var into the pane environment at `tmux new-window -e` time | Env vars are set at kernel exec level and are race-free, so hook bridge processes spawned inside a frame's pane can identify their owning frame without racing against tmux option writes. Details in [state-monitoring.md](docs/state-monitoring.md#hook-event-routing-and-race-free-identification) |
-| Hook payload abstraction | Carry `CmdEvent.Payload` as an opaque `json.RawMessage` | Adding driver-specific fields requires no changes to state / runtime / proto |
-| Agent hook integration | `roost event <eventType>` → `proto.CmdEvent` or `proto.CmdHookEvent` → `EvDriverEvent` → `reduceDriverHook` → `Driver.Step(DEvHook)` | Used by hook-driven agents such as Claude and Gemini. Host-side events carry `SenderID`; sandboxed events resolve the frame via bearer token. Hooks for truncated frames are dropped |
-| Structured stream integration | `codex app-server` → bridge/gateway → `proto.CmdSubsystemEvent` → `EvSubsystem` → `reduceSubsystem` → `Driver.Step(DEvSubsystem)` | Used by Codex. **Exactly one `codex app-server --listen unix://<runDir>/codex.sock` runs per container** — in shared isolation all projects collapse onto a single app-server (SubsystemID `stream:container:__shared__`); in project isolation each container has its own (SubsystemID `stream:container:<projectPath>`). Host-mode launches are keyed per project (`stream:host:<projectPath>`) because each runs its own app-server in its own cwd. Frames join the app-server via `BindFrame` → `bindThread`, and `sockbridge` bridges container TCP loopback port 8282 to the codex UDS so each frame can connect with `codex --remote ws://127.0.0.1:8282`. `LaunchSubsystem` (`cli` / `stream`) distinguishes CLI-spawned agents from stream-backed ones; the `stream` subsystem implementation handles the codex-specific binding. The stream layer emits structured tool / approval / plan / diff / message / thread lifecycle events, and `TargetID` carries the logical thread identity |
-| Connector scope | Per-daemon (one instance each), no state persistence (TTL-based), initialization on first EvTick | External service information is tied to the entire user account. Embedding in Driver would cause duplicate fetching. Initializing within the reducer enables pure function test coverage |
-| Container egress restriction | Delegate to host (`docker network` + iptables) and pass through via `extra_create_args` | Hostname allowlists cannot be expressed by `docker create` flags alone; a typed network config in `config/` would duplicate the existing passthrough with no expressive gain. iptables rule lifecycle belongs to host operations, not the daemon |
-| Sandbox launcher abstraction | `runtime.AgentLauncher` wraps each `LaunchPlan` before tmux spawn; `SandboxDispatcher` resolves `direct` vs `devcontainer` per project | Sandbox-specific command rewriting, bind-mount setup, and bearer-token generation stay out of the reducer and out of `tmux_real.go`. Per-project mode resolution lets one daemon mix sandboxed and direct projects without restart |
-| Container↔host path translation | `lib/pathmap` rewrites paths in IPC payloads using `WrappedLaunch.Mounts` | A sandboxed agent's hook events report container-absolute paths; daemon and TUI operate on host-absolute paths. Translating at the IPC boundary keeps `state/`, `runtime/` (above the launcher), and `tui/` unaware of container filesystem layout |
+The daemon and TUI are separate processes communicating via typed IPC (`proto`) over a Unix socket, with two physical endpoints (host + container). Details, the per-package breakdown, terminology, and the design-decision log are in the [client deep dive](docs/technical/client/README.md).
 
 ## Feature Flags
 
@@ -221,12 +109,7 @@ Distinguish path computation from side effects by function name.
 
 ## Testing Strategy
 
-Test files are placed in the same directory as the target file as `*_test.go`.
-
-- **state.Reduce tests**: No mocks needed. Pure function tests that directly verify the return value `(state', effects)` of `Reduce(state, event)`. No goroutine / channel / timing dependencies
-- **Driver.Step tests**: No mocks needed. Directly verify the return value `(next, effects, view)` of `Step(prev, driverEvent)`
-- **runtime tests**: Inject fakes for backend interfaces. Set `noopTmux` / `noopPersist` etc. in `runtime.Config` for testing. Inject `t.TempDir()` into `Config.DataDir` to isolate file I/O
-- **TUI tests**: Pass messages directly to Bubbletea's `Model.Update` and verify the returned Model state. No actual terminal required
+Testability is a primary design constraint. The Functional Core / Imperative Shell split makes the core testable without mocks. Per-layer test patterns, the Coverage Tier scheme, and CI enforcement are documented in [docs/agent/testing.md](docs/agent/testing.md).
 
 ## Dependencies
 

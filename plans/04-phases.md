@@ -304,7 +304,7 @@ type Dispatcher interface {
 **作業**:
 1. SPEC §17.1-§17.7 (Core Conformance) を埋める test を `orchestrator/*` 配下に追加
 2. SPEC §17.8 (Real Integration Profile) は `LINEAR_API_KEY` 有無で skip/run
-3. `docs/orchestrator/symphony-conformance.md` で SPEC 各項目と test の対応表を作成
+3. `docs/technical/orchestrator/symphony-conformance.md` で SPEC 各項目と test の対応表を作成
 4. agent-roost の AGENTS.md / ARCHITECTURE.md に orchestrator サービスの位置付けを追記
 
 **成功条件**:

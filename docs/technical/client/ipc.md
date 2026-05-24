@@ -9,7 +9,7 @@ JSON messaging over Unix domain sockets. Two physical endpoints serve different 
 | **Host** | `<dataDir>/roost.sock` | SO_PEERCRED UID check | TUI, CLI, palette popups |
 | **Container** | `<dataDir>/run/<project-hash>/roost.sock` | Bearer token (`ROOST_SOCKET_TOKEN`) | Sandboxed agent processes inside devcontainers |
 
-The host endpoint exposes the full command surface. The container endpoint accepts `hook-event` and `subsystem-event`; all other commands are structurally absent (no handler registered, not a filter). See [Sandbox Backends](sandbox.md#container-ipc-endpoint) for security properties.
+The host endpoint exposes the full command surface. The container endpoint accepts `hook-event` and `subsystem-event`; all other commands are structurally absent (no handler registered, not a filter). See [Sandbox Backends](../platform/sandbox.md#container-ipc-endpoint) for security properties.
 
 ### Topology
 

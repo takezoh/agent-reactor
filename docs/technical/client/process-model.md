@@ -153,7 +153,7 @@ Both operations first write sessions.json (`EffPersistSnapshot`), then exit — 
 
 sessions.json is **always preserved** — it is the restoration source. Shutdown does not discard sessions; it stops tmux now and defers restoration to the next cold start.
 
-On daemon SIGINT/SIGTERM (ctx cancel without explicit shutdown command), `EffReleaseFrameSandboxes` is **not** emitted, so containers survive for warm-restart adoption — same behaviour as `detach`. On daemon crash (SIGKILL/panic), cleanup defers do not run; orphaned containers from missing projects are pruned by `PruneOrphans` at next startup, and any container that survives the matching cold-start path is discarded and recreated by the `BeginColdStart` window (see [Sandbox Backends — Cold-start fresh provisioning](sandbox.md#design-decisions)).
+On daemon SIGINT/SIGTERM (ctx cancel without explicit shutdown command), `EffReleaseFrameSandboxes` is **not** emitted, so containers survive for warm-restart adoption — same behaviour as `detach`. On daemon crash (SIGKILL/panic), cleanup defers do not run; orphaned containers from missing projects are pruned by `PruneOrphans` at next startup, and any container that survives the matching cold-start path is discarded and recreated by the `BeginColdStart` window (see [Sandbox Backends — Cold-start fresh provisioning](../platform/sandbox.md#design-decisions)).
 
 ### Main TUI
 

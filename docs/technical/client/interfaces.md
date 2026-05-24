@@ -238,7 +238,7 @@ On cold start, the bootstrap walks each session's frames in root-to-tail order a
 
 Base path can be changed via `Config.DataDir` (set to TempDir during tests).
 
-User-facing `settings.toml` fields and defaults are documented in the [README Configuration section](../README.md#configuration).
+User-facing `settings.toml` fields and defaults are documented in the [roost TUI user guide](../../user/roost-tui.md#configuration).
 
 ## File Structure
 

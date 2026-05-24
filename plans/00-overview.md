@@ -64,4 +64,4 @@ agent-roost の [ARCHITECTURE.md](../ARCHITECTURE.md) の設計原則は `client
 
 - [Symphony SPEC.md](https://github.com/openai/symphony/blob/main/SPEC.md) (v1 Draft, language-agnostic)
 - agent-roost [ARCHITECTURE.md](../ARCHITECTURE.md)
-- agent-roost [docs/sandbox.md](../docs/sandbox.md), [docs/ipc.md](../docs/ipc.md)
+- agent-roost [docs/technical/platform/sandbox.md](../docs/technical/platform/sandbox.md), [docs/technical/client/ipc.md](../docs/technical/client/ipc.md)

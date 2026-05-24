@@ -11,6 +11,15 @@ Concrete patterns in use:
 - **Runtime-injected dependencies** are interfaces, not concrete types (e.g. `runtime/subsystem/stream.RuntimeHook`).
 - **`net.Pipe` + fake server** stands in for Unix sockets when verifying the proto client.
 
+## Test patterns by layer
+
+The Functional Core / Imperative Shell split (see [client internals](../technical/client/README.md)) determines how each layer is tested. Test files live beside the target as `*_test.go`.
+
+- **`state.Reduce` tests** — no mocks. Pure function tests that verify the return value `(state', effects)` of `Reduce(state, event)`. No goroutine / channel / timing dependencies.
+- **`Driver.Step` tests** — no mocks. Directly verify the return value `(next, effects, view)` of `Step(prev, driverEvent)`.
+- **`runtime` tests** — inject fakes for backend interfaces. Set `noopTmux` / `noopPersist` in `runtime.Config`; inject `t.TempDir()` into `Config.DataDir` to isolate file I/O.
+- **TUI tests** — pass messages directly to Bubbletea's `Model.Update` and verify the returned model. No real terminal required.
+
 ## Coverage Tiers
 
 Coverage targets are tiered by architectural blast radius. A regression in `state` corrupts every session; a regression in `lib/tmux` typically surfaces as one broken pane.

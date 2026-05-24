@@ -1,6 +1,6 @@
 # Sandbox Backends
 
-User-facing setup (devcontainer.json, `[sandbox.*]` settings, credential proxy provider config) lives in [sandbox-setup.md](sandbox-setup.md). This document covers the architecture, security model, and lifecycle.
+User-facing setup (devcontainer.json, `[sandbox.*]` settings, credential proxy provider config) lives in the user guide [docs/user/sandbox.md](../../user/sandbox.md). This document covers the architecture, security model, and lifecycle.
 
 ## Purpose
 

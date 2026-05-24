@@ -133,7 +133,7 @@ LINEAR_API_KEY=<key> LINEAR_PROJECT_SLUG=<slug> \
 
 ## SPEC §3.1 Component ↔ Go package 対応
 
-詳細は [`plans/05-conformance.md#SPEC-用語と実装名の対応`](../../plans/05-conformance.md) が正本。以下は要約。
+詳細は [`plans/05-conformance.md#SPEC-用語と実装名の対応`](../../../plans/05-conformance.md) が正本。以下は要約。
 
 | SPEC §3.1 Component | Go package |
 |---|---|
@@ -170,7 +170,7 @@ LINEAR_API_KEY=<key> LINEAR_PROJECT_SLUG=<slug> \
 | SPEC § | SPEC | 我々の選択 |
 |---|---|---|
 | §10 | Codex app-server 専用 | `codex.command` 経由の stdio shim で複数 agent 対応 (`claude-app-server`) |
-| §10.5 `linear_graphql` | OPTIONAL extension | codex native `item/tool/call` で実装; advertise は pinned codex 0.133.0 で blocked (→ [issues/024](../../issues/024-p8b-linear-graphql-tool.md) §B) |
+| §10.5 `linear_graphql` | OPTIONAL extension | codex native `item/tool/call` で実装; advertise は pinned codex 0.133.0 で blocked (→ [issues/024](../../../issues/024-p8b-linear-graphql-tool.md) §B) |
 | §13.7 | HTTP server は OPTIONAL | **必須として実装** — orchestrator は TUI を持たない |
 | §3.3 | sandbox は impl-defined | devcontainer mode をデフォルト推奨 |
 | §9.3 | workspace population は impl-defined | `after_create` hook で `git worktree add` を強く推奨 |
@@ -196,4 +196,4 @@ default で適用: devcontainer 隔離、credproxy、mcpproxy whitelist、hostex
 
 ### §10.5 `linear_graphql` advertise blocked (最新逸脱)
 
-`DynamicToolSpec` が codex schema 上 orphan のため tool 宣言の wire 経路が無い。handler は `orchestrator/lineargql/` に実装済だが、advertise は pinned codex 0.133.0 が schema bump するまで不可。`codex.command: claude-app-server` 経由では `item/tool/call` で call は到達するが codex 正規経路では blocked。詳細: [issues/024](../../issues/024-p8b-linear-graphql-tool.md) §B。
+`DynamicToolSpec` が codex schema 上 orphan のため tool 宣言の wire 経路が無い。handler は `orchestrator/lineargql/` に実装済だが、advertise は pinned codex 0.133.0 が schema bump するまで不可。`codex.command: claude-app-server` 経由では `item/tool/call` で call は到達するが codex 正規経路では blocked。詳細: [issues/024](../../../issues/024-p8b-linear-graphql-tool.md) §B。
