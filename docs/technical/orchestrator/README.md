@@ -24,7 +24,7 @@ Full SPEC component ↔ package correspondence and the documented deviation post
 
 ## The poll / dispatch / reconcile pipeline
 
-On startup `cmd/orchestrator` loads the workflow, resolves config, runs a **preflight** check (`scheduler.Preflight` — invalid config gates the whole run; see [guardrails](../guardrails.md#4-runtime-guardrails-orchestrator-scheduler)), warms the per-project container, then enters the loop. Each tick (`polling.interval_ms`, or a filesystem watcher on the workflow):
+On startup `cmd/orchestrator` loads the workflow, resolves config, runs a **preflight** check (`scheduler.Preflight` — invalid config gates the whole run; see [guardrails → pre-run validation](../guardrails.md#6-behavioral-steering--pre-run-validation)), warms the per-project container, then enters the loop. Each tick (`polling.interval_ms`, or a filesystem watcher on the workflow):
 
 ```mermaid
 flowchart TD

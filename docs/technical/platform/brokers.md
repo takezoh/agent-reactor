@@ -132,4 +132,4 @@ sequenceDiagram
 
 - The full security model and sandbox lifecycle: [sandbox.md](sandbox.md)
 - Where brokers are injected into the container along the launch path: [spawn-and-launch.md](spawn-and-launch.md) (`DevcontainerLauncher`)
-- Cross-cutting enforcement catalogue: [guardrails.md](../guardrails.md)
+- Capability sandboxing as an agent-control guardrail: [guardrails.md → capability](../guardrails.md#3-capability-sandboxing--what-a-running-agent-can-touch)

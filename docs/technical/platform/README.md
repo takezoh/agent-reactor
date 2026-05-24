@@ -28,7 +28,7 @@ Because it sits below both services, `platform/` is where tool-specific knowledg
 - **[brokers.md](brokers.md)** — implementation of `hostexec` + `mcpproxy` + `credproxy`: SCM_RIGHTS proxied execution, JSON-RPC tool gating, per-project tokens. The security model is in [sandbox.md](sandbox.md).
 - **[agent-protocol.md](agent-protocol.md)** — `agent/codexclient` + `codexschema` (v1/v2) + `lib/codex` + `lib/claude`. The Codex app-server stdio protocol, the turn sequence, and the claude-app-server shim's translation.
 - **[sandbox.md](sandbox.md)** — `sandbox/` backends: per-project devcontainer isolation, image resolution, credential proxy.
-- Cross-cutting enforcement (import boundaries, length limits, runtime gates, feature flags) is in [guardrails.md](../guardrails.md).
+- Agent-control guardrails (capability sandboxing, autonomy policy, concurrency, liveness) are in [guardrails.md](../guardrails.md); code-level enforcement (import boundaries, length limits, feature flags) is in [code-enforcement.md](../code-enforcement.md).
 
 ## Feature flags
 

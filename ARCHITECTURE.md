@@ -23,7 +23,7 @@ All documentation is organized by **audience × architecture layer** under [`doc
 - **Users** — [user guide](docs/user/README.md): [getting started](docs/user/getting-started.md), [roost TUI](docs/user/roost-tui.md), [orchestrator](docs/user/orchestrator.md), [sandbox](docs/user/sandbox.md)
 - **Agents / contributors** — [agent guide](docs/agent/README.md): [contributing](docs/agent/contributing.md), [WORKFLOW.md authoring](docs/agent/workflow-authoring.md), [testing](docs/agent/testing.md)
 - **Technical (per layer)** — [platform/](docs/technical/platform/README.md) · [client/](docs/technical/client/README.md) · [orchestrator/](docs/technical/orchestrator/README.md)
-- **Cross-cutting** — [guardrails](docs/technical/guardrails.md): the enforcement side of this document (depguard rules, length limits, runtime gates, feature-flag mechanics)
+- **Cross-cutting** — [agent guardrails](docs/technical/guardrails.md) (controlling autonomous agents: admission, concurrency, capability, autonomy, liveness) · [code & architecture enforcement](docs/technical/code-enforcement.md) (the enforcement side of this document: depguard rules, length limits, feature-flag mechanics)
 
 ## Layer Structure
 
@@ -42,7 +42,7 @@ cmd/           Binary entry points — cmd/roost/, cmd/roost-bridge/, cmd/orches
 - `client/*` does not import `orchestrator/*`
 - `orchestrator/*` does not import `client/*`
 
-The full set of `depguard` rules (including the intra-`client/` isolation rules) and every other enforcement mechanism are catalogued in [guardrails](docs/technical/guardrails.md).
+The full set of `depguard` rules (including the intra-`client/` isolation rules) and every other code-level enforcement mechanism are catalogued in [code & architecture enforcement](docs/technical/code-enforcement.md).
 
 ### The layers at a glance
 
@@ -56,7 +56,7 @@ The daemon and TUI are separate processes communicating via typed IPC (`proto`) 
 
 ## Feature Flags
 
-Experimental features are gated by one of **two independent mechanisms**. They share no key space — pick one based on whether the experimental code should physically exist in the binary. ([guardrails → feature flags](docs/technical/guardrails.md#6-feature-flags) has the step-by-step add procedure.)
+Experimental features are gated by one of **two independent mechanisms**. They share no key space — pick one based on whether the experimental code should physically exist in the binary. ([code & architecture enforcement → feature flags](docs/technical/code-enforcement.md#4-feature-flags) has the step-by-step add procedure.)
 
 | Mechanism | Where defined | Toggle | Code in binary? | Use when |
 |---|---|---|---|---|
