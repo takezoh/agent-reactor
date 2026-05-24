@@ -114,7 +114,7 @@ func (s *State) WorkerExitNormal(issueID string) (RetryEntry, bool) {
 	return RetryEntry{
 		IssueID:    issueID,
 		Identifier: run.Issue.Identifier,
-		Attempt:    1,
+		Attempt:    run.Attempt + 1, // carry forward the attempt counter, consistent with WorkerExitAbnormal
 		Kind:       RetryContinuation,
 	}, true
 }

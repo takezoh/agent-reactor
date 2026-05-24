@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,14 +12,51 @@ import (
 )
 
 // fakeWorker records Kill calls and implements Worker.
+// killedCh allows tests to synchronize with goroutine-dispatched Kill calls.
 type fakeWorker struct {
-	killed  []string
-	killErr error
+	mu       sync.Mutex
+	killed   []string
+	killErr  error
+	killedCh chan string // buffered; receives each Kill reason as it fires
+}
+
+func newFakeWorker() *fakeWorker {
+	return &fakeWorker{killedCh: make(chan string, 8)}
 }
 
 func (w *fakeWorker) Kill(reason string) error {
+	w.mu.Lock()
 	w.killed = append(w.killed, reason)
-	return w.killErr
+	err := w.killErr
+	w.mu.Unlock()
+	select {
+	case w.killedCh <- reason:
+	default:
+	}
+	return err
+}
+
+// expectKill waits up to 100 ms for Kill to be called and returns the reason.
+// Use this instead of reading w.killed directly for async Kill paths.
+func (w *fakeWorker) expectKill(t *testing.T) string {
+	t.Helper()
+	select {
+	case r := <-w.killedCh:
+		return r
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timeout waiting for Kill to be called")
+		return ""
+	}
+}
+
+// expectNoKill asserts that Kill was not called within a short window.
+func (w *fakeWorker) expectNoKill(t *testing.T) {
+	t.Helper()
+	select {
+	case r := <-w.killedCh:
+		t.Errorf("unexpected Kill(%q)", r)
+	case <-time.After(10 * time.Millisecond):
+	}
 }
 
 // fakeReconcileTracker implements schedulerTrackerAPI.
@@ -61,7 +99,7 @@ func newReconcileScheduler(tr schedulerTrackerAPI, ws schedulerWorkspaceAPI, clk
 // --- Stall tests ---
 
 func TestReconcileStall_KillsAndEnqueuesRetry(t *testing.T) {
-	w := &fakeWorker{}
+	w := newFakeWorker()
 	s := newReconcileScheduler(nil, nil, newFakeClock(time.Unix(1000, 0)))
 
 	started := time.Unix(0, 0)
@@ -70,8 +108,9 @@ func TestReconcileStall_KillsAndEnqueuesRetry(t *testing.T) {
 
 	s.reconcile(context.Background(), stalledCfg(500))
 
-	if len(w.killed) != 1 || w.killed[0] != "stall" {
-		t.Errorf("expected Kill(stall), got %v", w.killed)
+	// Kill is dispatched in a goroutine; wait for it.
+	if reason := w.expectKill(t); reason != "stall" {
+		t.Errorf("expected Kill(stall), got %q", reason)
 	}
 	snap := s.state.Snapshot()
 	if _, ok := snap.Running["id1"]; ok {
@@ -83,7 +122,7 @@ func TestReconcileStall_KillsAndEnqueuesRetry(t *testing.T) {
 }
 
 func TestReconcileStall_UsesStartedAtFallback(t *testing.T) {
-	w := &fakeWorker{}
+	w := newFakeWorker()
 	s := newReconcileScheduler(nil, nil, newFakeClock(time.Unix(1000, 0)))
 
 	started := time.Unix(0, 0)
@@ -93,13 +132,12 @@ func TestReconcileStall_UsesStartedAtFallback(t *testing.T) {
 
 	s.reconcile(context.Background(), stalledCfg(500))
 
-	if len(w.killed) == 0 {
-		t.Error("expected worker killed via StartedAt fallback")
-	}
+	// Kill is dispatched in a goroutine; wait for it.
+	w.expectKill(t) // any reason is fine; just verify it fired
 }
 
 func TestReconcileStall_SkipsWhenTimeoutZero(t *testing.T) {
-	w := &fakeWorker{}
+	w := newFakeWorker()
 	s := newReconcileScheduler(nil, nil, newFakeClock(time.Unix(1000, 0)))
 
 	started := time.Unix(0, 0)
@@ -116,7 +154,7 @@ func TestReconcileStall_SkipsWhenTimeoutZero(t *testing.T) {
 // --- Refresh tests ---
 
 func TestReconcileRefresh_TerminalKillsAndCleansWorkspace(t *testing.T) {
-	w := &fakeWorker{}
+	w := newFakeWorker()
 	ws := &fakeWorkspace{}
 	issue := testIssue("id4", "PROJ-4")
 	refreshed := issue
@@ -128,8 +166,9 @@ func TestReconcileRefresh_TerminalKillsAndCleansWorkspace(t *testing.T) {
 
 	s.reconcile(context.Background(), refreshCfg([]string{"Done"}, []string{"In Progress"}))
 
-	if len(w.killed) != 1 || w.killed[0] != "terminal" {
-		t.Errorf("expected Kill(terminal), got %v", w.killed)
+	// Kill is dispatched in a goroutine; wait for it.
+	if reason := w.expectKill(t); reason != "terminal" {
+		t.Errorf("expected Kill(terminal), got %q", reason)
 	}
 	snap := s.state.Snapshot()
 	if _, ok := snap.Running["id4"]; ok {
@@ -141,7 +180,7 @@ func TestReconcileRefresh_TerminalKillsAndCleansWorkspace(t *testing.T) {
 }
 
 func TestReconcileRefresh_TerminalMatchIsCaseInsensitive(t *testing.T) {
-	w := &fakeWorker{}
+	w := newFakeWorker()
 	ws := &fakeWorkspace{}
 	issue := testIssue("id4b", "PROJ-4B")
 	refreshed := issue
@@ -154,8 +193,9 @@ func TestReconcileRefresh_TerminalMatchIsCaseInsensitive(t *testing.T) {
 	// config terminal state is lowercase "done" — must still match "DONE".
 	s.reconcile(context.Background(), refreshCfg([]string{"done"}, []string{"in progress"}))
 
-	if len(w.killed) != 1 || w.killed[0] != "terminal" {
-		t.Errorf("expected Kill(terminal) on case-insensitive match, got %v", w.killed)
+	// Kill is dispatched in a goroutine; wait for it.
+	if reason := w.expectKill(t); reason != "terminal" {
+		t.Errorf("expected Kill(terminal) on case-insensitive match, got %q", reason)
 	}
 	if len(ws.removed) != 1 || ws.removed[0] != "PROJ-4B" {
 		t.Errorf("expected workspace Remove(PROJ-4B), got %v", ws.removed)
@@ -163,7 +203,7 @@ func TestReconcileRefresh_TerminalMatchIsCaseInsensitive(t *testing.T) {
 }
 
 func TestReconcileRefresh_ActiveUpdatesSnapshot(t *testing.T) {
-	w := &fakeWorker{}
+	w := newFakeWorker()
 	ws := &fakeWorkspace{}
 	issue := testIssue("id5", "PROJ-5")
 	refreshed := issue
@@ -193,7 +233,7 @@ func TestReconcileRefresh_ActiveUpdatesSnapshot(t *testing.T) {
 }
 
 func TestReconcileRefresh_IntermediateKillsNoWorkspaceRemove(t *testing.T) {
-	w := &fakeWorker{}
+	w := newFakeWorker()
 	ws := &fakeWorkspace{}
 	issue := testIssue("id6", "PROJ-6")
 	refreshed := issue
@@ -205,8 +245,9 @@ func TestReconcileRefresh_IntermediateKillsNoWorkspaceRemove(t *testing.T) {
 
 	s.reconcile(context.Background(), refreshCfg([]string{"Done"}, []string{"In Progress"}))
 
-	if len(w.killed) != 1 || w.killed[0] != "non-active" {
-		t.Errorf("expected Kill(non-active), got %v", w.killed)
+	// Kill is dispatched in a goroutine; wait for it.
+	if reason := w.expectKill(t); reason != "non-active" {
+		t.Errorf("expected Kill(non-active), got %q", reason)
 	}
 	if len(ws.removed) != 0 {
 		t.Error("expected no workspace Remove for intermediate state")
@@ -218,7 +259,7 @@ func TestReconcileRefresh_IntermediateKillsNoWorkspaceRemove(t *testing.T) {
 }
 
 func TestReconcileRefresh_NotFoundKillsNoWorkspaceRemove(t *testing.T) {
-	w := &fakeWorker{}
+	w := newFakeWorker()
 	ws := &fakeWorkspace{}
 	issue := testIssue("id8", "PROJ-8")
 
@@ -229,8 +270,9 @@ func TestReconcileRefresh_NotFoundKillsNoWorkspaceRemove(t *testing.T) {
 
 	s.reconcile(context.Background(), refreshCfg([]string{"Done"}, []string{"In Progress"}))
 
-	if len(w.killed) != 1 || w.killed[0] != "not-found" {
-		t.Errorf("expected Kill(not-found), got %v", w.killed)
+	// Kill is dispatched in a goroutine; wait for it.
+	if reason := w.expectKill(t); reason != "not-found" {
+		t.Errorf("expected Kill(not-found), got %q", reason)
 	}
 	if len(ws.removed) != 0 {
 		t.Errorf("expected no workspace Remove for disappeared issue, got %v", ws.removed)
@@ -245,7 +287,7 @@ func TestReconcileRefresh_NotFoundKillsNoWorkspaceRemove(t *testing.T) {
 }
 
 func TestReconcileRefresh_ErrorSkipsAll(t *testing.T) {
-	w := &fakeWorker{}
+	w := newFakeWorker()
 	ws := &fakeWorkspace{}
 	issue := testIssue("id7", "PROJ-7")
 
@@ -267,7 +309,7 @@ func TestReconcileRefresh_ErrorSkipsAll(t *testing.T) {
 // --- helpers ---
 
 func TestReconcileStall_RecentActivityPreventsKill(t *testing.T) {
-	w := &fakeWorker{}
+	w := newFakeWorker()
 	now := time.Unix(1000, 0)
 	s := newReconcileScheduler(nil, nil, newFakeClock(now))
 

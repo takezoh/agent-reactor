@@ -55,10 +55,16 @@ func (s *Scheduler) reconcileStall(ctx context.Context, snap StateSnapshot, cfg 
 		slog.Warn("reconcile: stall detected, killing worker",
 			"issue_id", id, "issue_identifier", run.Issue.Identifier, "elapsed_ms", now.Sub(base).Milliseconds())
 
+		// Kill blocks until the subprocess exits; run in a goroutine to avoid
+		// stalling the scheduler event loop while waiting for N processes.
 		if run.Session.Worker != nil {
-			if err := run.Session.Worker.Kill("stall"); err != nil {
-				slog.Warn("reconcile: stall kill failed", "issue_id", id, "err", err)
-			}
+			w := run.Session.Worker
+			issueID := id
+			go func() {
+				if err := w.Kill("stall"); err != nil {
+					slog.Warn("reconcile: stall kill failed", "issue_id", issueID, "err", err)
+				}
+			}()
 		}
 
 		if entry, ok := s.state.WorkerExitAbnormal(id, ErrStall, run.Attempt); ok {
@@ -94,9 +100,13 @@ func (s *Scheduler) reconcileRefresh(ctx context.Context, snap StateSnapshot, cf
 		if !found {
 			// Issue disappeared from tracker response: stop worker but keep workspace (SPEC §8.5).
 			if run.Session.Worker != nil {
-				if err := run.Session.Worker.Kill("not-found"); err != nil {
-					slog.Warn("reconcile: not-found kill failed", "issue_id", id, "err", err)
-				}
+				w := run.Session.Worker
+				issueID := id
+				go func() {
+					if err := w.Kill("not-found"); err != nil {
+						slog.Warn("reconcile: not-found kill failed", "issue_id", issueID, "err", err)
+					}
+				}()
 			}
 			if entry, ok := s.state.WorkerExitAbnormal(id, ErrNotInRefresh, run.Attempt); ok {
 				scheduleRetry(s.state, s.clock, s.retryFire, ctx, entry, backoffDelay(entry.Attempt, cfg))
@@ -110,9 +120,13 @@ func (s *Scheduler) reconcileRefresh(ctx context.Context, snap StateSnapshot, cf
 		switch {
 		case terminal[norm]:
 			if run.Session.Worker != nil {
-				if err := run.Session.Worker.Kill("terminal"); err != nil {
-					slog.Warn("reconcile: terminal kill failed", "issue_id", id, "err", err)
-				}
+				w := run.Session.Worker
+				issueID := id
+				go func() {
+					if err := w.Kill("terminal"); err != nil {
+						slog.Warn("reconcile: terminal kill failed", "issue_id", issueID, "err", err)
+					}
+				}()
 			}
 			s.state.ReleaseClaim(id)
 			if err := s.workspace.Remove(ctx, run.Issue.Identifier); err != nil {
@@ -127,9 +141,13 @@ func (s *Scheduler) reconcileRefresh(ctx context.Context, snap StateSnapshot, cf
 		default:
 			// Intermediate state: stop worker but keep workspace.
 			if run.Session.Worker != nil {
-				if err := run.Session.Worker.Kill("non-active"); err != nil {
-					slog.Warn("reconcile: non-active kill failed", "issue_id", id, "err", err)
-				}
+				w := run.Session.Worker
+				issueID := id
+				go func() {
+					if err := w.Kill("non-active"); err != nil {
+						slog.Warn("reconcile: non-active kill failed", "issue_id", issueID, "err", err)
+					}
+				}()
 			}
 			if entry, ok := s.state.WorkerExitAbnormal(id, ErrLeftActiveStates, run.Attempt); ok {
 				scheduleRetry(s.state, s.clock, s.retryFire, ctx, entry, backoffDelay(entry.Attempt, cfg))

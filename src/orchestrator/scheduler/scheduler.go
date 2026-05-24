@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"sync/atomic"
@@ -308,11 +309,28 @@ func (s *Scheduler) markDegraded(err error) {
 	}
 }
 
+// errWorkflowInvalid is recorded in a RetryEntry when a retry-fire arrives
+// while the WORKFLOW.md cannot be parsed. The entry is rescheduled immediately
+// so the issue is not permanently lost (§5.5).
+var errWorkflowInvalid = errors.New("workflow config invalid")
+
 // handleRetry processes a retry-fire event from a timer callback.
 // Gated by §5.5: spawn is skipped while the workflow is invalid.
+// If the config is currently invalid the request is rescheduled with a short
+// fixed delay so the issue is not lost when WORKFLOW.md is transiently broken.
 func (s *Scheduler) handleRetry(ctx context.Context, req retryFireReq) {
 	cfg, valid := s.reloadConfig()
 	if !valid {
+		// Reschedule without incrementing attempt: the workflow being invalid is
+		// a transient infrastructure problem, not an agent failure.
+		entry := RetryEntry{
+			IssueID:    req.IssueID,
+			Identifier: req.Identifier,
+			Attempt:    req.Attempt,
+			Kind:       RetryBackoff,
+			Err:        errWorkflowInvalid,
+		}
+		scheduleRetry(s.state, s.clock, s.retryFire, ctx, entry, continuationDelay)
 		return
 	}
 	if s.deps.Tracker == nil || s.deps.Spawn == nil {

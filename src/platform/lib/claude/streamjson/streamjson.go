@@ -17,12 +17,19 @@ type AssistantMessage struct {
 	ToolUses []ToolUse
 }
 
-// ToolResult is emitted by a type:"user" line whose content contains a
+// ToolResult is emitted by a type:"user" line whose content contains a single
 // tool_result block.
 type ToolResult struct {
 	ToolUseID string
 	IsError   bool
 	Content   string
+}
+
+// ToolResults is emitted by a type:"user" line whose content contains two or
+// more tool_result blocks (parallel tool-use response). Callers that already
+// handle ToolResult must also handle ToolResults.
+type ToolResults struct {
+	Results []ToolResult
 }
 
 // Result is emitted by a type:"result" line (session end).
@@ -64,5 +71,6 @@ func (u Usage) Total() int {
 func (SystemInit) isStreamEvent()       {}
 func (AssistantMessage) isStreamEvent() {}
 func (ToolResult) isStreamEvent()       {}
+func (ToolResults) isStreamEvent()      {}
 func (Result) isStreamEvent()           {}
 func (Unknown) isStreamEvent()          {}

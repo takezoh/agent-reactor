@@ -419,7 +419,10 @@ func (r *Runtime) reapSubsystemIfLast(sub rsubsystem.Subsystem, frameID state.Fr
 		return
 	}
 	if reaper, ok := factory.(rsubsystem.Reaper); ok {
-		reaper.Remove(context.Background(), subsystemID)
+		// Remove blocks until the backend process exits (up to stopGrace ≈ 6 s).
+		// Run in a goroutine to avoid stalling the event loop; consistent with
+		// spawnTmuxWindowAsync which is also non-blocking for the same reason.
+		go reaper.Remove(context.Background(), subsystemID)
 	}
 }
 

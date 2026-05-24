@@ -20,9 +20,10 @@ type FactoryConfig struct {
 	// container exec config.
 	Runtime RuntimeHook
 	// ResolveSockPaths returns the host-side and container-side sock paths for
-	// the given session. Paths are unique per session to allow multiple
-	// concurrent app-server processes.
-	ResolveSockPaths func(sessionID state.SessionID) (host string, container string, err error)
+	// the given session and project. Paths are unique per session to allow
+	// multiple concurrent app-server processes. project is passed explicitly so
+	// that the callback need not access shared mutable state from a goroutine.
+	ResolveSockPaths func(sessionID state.SessionID, project string) (host string, container string, err error)
 	// IsContainer reports whether the given project runs in a devcontainer.
 	IsContainer func(project string) bool
 	// ActiveFrameID returns the currently active FrameID; used by Backends
@@ -66,7 +67,7 @@ func (f *Factory) Ensure(ctx context.Context, sessionID state.SessionID, project
 	}
 	f.mu.Unlock()
 
-	host, container, err := f.cfg.ResolveSockPaths(sessionID)
+	host, container, err := f.cfg.ResolveSockPaths(sessionID, project)
 	if err != nil {
 		return nil, "", fmt.Errorf("stream factory: resolve sock paths: %w", err)
 	}

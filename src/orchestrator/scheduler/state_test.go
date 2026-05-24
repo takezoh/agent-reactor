@@ -95,8 +95,10 @@ func TestStateWorkerExitNormal_RemovesRunningAndReturnsContinuation(t *testing.T
 	if entry.Kind != RetryContinuation {
 		t.Errorf("got kind %v, want RetryContinuation", entry.Kind)
 	}
-	if entry.Attempt != 1 {
-		t.Errorf("got attempt %d, want 1", entry.Attempt)
+	// Dispatch was at attempt=1; continuation should be attempt=2 (run.Attempt+1),
+	// consistent with WorkerExitAbnormal which also increments.
+	if entry.Attempt != 2 {
+		t.Errorf("got attempt %d, want 2 (run.Attempt+1)", entry.Attempt)
 	}
 
 	snap := s.Snapshot()

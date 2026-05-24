@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -260,6 +261,8 @@ func (r *Runner) teardown(wp workerParams) {
 // sendWorkerExit delivers the worker exit signal to the scheduler (§16.6).
 // Uses non-blocking send because the channel is buffered (cap 64) and teardown
 // must complete before the scheduler can re-dispatch to the same workspace.
+// Dropping the signal (channel full) would permanently leak a scheduler slot;
+// log an error so the condition is visible in the logs.
 func (r *Runner) sendWorkerExit(issueID string, attempt int, exitErr error) {
 	if r.WorkerDone == nil {
 		return
@@ -267,6 +270,8 @@ func (r *Runner) sendWorkerExit(issueID string, attempt int, exitErr error) {
 	select {
 	case r.WorkerDone <- scheduler.WorkerExit{IssueID: issueID, Err: exitErr, Attempt: attempt}:
 	default:
+		slog.Error("agent: WorkerDone channel full, scheduler slot leaked",
+			"issue_id", issueID, "attempt", attempt)
 	}
 }
 

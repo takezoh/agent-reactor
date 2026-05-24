@@ -110,16 +110,26 @@ func parseUser(line []byte) (Event, error) {
 	if v.Message == nil {
 		return Unknown{Type: "user"}, nil
 	}
+	var results []ToolResult
 	for _, b := range v.Message.Content {
 		if b.Type == "tool_result" {
-			return ToolResult{
+			results = append(results, ToolResult{
 				ToolUseID: b.ToolUseID,
 				IsError:   b.IsError,
 				Content:   b.Content,
-			}, nil
+			})
 		}
 	}
-	return Unknown{Type: "user"}, nil
+	switch len(results) {
+	case 0:
+		return Unknown{Type: "user"}, nil
+	case 1:
+		return results[0], nil
+	default:
+		// Parallel tool-use: Claude emits multiple tool_result blocks in a single
+		// user message. Return ToolResults so callers can handle all of them.
+		return ToolResults{Results: results}, nil
+	}
 }
 
 func parseResult(line []byte) (Event, error) {

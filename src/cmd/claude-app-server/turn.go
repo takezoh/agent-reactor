@@ -192,16 +192,14 @@ func (r *turnRunner) scanStream(threadID, turnID string, sc *streamjson.Scanner)
 			}
 
 		case streamjson.ToolResult:
-			status := "completed"
-			if ev.IsError {
-				status = "failed"
+			r.emitToolResult(threadID, turnID, toolNames, ev)
+
+		case streamjson.ToolResults:
+			// Parallel tool-use: Claude returned multiple tool_result blocks in a
+			// single user message. Emit each one as a separate completed item.
+			for _, tr := range ev.Results {
+				r.emitToolResult(threadID, turnID, toolNames, tr)
 			}
-			id, tool, content := ev.ToolUseID, toolNames[ev.ToolUseID], ev.Content
-			_ = r.emit(func() error {
-				return r.srv.EmitItemCompleted(threadID, turnID, map[string]any{
-					"id": id, "type": "dynamicToolCall", "tool": tool, "status": status, "output": content,
-				})
-			})
 
 		case streamjson.Result:
 			out.resultReceived = true
@@ -214,6 +212,21 @@ func (r *turnRunner) scanStream(threadID, turnID string, sc *streamjson.Scanner)
 		slog.Error("stream scan", "err", err)
 	}
 	return out
+}
+
+// emitToolResult emits a single tool-result completion event.
+// Extracted so that both ToolResult (single) and ToolResults (parallel) paths share the same logic.
+func (r *turnRunner) emitToolResult(threadID, turnID string, toolNames map[string]string, tr streamjson.ToolResult) {
+	status := "completed"
+	if tr.IsError {
+		status = "failed"
+	}
+	id, tool, content := tr.ToolUseID, toolNames[tr.ToolUseID], tr.Content
+	_ = r.emit(func() error {
+		return r.srv.EmitItemCompleted(threadID, turnID, map[string]any{
+			"id": id, "type": "dynamicToolCall", "tool": tool, "status": status, "output": content,
+		})
+	})
 }
 
 // completeTurn accumulates token usage for the thread and emits the final

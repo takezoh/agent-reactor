@@ -11,9 +11,11 @@ import (
 )
 
 // resolveStreamSockPaths returns the host-side and container-side sock paths
-// for the given session. Each session gets a unique sock file so multiple
-// concurrent app-server processes do not collide.
-func (r *Runtime) resolveStreamSockPaths(sessionID state.SessionID) (string, string, error) {
+// for the given session and project. Each session gets a unique sock file so
+// multiple concurrent app-server processes do not collide.
+// project is provided by the caller (from the spawn effect) so that this
+// function can be called safely from a goroutine without accessing r.state.
+func (r *Runtime) resolveStreamSockPaths(sessionID state.SessionID, project string) (string, string, error) {
 	dataDir := r.cfg.DataDir
 	if dataDir == "" {
 		dataDir = os.TempDir()
@@ -27,23 +29,12 @@ func (r *Runtime) resolveStreamSockPaths(sessionID state.SessionID) (string, str
 	sockName := cstream.SockPrefix + string(sessionID) + cstream.SockSuffix
 	hostSock := filepath.Join(runDir, sockName)
 	containerSock := hostSock
-	if launcher(r.cfg).IsContainer(r.anyProject()) {
+	if launcher(r.cfg).IsContainer(project) {
 		// Container sockets use the fixed container run dir so the in-container
 		// routing bridge can find them by session ID.
 		containerSock = ContainerRunDir + "/" + sockName
 	}
 	return hostSock, containerSock, nil
-}
-
-// anyProject returns any project from the current session set, used only to
-// check whether the runtime is configured for container mode.
-func (r *Runtime) anyProject() string {
-	for _, sess := range r.state.Sessions {
-		if sess.Project != "" {
-			return sess.Project
-		}
-	}
-	return ""
 }
 
 // ensureStreamRunDir creates the stream run directory if it does not exist.
