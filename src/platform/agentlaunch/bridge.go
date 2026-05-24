@@ -2,23 +2,26 @@ package agentlaunch
 
 import (
 	"fmt"
-
-	"github.com/takezoh/credproxy/container"
 )
 
 // codex stream bridge constants — same protocol values as client/driver.CodexApp*
 // (copied here so platform/ does not depend on client/).
 const (
-	streamSockName     = "codex.sock"
+	streamSockPrefix   = "codex-"
+	streamSockSuffix   = ".sock"
 	streamLoopbackPort = 8282
 )
 
-// ContainerBridgeSpec returns the credproxy BridgeSpec that runs sockbridge
-// inside the project devcontainer. Appended to postCreate so the bridge is
-// available before any frame connects.
-func ContainerBridgeSpec(containerRunDir string) container.BridgeSpec {
-	return container.BridgeSpec{
-		ListenAddr:          fmt.Sprintf("127.0.0.1:%d", streamLoopbackPort),
-		ContainerSocketPath: containerRunDir + "/" + streamSockName,
-	}
+// ContainerStreamBridgeCmd returns the postCreate shell command that starts the
+// per-session routing sockbridge inside the devcontainer. It listens on the fixed
+// loopback port and routes each WebSocket connection to the per-session unix
+// socket at containerRunDir/codex-<sessionID>.sock.
+//
+// The command runs the "sockbridge" subcommand of roost-bridge (which is already
+// bind-mounted into the container at ContainerBinaryPath) in the background.
+func ContainerStreamBridgeCmd(containerRunDir string) string {
+	return fmt.Sprintf(
+		"%s sockbridge -listen 127.0.0.1:%d -route-dir %s -route-prefix %s -route-suffix %s &",
+		ContainerBinaryPath, streamLoopbackPort, containerRunDir, streamSockPrefix, streamSockSuffix,
+	)
 }

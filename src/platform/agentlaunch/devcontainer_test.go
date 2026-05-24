@@ -354,7 +354,7 @@ func stubHelperBinaries(t *testing.T) {
 		t.Skipf("os.Executable: %v", err)
 	}
 	dir := filepath.Dir(exe)
-	for _, name := range []string{"roost-bridge", "sockbridge"} {
+	for _, name := range []string{"roost-bridge"} {
 		p := filepath.Join(dir, name)
 		if _, err := os.Stat(p); err == nil {
 			continue

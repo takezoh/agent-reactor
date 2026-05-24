@@ -1,10 +1,10 @@
 ## Build & Test
 
 ```sh
-make build                   # Build Go sources under src/ → ./roost (+ roost-bridge, sockbridge)
+make build                   # Build Go sources under src/ → ./roost (+ roost-bridge)
 make build-orchestrator      # Build → ./orchestrator
 make build-claude-app-server # Build → ./claude-app-server
-make build-all               # Build all 3 main binaries (requires go.work for sockbridge)
+make build-all               # Build all 3 main binaries
 make vet                     # go vet ./...
 make lint                    # golangci-lint (depguard, funlen, staticcheck, etc.)
 cd src && go test ./...          # Run all tests

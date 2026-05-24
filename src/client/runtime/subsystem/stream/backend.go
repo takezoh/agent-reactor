@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -53,11 +52,12 @@ type ContainerExecConfig struct {
 }
 
 // Backend is the codex app-server stream subsystem. One instance exists per
-// subsystem ID (project×sandbox). It manages the app-server process, the
+// roost Session. It manages the per-session app-server process, the
 // WebSocket-over-UDS connection, and per-frame thread bindings.
 type Backend struct {
 	runtime       RuntimeHook
 	subsystemID   state.SubsystemID
+	sessionID     state.SessionID
 	project       string
 	serverBin     string
 	serverArgs    []string
@@ -73,7 +73,6 @@ type Backend struct {
 	conn          *codexclient.Conn
 	sockPath      string // UDS path dialed by daemon (host-side)
 	containerSock string // UDS path inside container
-	hostBridgeCmd *exec.Cmd
 	bridgePort    int
 	mu            sync.Mutex
 	frames        map[state.FrameID]*frameBinding
@@ -101,6 +100,7 @@ type frameBinding struct {
 func New(
 	rt RuntimeHook,
 	subsystemID state.SubsystemID,
+	sessionID state.SessionID,
 	project, serverBin string,
 	serverArgs []string,
 	model string,
@@ -113,6 +113,7 @@ func New(
 	return &Backend{
 		runtime:       rt,
 		subsystemID:   subsystemID,
+		sessionID:     sessionID,
 		project:       project,
 		serverBin:     serverBin,
 		serverArgs:    serverArgs,
@@ -142,7 +143,7 @@ func (b *Backend) Start(ctx context.Context) error {
 	_ = os.Remove(b.sockPath)
 	// Derive a subsystem-scoped context from the daemon context. Cancelling it
 	// (via Stop, or daemon shutdown cascading from the parent) tears down the
-	// read loop and SIGKILLs the app-server / sockbridge process groups.
+	// read loop and SIGKILLs the app-server process group.
 	b.ctx, b.cancel = context.WithCancel(ctx)
 	b.done = make(chan struct{})
 	cmd, err := b.buildServerCommand(ctx)
@@ -176,35 +177,17 @@ func (b *Backend) Start(ctx context.Context) error {
 		b.cancel()
 		return err
 	}
-	// Container mode: sockbridge is part of devcontainer postCreate
-	// (registered via ContainerBridgeSpec). Host mode: spawn here.
-	isContainer, err := b.isContainerProject(ctx)
-	if err != nil {
-		_ = b.conn.Close()
-		b.cancel()
-		return err
-	}
-	if !isContainer {
-		if err := b.startHostBridge(); err != nil {
-			_ = b.conn.Close()
-			b.cancel()
-			return fmt.Errorf("stream backend: host bridge: %w", err)
-		}
-	}
 	b.trackProcessGroups()
 	go b.waitProcess()
 	return nil
 }
 
-// trackProcessGroups records the app-server and host-bridge pgids so a future
-// boot's PruneOrphans reaps them if this daemon dies without a graceful Stop.
+// trackProcessGroups records the app-server pgid so a future boot's
+// PruneOrphans reaps it if this daemon dies without a graceful Stop.
 // No-op when tracker is nil.
 func (b *Backend) trackProcessGroups() {
 	if b.cmd != nil && b.cmd.Process != nil {
 		b.tracker.Track(b.cmd.Process.Pid)
-	}
-	if b.hostBridgeCmd != nil && b.hostBridgeCmd.Process != nil {
-		b.tracker.Track(b.hostBridgeCmd.Process.Pid)
 	}
 }
 
@@ -242,7 +225,7 @@ func (b *Backend) BindFrame(ctx context.Context, req subsystem.BindRequest) (sub
 	if err != nil {
 		return subsystem.BindResult{}, err
 	}
-	result.Plan.Command = BuildRemoteCommand(b.bridgePort, threadID, startDir)
+	result.Plan.Command = BuildRemoteCommand(b.bridgePort, b.sessionID, threadID, startDir)
 	result.Plan.Stdin = nil
 	result.Plan.Stream.ResumeThreadID = threadID
 	return result, nil
@@ -259,10 +242,10 @@ func (b *Backend) ReleaseFrame(frameID state.FrameID) {
 	b.mu.Unlock()
 }
 
-// Stop cancels the subsystem context (SIGKILLing the app-server and sockbridge
-// process groups via procgroup) and blocks until waitProcess has reaped them,
-// so the call returns only once the spawned processes are gone. A grace bound
-// prevents a stuck Wait from blocking shutdown forever.
+// Stop cancels the subsystem context (SIGKILLing the app-server process group
+// via procgroup) and blocks until waitProcess has reaped it, so the call
+// returns only once the spawned process is gone. A grace bound prevents a
+// stuck Wait from blocking shutdown forever.
 func (b *Backend) Stop(_ context.Context) {
 	if b.cancel != nil {
 		b.cancel()
@@ -290,26 +273,6 @@ func (b *Backend) OnServerRequest(id int64, method string, params json.RawMessag
 func (b *Backend) isContainerProject(ctx context.Context) (bool, error) {
 	cfg, err := b.runtime.ContainerExecConfig(ctx, b.project)
 	return cfg != nil, err
-}
-
-func (b *Backend) startHostBridge() error {
-	bin, err := findHelperBin("sockbridge")
-	if err != nil {
-		return err
-	}
-	cmd := procgroup.Command(procgroup.Spec{
-		Ctx: b.ctx,
-		Bin: bin,
-		Args: []string{
-			"-listen", fmt.Sprintf("127.0.0.1:%d", b.bridgePort),
-			"-socket", b.sockPath,
-		},
-	})
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	b.hostBridgeCmd = cmd
-	return nil
 }
 
 func (b *Backend) buildServerCommand(ctx context.Context) (*exec.Cmd, error) {
@@ -389,12 +352,6 @@ func (b *Backend) waitProcess() {
 	} else {
 		slog.Warn("stream backend exited", "subsystem", b.subsystemID)
 	}
-	if b.hostBridgeCmd != nil && b.hostBridgeCmd.Process != nil {
-		bridgePID := b.hostBridgeCmd.Process.Pid
-		_ = b.hostBridgeCmd.Process.Kill()
-		_ = b.hostBridgeCmd.Wait()
-		b.tracker.Untrack(bridgePID)
-	}
 	_ = b.conn.Close()
 	b.mu.Lock()
 	frameIDs := make([]state.FrameID, 0, len(b.frames))
@@ -425,20 +382,4 @@ func (b *Backend) emit(frameID state.FrameID, kind state.SubsystemEventKind, pay
 		Timestamp: time.Now(),
 		Payload:   payload,
 	})
-}
-
-// findHelperBin locates a helper binary by checking the directory of the current
-// executable first, then PATH.
-func findHelperBin(name string) (string, error) {
-	if selfPath, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(selfPath), name)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	path, err := exec.LookPath(name)
-	if err != nil {
-		return "", fmt.Errorf("stream backend: %s binary not found in PATH or alongside roost", name)
-	}
-	return path, nil
 }

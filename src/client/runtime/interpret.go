@@ -195,7 +195,9 @@ func (r *Runtime) executeKillSessionWindow(e state.EffKillSessionWindow) {
 	}
 	// Release subsystem resources (worktree removal, thread cleanup).
 	if v, ok := r.frameSubsystems.LoadAndDelete(e.FrameID); ok {
-		v.(rsubsystem.Subsystem).ReleaseFrame(e.FrameID)
+		sub := v.(rsubsystem.Subsystem)
+		sub.ReleaseFrame(e.FrameID)
+		r.reapSubsystemIfLast(sub, e.FrameID)
 	}
 	r.invokeFrameCleanup(e.FrameID)
 }
@@ -318,7 +320,7 @@ func (r *Runtime) spawnTmuxWindowAsync(e state.EffSpawnTmuxWindow) {
 		Stdin:     e.Stdin,
 	}
 
-	sub, subsystemID, err := r.ensureSubsystem(ctx, e.Subsystem, e.Project, plan)
+	sub, subsystemID, err := r.ensureSubsystem(ctx, e.SessionID, e.Subsystem, e.Project, plan)
 	if err != nil {
 		slog.Error("runtime: ensure subsystem failed", "frame", e.FrameID, "err", err)
 		r.enqueueSpawnFailed(e, err.Error())
@@ -336,6 +338,7 @@ func (r *Runtime) spawnTmuxWindowAsync(e state.EffSpawnTmuxWindow) {
 		return
 	}
 	r.frameSubsystems.Store(e.FrameID, sub)
+	r.frameSubsystemIDs.Store(e.FrameID, subsystemID)
 	plan = bindResult.Plan
 
 	wrapped, err := r.wrapWithContainerToken(e.FrameID, e.Project, plan, e.Env)
@@ -371,11 +374,11 @@ func (r *Runtime) spawnTmuxWindowAsync(e state.EffSpawnTmuxWindow) {
 
 // ensureSubsystem dispatches to the factory registered for the given kind,
 // caches the returned Subsystem in r.subsystems, and returns the resolved
-// SubsystemID. The factory itself decides how (project, plan) maps to an
-// instance — runtime does not branch on kind beyond this lookup. An empty
-// kind is treated as CLI (the default for drivers that do not set
+// SubsystemID. The factory itself decides how (sessionID, project, plan) maps
+// to an instance — runtime does not branch on kind beyond this lookup. An
+// empty kind is treated as CLI (the default for drivers that do not set
 // LaunchPlan.Subsystem explicitly).
-func (r *Runtime) ensureSubsystem(ctx context.Context, kind state.LaunchSubsystem, project string, plan state.LaunchPlan) (rsubsystem.Subsystem, state.SubsystemID, error) {
+func (r *Runtime) ensureSubsystem(ctx context.Context, sessionID state.SessionID, kind state.LaunchSubsystem, project string, plan state.LaunchPlan) (rsubsystem.Subsystem, state.SubsystemID, error) {
 	if kind == "" {
 		kind = state.LaunchSubsystemCLI
 	}
@@ -383,12 +386,41 @@ func (r *Runtime) ensureSubsystem(ctx context.Context, kind state.LaunchSubsyste
 	if !ok {
 		return nil, "", fmt.Errorf("runtime: unknown subsystem kind %q", kind)
 	}
-	sub, id, err := factory.Ensure(ctx, project, plan)
+	sub, id, err := factory.Ensure(ctx, sessionID, project, plan)
 	if err != nil {
 		return nil, "", err
 	}
 	r.subsystems.LoadOrStore(id, sub)
 	return sub, id, nil
+}
+
+// reapSubsystemIfLast removes and stops the backend for frameID if it was
+// the last frame using that backend. Call after ReleaseFrame.
+func (r *Runtime) reapSubsystemIfLast(sub rsubsystem.Subsystem, frameID state.FrameID) {
+	sidVal, ok := r.frameSubsystemIDs.LoadAndDelete(frameID)
+	if !ok {
+		return
+	}
+	subsystemID := sidVal.(state.SubsystemID)
+	// Check whether any other live frame still uses the same backend.
+	hasOther := false
+	r.frameSubsystemIDs.Range(func(_, v any) bool {
+		if v.(state.SubsystemID) == subsystemID {
+			hasOther = true
+			return false
+		}
+		return true
+	})
+	if hasOther {
+		return
+	}
+	factory, ok := r.subsystemFactories[sub.Kind()]
+	if !ok {
+		return
+	}
+	if reaper, ok := factory.(rsubsystem.Reaper); ok {
+		reaper.Remove(context.Background(), subsystemID)
+	}
 }
 
 // buildSpawnCommand builds the tmux command string for a resolved wrapped.Command.

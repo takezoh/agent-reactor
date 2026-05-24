@@ -10,18 +10,18 @@ import (
 const (
 	CodexDriverName = "codex"
 
-	// CodexAppServerSockName is the project-private filename of the codex
-	// app-server's UDS, used in both the host run dir
-	// (<dataDir>/run/<projhash>/) and the container run dir
-	// (/opt/roost/run/). The directory itself differentiates projects, so
-	// no further encoding is needed.
-	CodexAppServerSockName = "codex.sock"
+	// CodexAppServerSockPrefix and CodexAppServerSockSuffix are the filename
+	// prefix and suffix for per-session codex app-server unix sockets.
+	// A session's socket is named codex-<sessionID>.sock.
+	CodexAppServerSockPrefix = "codex-"
+	CodexAppServerSockSuffix = ".sock"
 
-	// CodexAppServerLoopbackPort is the fixed loopback TCP port the
-	// sockbridge listens on for the codex TUI's ws:// attach. Inside a
-	// project devcontainer the network namespace is isolated so this port
-	// is collision-free across projects; in host mode the daemon serves
-	// one project at a time, so the same fixed port works.
+	// CodexAppServerLoopbackPort is the fixed loopback TCP port the routing
+	// sockbridge listens on. It routes ws://127.0.0.1:<port>/<sessionID>
+	// to the per-session UDS codex-<sessionID>.sock. Inside a devcontainer
+	// the network namespace is isolated so this port is collision-free across
+	// containers. One routing bridge per container/host daemon handles all
+	// sessions concurrently.
 	CodexAppServerLoopbackPort = 8282
 
 	codexKeyThreadID          = "thread_id"

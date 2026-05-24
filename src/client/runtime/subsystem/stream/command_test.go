@@ -66,8 +66,8 @@ func TestBuildServerArgs(t *testing.T) {
 }
 
 func TestBuildRemoteCommandCold(t *testing.T) {
-	cmd := BuildRemoteCommand(8080, "", "/work")
-	if !strings.Contains(cmd, "--remote ws://127.0.0.1:8080") {
+	cmd := BuildRemoteCommand(8080, "sess1", "", "/work")
+	if !strings.Contains(cmd, "--remote ws://127.0.0.1:8080/sess1") {
 		t.Errorf("remote missing: %s", cmd)
 	}
 	if strings.Contains(cmd, "resume") {
@@ -79,19 +79,9 @@ func TestBuildRemoteCommandCold(t *testing.T) {
 }
 
 func TestBuildRemoteCommandWarm(t *testing.T) {
-	cmd := BuildRemoteCommand(8080, "tid", "")
+	cmd := BuildRemoteCommand(8080, "sess1", "tid", "")
 	if !strings.Contains(cmd, "resume tid") {
 		t.Errorf("warm start should have resume: %s", cmd)
-	}
-}
-
-func TestContainerBridgeSpec(t *testing.T) {
-	spec := ContainerBridgeSpec("/run/dir")
-	if spec.ContainerSocketPath != "/run/dir/"+SockName {
-		t.Errorf("got %q", spec.ContainerSocketPath)
-	}
-	if spec.ListenAddr == "" {
-		t.Errorf("ListenAddr empty")
 	}
 }
 

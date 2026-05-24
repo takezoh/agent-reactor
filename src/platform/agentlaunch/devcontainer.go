@@ -275,19 +275,12 @@ func BuildContainerOverlay(
 		if err != nil {
 			return sandboxdc.SpecOverlay{}, fmt.Errorf("devcontainer: install binary: %w", err)
 		}
-		if err := InstallSockBridgeInRunDir(runDir); err != nil {
-			slog.Warn("devcontainer: sockbridge install failed", "err", err)
-		}
-
 		env := buildOverlayEnv(scriptEnv, proxySpec)
 		mounts := append([]string{
 			fmt.Sprintf("type=bind,source=%s,target=%s", runDir, ContainerRunDir),
 		}, proxySpec.Mounts...)
 
-		bridges := make([]container.BridgeSpec, 0, len(proxySpec.BridgeSpecs)+1)
-		bridges = append(bridges, proxySpec.BridgeSpecs...)
-		bridges = append(bridges, ContainerBridgeSpec(ContainerRunDir))
-		postCreate := buildPostCreate(binPath, postCreateSubcmds, bridges)
+		postCreate := buildPostCreate(binPath, postCreateSubcmds, proxySpec.BridgeSpecs, ContainerStreamBridgeCmd(ContainerRunDir))
 
 		var extraWorkspaces []sandboxdc.BindMount
 		if instanceKey == sandboxdc.SharedContainerKey {
@@ -407,11 +400,17 @@ func buildOverlayEnv(scriptEnv map[string]string, proxySpec container.Spec) map[
 	return env
 }
 
-func buildPostCreate(binPath string, postCreateSubcmds []string, bridges []container.BridgeSpec) []string {
+// buildPostCreate assembles the postCreate shell script for the devcontainer.
+// extraBgCmds are run first as background processes (e.g. the stream routing
+// bridge). Each BridgeSpec from credproxy providers is started via
+// "roost-bridge sockbridge" in fixed-socket mode. postCreateSubcmds are run
+// via the installed roost-bridge binary (setup hooks etc.).
+func buildPostCreate(binPath string, postCreateSubcmds []string, bridges []container.BridgeSpec, extraBgCmds ...string) []string {
 	var parts []string
+	parts = append(parts, extraBgCmds...)
 	for _, bs := range bridges {
-		parts = append(parts, fmt.Sprintf("%s -listen %s -socket %s &",
-			ContainerSockBridgePath, bs.ListenAddr, bs.ContainerSocketPath))
+		parts = append(parts, fmt.Sprintf("%s sockbridge -listen %s -socket %s &",
+			ContainerBinaryPath, bs.ListenAddr, bs.ContainerSocketPath))
 	}
 	for _, sub := range postCreateSubcmds {
 		parts = append(parts, binPath+" "+sub)

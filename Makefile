@@ -1,6 +1,5 @@
 BINARY           := roost
 BRIDGE           := roost-bridge
-SOCKBRIDGE       := sockbridge
 ORCHESTRATOR     := orchestrator
 CLAUDE_APP_SERVER := claude-app-server
 NOTIFY_PS1  := notify.ps1
@@ -18,7 +17,6 @@ CODEX_SCHEMA_TMP := /tmp/codex-schema-gen
 build:
 	cd $(SRC_DIR) && go build -o ../$(BINARY) ./cmd/roost
 	cd $(SRC_DIR) && go build -o ../$(BRIDGE) ./cmd/roost-bridge
-	cd $(SRC_DIR) && go build -o ../$(SOCKBRIDGE) github.com/takezoh/credproxy/cmd/sockbridge
 	cp $(SRC_DIR)/platform/lib/notify/notify.ps1 ./$(NOTIFY_PS1)
 
 build-orchestrator:
@@ -36,7 +34,6 @@ install: build
 	install -d $(INSTALL_DIR) $(LIBEXEC_DIR)
 	install -m 755 $(BINARY) $(INSTALL_DIR)/$(BINARY)
 	install -m 755 $(BRIDGE) $(LIBEXEC_DIR)/$(BRIDGE)
-	install -m 755 $(SOCKBRIDGE) $(LIBEXEC_DIR)/$(SOCKBRIDGE)
 	install -m 644 $(NOTIFY_PS1) $(LIBEXEC_DIR)/$(NOTIFY_PS1)
 
 test:
@@ -53,7 +50,7 @@ verify-bridge-deps:
 	@cd $(SRC_DIR) && go list -deps ./cmd/roost-bridge | grep -E 'takezoh/agent-roost/(client/(state|uiproc)|platform/features)$$' && echo "FAIL: bridge imports forbidden packages" && exit 1 || echo "OK: bridge deps are clean"
 
 clean:
-	rm -f $(BINARY) $(BRIDGE) $(SOCKBRIDGE) $(ORCHESTRATOR) $(CLAUDE_APP_SERVER) $(NOTIFY_PS1)
+	rm -f $(BINARY) $(BRIDGE) $(ORCHESTRATOR) $(CLAUDE_APP_SERVER) $(NOTIFY_PS1)
 
 # codex-schema-check — verify committed bundle files match current codex output.
 # Comparison is done with sorted keys so JSON object ordering doesn't matter.

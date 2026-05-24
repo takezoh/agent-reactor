@@ -3,7 +3,6 @@ package stream
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,33 +19,27 @@ type FactoryConfig struct {
 	// Runtime is the hook used by Backends to enqueue events and resolve
 	// container exec config.
 	Runtime RuntimeHook
-	// ResolveSockPaths returns the host-side sock path and the container-side
-	// sock path for the given project. The container path equals the host
-	// path when the project runs directly on the host.
-	ResolveSockPaths func(project string) (host string, container string, err error)
+	// ResolveSockPaths returns the host-side and container-side sock paths for
+	// the given session. Paths are unique per session to allow multiple
+	// concurrent app-server processes.
+	ResolveSockPaths func(sessionID state.SessionID) (host string, container string, err error)
 	// IsContainer reports whether the given project runs in a devcontainer.
 	IsContainer func(project string) bool
-	// RunDirKey returns the container key the project shares (the same key
-	// DevcontainerLauncher uses for its run dir): "__shared__" for shared
-	// isolation, the project path for project isolation, "" when not
-	// containerized. Used in makeID so all frames living in one container
-	// reduce to a single subsystem instance.
-	RunDirKey func(project string) string
 	// ActiveFrameID returns the currently active FrameID; used by Backends
 	// to route events to the foreground frame.
 	ActiveFrameID func() state.FrameID
 	// ReadTimeout overrides the per-request JSON-RPC timeout.  Zero uses the
 	// default (15 seconds).  Corresponds to the codex.read_timeout_ms config key.
 	ReadTimeout time.Duration
-	// Tracker records the app-server / sockbridge process-group pgids so a
-	// future boot can reap them if this daemon dies without a graceful Stop.
+	// Tracker records the app-server process-group pgids so a future boot can
+	// reap them if this daemon dies without a graceful Stop.
 	// Nil disables crash-path tracking (e.g. tests, non-Linux).
 	Tracker *procgroup.Tracker
 }
 
-// Factory creates Stream Backends keyed by (sandbox mode × project). Sandbox
-// mode resolution is internal to the Factory — Runtime, Driver, and Frame
-// never see it.
+// Factory creates Stream Backends keyed by session. One Backend (= one
+// app-server process) exists per roost Session. All frames (root + peers) in
+// the same Session share one Backend; different Sessions get separate Backends.
 type Factory struct {
 	cfg      FactoryConfig
 	mu       sync.Mutex
@@ -59,12 +52,12 @@ func NewFactory(cfg FactoryConfig) *Factory {
 }
 
 // Ensure implements subsystem.Factory.
-func (f *Factory) Ensure(ctx context.Context, project string, plan state.LaunchPlan) (subsystem.Subsystem, state.SubsystemID, error) {
+func (f *Factory) Ensure(ctx context.Context, sessionID state.SessionID, project string, plan state.LaunchPlan) (subsystem.Subsystem, state.SubsystemID, error) {
 	cmdCfg, err := ParseCommand(plan.Command)
 	if err != nil {
 		return nil, "", err
 	}
-	id := f.makeID(project, plan.Sandbox)
+	id := f.makeID(sessionID)
 
 	f.mu.Lock()
 	if b, ok := f.backends[id]; ok {
@@ -73,13 +66,14 @@ func (f *Factory) Ensure(ctx context.Context, project string, plan state.LaunchP
 	}
 	f.mu.Unlock()
 
-	host, container, err := f.cfg.ResolveSockPaths(project)
+	host, container, err := f.cfg.ResolveSockPaths(sessionID)
 	if err != nil {
 		return nil, "", fmt.Errorf("stream factory: resolve sock paths: %w", err)
 	}
 	b := New(
 		f.cfg.Runtime,
 		id,
+		sessionID,
 		project,
 		cmdCfg.ServerBin,
 		cmdCfg.ServerArgs,
@@ -111,6 +105,21 @@ func (f *Factory) Ensure(ctx context.Context, project string, plan state.LaunchP
 	return b, id, nil
 }
 
+// Remove implements subsystem.Reaper. It stops the backend for the given
+// subsystemID and removes it from the factory. Called when a session's last
+// frame is released.
+func (f *Factory) Remove(ctx context.Context, id state.SubsystemID) {
+	f.mu.Lock()
+	b, ok := f.backends[id]
+	if ok {
+		delete(f.backends, id)
+	}
+	f.mu.Unlock()
+	if ok {
+		b.Stop(ctx)
+	}
+}
+
 // Range iterates all live backends. Used by the runtime for shutdown.
 func (f *Factory) Range(fn func(*Backend) bool) {
 	f.mu.Lock()
@@ -126,31 +135,10 @@ func (f *Factory) Range(fn func(*Backend) bool) {
 	}
 }
 
-// makeID derives the SubsystemID from (sandbox kind, container key).
-//
-// Container-mode IDs key on the container the project lives in, not the
-// project itself: every frame inside one container shares one stream backend
-// because they share one in-container sockbridge listening on 127.0.0.1:8282.
-// In shared isolation that collapses N projects onto a single ID
-// (stream:container:__shared__); in project isolation each project still gets
-// its own container and thus its own ID (stream:container:<projectPath>).
-//
-// Host-mode IDs stay per-project — each host project runs its own codex
-// app-server in its own cwd, so collapsing them would mix unrelated threads.
-//
-// SandboxOverrideHost wins over IsContainer: it's the per-frame "use the host"
-// escape hatch even when the project would otherwise containerize.
-func (f *Factory) makeID(project string, sandbox state.SandboxOverride) state.SubsystemID {
-	escapedProject := strings.ReplaceAll(project, ":", "_")
-	if sandbox == state.SandboxOverrideHost {
-		return state.SubsystemID("stream:host:" + escapedProject)
-	}
-	if f.cfg.IsContainer != nil && f.cfg.IsContainer(project) {
-		key := project
-		if f.cfg.RunDirKey != nil {
-			key = f.cfg.RunDirKey(project)
-		}
-		return state.SubsystemID("stream:container:" + strings.ReplaceAll(key, ":", "_"))
-	}
-	return state.SubsystemID("stream:host:" + escapedProject)
+// makeID derives the SubsystemID from the session identifier.
+// Every roost Session gets its own app-server, so the ID is keyed purely on
+// sessionID. All frames (root + peers) within the same session share the
+// same ID and therefore the same Backend.
+func (f *Factory) makeID(sessionID state.SessionID) state.SubsystemID {
+	return state.SubsystemID("stream:session:" + string(sessionID))
 }

@@ -13,7 +13,6 @@ import (
 const (
 	ContainerRunDir           = "/opt/roost/run"
 	ContainerBinaryPath       = ContainerRunDir + "/roost-bridge"
-	ContainerSockBridgePath   = ContainerRunDir + "/sockbridge"
 	ContainerSockFileName     = "roost.sock"
 	ContainerSockFilePath     = ContainerRunDir + "/" + ContainerSockFileName
 	ContainerHostExecSockPath = ContainerRunDir + "/hostexec.sock"
@@ -64,16 +63,6 @@ func installBridgeInRunDir(src, runDir string) (string, error) {
 		return "", err
 	}
 	return ContainerBinaryPath, nil
-}
-
-// InstallSockBridgeInRunDir copies the sockbridge binary into runDir as
-// "sockbridge" (mode 0o755).
-func InstallSockBridgeInRunDir(runDir string) error {
-	src, err := findHelperBinary("sockbridge")
-	if err != nil {
-		return err
-	}
-	return installExecInRunDir(src, filepath.Join(runDir, "sockbridge"))
 }
 
 // FindHelperFile returns the absolute path to a helper file (binary, script,

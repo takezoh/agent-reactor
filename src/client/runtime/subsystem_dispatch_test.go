@@ -36,7 +36,7 @@ type fakeFactory struct {
 	sub *fakeSubsystem
 }
 
-func (f *fakeFactory) Ensure(_ context.Context, _ string, _ state.LaunchPlan) (rsubsystem.Subsystem, state.SubsystemID, error) {
+func (f *fakeFactory) Ensure(_ context.Context, _ state.SessionID, _ string, _ state.LaunchPlan) (rsubsystem.Subsystem, state.SubsystemID, error) {
 	return f.sub, f.sub.id, nil
 }
 
@@ -49,11 +49,11 @@ func TestEnsureSubsystemDispatchesByKind(t *testing.T) {
 		state.LaunchSubsystem("b"): &fakeFactory{sub: b},
 	}
 
-	sub, id, err := r.ensureSubsystem(context.Background(), state.LaunchSubsystem("a"), "/p", state.LaunchPlan{})
+	sub, id, err := r.ensureSubsystem(context.Background(), "", state.LaunchSubsystem("a"), "/p", state.LaunchPlan{})
 	if err != nil || sub != a || id != "fake:a" {
 		t.Fatalf("kind a: got (%v, %q, %v), want (a, fake:a, nil)", sub, id, err)
 	}
-	sub, id, err = r.ensureSubsystem(context.Background(), state.LaunchSubsystem("b"), "/p", state.LaunchPlan{})
+	sub, id, err = r.ensureSubsystem(context.Background(), "", state.LaunchSubsystem("b"), "/p", state.LaunchPlan{})
 	if err != nil || sub != b || id != "fake:b" {
 		t.Fatalf("kind b: got (%v, %q, %v), want (b, fake:b, nil)", sub, id, err)
 	}
@@ -63,7 +63,7 @@ func TestEnsureSubsystemUnknownKindErrors(t *testing.T) {
 	r := &Runtime{
 		subsystemFactories: map[state.LaunchSubsystem]rsubsystem.Factory{},
 	}
-	_, _, err := r.ensureSubsystem(context.Background(), state.LaunchSubsystem("unknown"), "/p", state.LaunchPlan{})
+	_, _, err := r.ensureSubsystem(context.Background(), "", state.LaunchSubsystem("unknown"), "/p", state.LaunchPlan{})
 	if err == nil {
 		t.Fatal("expected error for unknown kind")
 	}
@@ -75,7 +75,7 @@ func TestEnsureSubsystemEmptyKindDefaultsToCLI(t *testing.T) {
 	r.subsystemFactories = map[state.LaunchSubsystem]rsubsystem.Factory{
 		state.LaunchSubsystemCLI: &fakeFactory{sub: a},
 	}
-	sub, _, err := r.ensureSubsystem(context.Background(), "", "/p", state.LaunchPlan{})
+	sub, _, err := r.ensureSubsystem(context.Background(), "", "", "/p", state.LaunchPlan{})
 	if err != nil || sub != a {
 		t.Fatalf("got (%v, %v), want (a, nil)", sub, err)
 	}

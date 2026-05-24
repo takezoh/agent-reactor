@@ -68,10 +68,18 @@ type Subsystem interface {
 // Each LaunchSubsystem kind is backed by one Factory registered at Runtime
 // construction time.
 type Factory interface {
-	// Ensure returns the Subsystem and its SubsystemID for (project, plan).
-	// Idempotent: same (project, plan) returns the same Subsystem instance.
+	// Ensure returns the Subsystem and its SubsystemID for (sessionID, project, plan).
+	// Idempotent: same sessionID returns the same Subsystem instance so that all
+	// frames in one session (root + peers) share one backend.
 	// ctx is used for backend startup (e.g. Stream's app-server dial).
 	// The returned SubsystemID is opaque to callers — only the factory
 	// (and the Subsystem it manages) knows the encoding.
-	Ensure(ctx context.Context, project string, plan state.LaunchPlan) (Subsystem, state.SubsystemID, error)
+	Ensure(ctx context.Context, sessionID state.SessionID, project string, plan state.LaunchPlan) (Subsystem, state.SubsystemID, error)
+}
+
+// Reaper is an optional interface a Factory may implement to support
+// early backend termination when a session's last frame is released.
+// The runtime calls Remove when the ref-count for a subsystemID drops to zero.
+type Reaper interface {
+	Remove(ctx context.Context, id state.SubsystemID)
 }

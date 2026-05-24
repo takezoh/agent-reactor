@@ -654,6 +654,8 @@ github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd h1:Rf9uhF1+VJ7ZHq
 github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd/go.mod h1:EbW0wDK/qEUYI0A5bqq0C2kF8JTQwWONmGDBbzsxxHo=
 github.com/takezoh/credproxy v0.0.0-20260508093545-1605b93c0b4f h1:0TCNWvDSaTPz5+TdkIk57ttw5Lbnlo4xfZZRW56wh68=
 github.com/takezoh/credproxy v0.0.0-20260508093545-1605b93c0b4f/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
+github.com/takezoh/credproxy v0.0.0-20260524125243-1aa9888bce76 h1:JctgP5IHokfKPwbjlWFjdXpCVt2YIvKwhY+6phl3lpY=
+github.com/takezoh/credproxy v0.0.0-20260524125243-1aa9888bce76/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
 github.com/takezoh/fishpath-go v0.1.0 h1:50mRtsddcLxhqWHymJDyL8+Ja9yyjbFIncis1nIttts=
 github.com/takezoh/fishpath-go v0.1.0/go.mod h1:74mSi4sk/bOHk8zJmDOQ90WKaxhDNG51icC/P/VolPc=
 github.com/tenntenn/modver v1.0.1 h1:2klLppGhDgzJrScMpkj9Ujy3rXPUspSjAcev9tSEBgA=

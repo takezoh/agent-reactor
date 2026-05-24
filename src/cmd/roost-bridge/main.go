@@ -49,6 +49,8 @@ func main() {
 		err = runMCPExec(rest)
 	case "setup":
 		err = runSetup(rest)
+	case "sockbridge":
+		err = runSockBridge(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "roost-bridge: unknown subcommand: %s\n", sub)
 		usage()
@@ -153,5 +155,6 @@ Subcommands:
   host-exec <bin>   Execute a host binary via the hostexec broker
   mcp-exec <alias>  Relay stdio to a host MCP server via the mcpproxy broker
   setup <agent>     Run agent integration setup (claude|codex|gemini)
+  sockbridge        TCP↔unix socket bridge (fixed-socket or routing mode)
 `)
 }

@@ -5,10 +5,10 @@ This expands the summary in [AGENTS.md](../../AGENTS.md). Read [ARCHITECTURE.md]
 ## Build & test
 
 ```sh
-make build                   # Build src/ → ./roost (+ roost-bridge, sockbridge)
+make build                   # Build src/ → ./roost (+ roost-bridge)
 make build-orchestrator      # → ./orchestrator
 make build-claude-app-server # → ./claude-app-server
-make build-all               # All 3 main binaries (requires go.work for sockbridge)
+make build-all               # All 3 main binaries
 make vet                     # go vet ./...
 make lint                    # golangci-lint (depguard, funlen, staticcheck, etc.)
 

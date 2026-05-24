@@ -10,11 +10,11 @@ import (
 func TestFactoryEnsureSameProjectSameInstance(t *testing.T) {
 	f := NewFactory()
 	ctx := context.Background()
-	sub1, id1, err := f.Ensure(ctx, "/repo", state.LaunchPlan{})
+	sub1, id1, err := f.Ensure(ctx, "", "/repo", state.LaunchPlan{})
 	if err != nil {
 		t.Fatalf("Ensure 1: %v", err)
 	}
-	sub2, id2, err := f.Ensure(ctx, "/repo", state.LaunchPlan{})
+	sub2, id2, err := f.Ensure(ctx, "", "/repo", state.LaunchPlan{})
 	if err != nil {
 		t.Fatalf("Ensure 2: %v", err)
 	}
@@ -32,8 +32,8 @@ func TestFactoryEnsureSameProjectSameInstance(t *testing.T) {
 func TestFactoryEnsureDifferentProjectsDifferentInstances(t *testing.T) {
 	f := NewFactory()
 	ctx := context.Background()
-	sub1, id1, _ := f.Ensure(ctx, "/repo-a", state.LaunchPlan{})
-	sub2, id2, _ := f.Ensure(ctx, "/repo-b", state.LaunchPlan{})
+	sub1, id1, _ := f.Ensure(ctx, "", "/repo-a", state.LaunchPlan{})
+	sub2, id2, _ := f.Ensure(ctx, "", "/repo-b", state.LaunchPlan{})
 	if sub1 == sub2 {
 		t.Error("expected distinct Backend instances per project")
 	}
@@ -45,8 +45,8 @@ func TestFactoryEnsureDifferentProjectsDifferentInstances(t *testing.T) {
 func TestFactoryRangeVisitsAllBackends(t *testing.T) {
 	f := NewFactory()
 	ctx := context.Background()
-	_, _, _ = f.Ensure(ctx, "/repo-a", state.LaunchPlan{})
-	_, _, _ = f.Ensure(ctx, "/repo-b", state.LaunchPlan{})
+	_, _, _ = f.Ensure(ctx, "", "/repo-a", state.LaunchPlan{})
+	_, _, _ = f.Ensure(ctx, "", "/repo-b", state.LaunchPlan{})
 	visited := 0
 	f.Range(func(_ *Backend) bool {
 		visited++

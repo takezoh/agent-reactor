@@ -23,7 +23,7 @@ func NewFactory() *Factory {
 }
 
 // Ensure implements subsystem.Factory.
-func (f *Factory) Ensure(_ context.Context, project string, _ state.LaunchPlan) (subsystem.Subsystem, state.SubsystemID, error) {
+func (f *Factory) Ensure(_ context.Context, _ state.SessionID, project string, _ state.LaunchPlan) (subsystem.Subsystem, state.SubsystemID, error) {
 	id := state.SubsystemID("cli:" + project)
 	f.mu.Lock()
 	defer f.mu.Unlock()

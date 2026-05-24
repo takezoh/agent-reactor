@@ -7,39 +7,51 @@ import (
 	"path/filepath"
 
 	cstream "github.com/takezoh/agent-roost/client/runtime/subsystem/stream"
+	"github.com/takezoh/agent-roost/client/state"
 )
 
-// streamRunDirKey returns the container key the project shares for stream-
-// subsystem run-dir bookkeeping. Mirrors DevcontainerLauncher.RunDirKey:
-// "__shared__" for shared isolation, the project path for project isolation,
-// and the project path for host launches (no container). Empty when the
-// devcontainer launcher isn't configured.
-func (r *Runtime) streamRunDirKey(project string) string {
-	l := launcher(r.cfg)
-	if dl := devcontainerLauncherFor(l); dl != nil && l.IsContainer(project) {
-		return dl.RunDirKey(project)
-	}
-	return project
-}
-
 // resolveStreamSockPaths returns the host-side and container-side sock paths
-// for the given project. The container path equals the host path when the
-// project runs directly on the host.
-func (r *Runtime) resolveStreamSockPaths(project string) (string, string, error) {
+// for the given session. Each session gets a unique sock file so multiple
+// concurrent app-server processes do not collide.
+func (r *Runtime) resolveStreamSockPaths(sessionID state.SessionID) (string, string, error) {
 	dataDir := r.cfg.DataDir
 	if dataDir == "" {
 		dataDir = os.TempDir()
 	}
-	runDir, err := EnsureProjectRunDir(filepath.Join(dataDir, "run"), r.streamRunDirKey(project))
+	// All host-mode session sockets share a single directory. The routing
+	// sockbridge watches this directory and routes by session ID.
+	runDir, err := ensureStreamRunDir(filepath.Join(dataDir, "run", cstream.RunDirName))
 	if err != nil {
 		return "", "", fmt.Errorf("stream backend: run dir: %w", err)
 	}
-	hostSock := filepath.Join(runDir, cstream.SockName)
+	sockName := cstream.SockPrefix + string(sessionID) + cstream.SockSuffix
+	hostSock := filepath.Join(runDir, sockName)
 	containerSock := hostSock
-	if launcher(r.cfg).IsContainer(project) {
-		containerSock = ContainerRunDir + "/" + cstream.SockName
+	if launcher(r.cfg).IsContainer(r.anyProject()) {
+		// Container sockets use the fixed container run dir so the in-container
+		// routing bridge can find them by session ID.
+		containerSock = ContainerRunDir + "/" + sockName
 	}
 	return hostSock, containerSock, nil
+}
+
+// anyProject returns any project from the current session set, used only to
+// check whether the runtime is configured for container mode.
+func (r *Runtime) anyProject() string {
+	for _, sess := range r.state.Sessions {
+		if sess.Project != "" {
+			return sess.Project
+		}
+	}
+	return ""
+}
+
+// ensureStreamRunDir creates the stream run directory if it does not exist.
+func ensureStreamRunDir(dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 // ContainerExecConfig implements stream.RuntimeHook: returns docker exec

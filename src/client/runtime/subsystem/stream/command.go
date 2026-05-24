@@ -5,14 +5,18 @@ import (
 	"strings"
 
 	"github.com/takezoh/agent-roost/client/driver"
-	"github.com/takezoh/credproxy/container"
+	"github.com/takezoh/agent-roost/client/state"
 )
 
 // Re-exported from driver/ so callers need not import both packages.
 const (
 	DriverName   = driver.CodexDriverName
-	SockName     = driver.CodexAppServerSockName
+	SockPrefix   = driver.CodexAppServerSockPrefix
+	SockSuffix   = driver.CodexAppServerSockSuffix
 	LoopbackPort = driver.CodexAppServerLoopbackPort
+	// RunDirName is the subdirectory under the daemon data dir that holds
+	// per-session codex app-server UDS files: <dataDir>/run/<RunDirName>/.
+	RunDirName = driver.CodexDriverName
 )
 
 // CommandConfig is the parsed form of a codex launch command string.
@@ -60,14 +64,16 @@ func buildServerArgs(extra []string, sandboxExternal bool, sockPath string) []st
 }
 
 // BuildRemoteCommand assembles the pane command that attaches the codex TUI
-// to the shared app-server via the sockbridge listener.
+// to the session's app-server via the routing sockbridge listener.
+//
+// The bridge listens on a fixed port and routes connections by URL path:
+// ws://127.0.0.1:<port>/<sessionID>. The bridge rewrites the path to "/"
+// before forwarding to the per-session UDS, so the app-server always sees "/".
 //
 // Cold start (threadID == ""): `codex --remote ...` so the TUI creates the
-// thread; pre-creating with thread/start produces a thread with no on-disk
-// rollout file, causing `codex resume <id>` to fail. Warm start uses
-// `codex resume <id> --remote ...`.
-func BuildRemoteCommand(bridgePort int, threadID, startDir string) string {
-	remote := fmt.Sprintf("ws://127.0.0.1:%d", bridgePort)
+// thread. Warm start uses `codex resume <id> --remote ...`.
+func BuildRemoteCommand(bridgePort int, sessionID state.SessionID, threadID, startDir string) string {
+	remote := fmt.Sprintf("ws://127.0.0.1:%d/%s", bridgePort, string(sessionID))
 	args := []string{DriverName}
 	if threadID != "" {
 		args = append(args, "resume", threadID)
@@ -77,16 +83,6 @@ func BuildRemoteCommand(bridgePort int, threadID, startDir string) string {
 		args = append(args, "-C", startDir)
 	}
 	return strings.Join(args, " ")
-}
-
-// ContainerBridgeSpec returns the credproxy BridgeSpec that runs sockbridge
-// inside the project devcontainer. Appended to postCreate so the bridge is
-// available before any frame connects.
-func ContainerBridgeSpec(containerRunDir string) container.BridgeSpec {
-	return container.BridgeSpec{
-		ListenAddr:          fmt.Sprintf("127.0.0.1:%d", LoopbackPort),
-		ContainerSocketPath: containerRunDir + "/" + SockName,
-	}
 }
 
 // shellJoinArgv single-quote-escapes each element and joins with spaces.
