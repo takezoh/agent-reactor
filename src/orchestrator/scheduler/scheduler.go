@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"path/filepath"
 	"sync/atomic"
@@ -15,7 +14,7 @@ import (
 	"github.com/takezoh/agent-roost/orchestrator/workflowfile"
 )
 
-// schedulerTrackerAPI is the tracker surface used by reconcile and startup cleanup.
+// schedulerTrackerAPI is the tracker surface used by reconcile, revalidation, and startup cleanup.
 // Satisfied by *orchestrator/tracker.Tracker; fakes implement it in tests.
 type schedulerTrackerAPI interface {
 	RefreshStates(ctx context.Context, ids []string) ([]ptrackerv.Issue, error)
@@ -23,14 +22,13 @@ type schedulerTrackerAPI interface {
 }
 
 // schedulerWorkspaceAPI is the workspace surface used by reconcile and startup cleanup.
-// Satisfied by *orchestrator/workspace.Manager; fakes implement it in tests.
 type schedulerWorkspaceAPI interface {
 	Remove(ctx context.Context, identifier string) error
 }
 
 // Deps bundles injectable dependencies for the Scheduler (SPEC §16.2).
-// A nil Clock defaults to the real wall clock.
-// Tracker and Spawn may be nil; in that case dispatch is skipped with a warning.
+// A nil Clock defaults to the real wall clock. Tracker and Spawn may be nil; dispatch is
+// then skipped with a warning. These injection points are how the shell stays testable.
 type Deps struct {
 	Tracker        CandidateSource
 	Spawn          SpawnFunc
@@ -39,7 +37,7 @@ type Deps struct {
 	Workspace      schedulerWorkspaceAPI
 }
 
-// WorkerExit is sent on the workerDone channel when an agent runner's turn loop ends.
+// WorkerExit is sent on the WorkerDone channel when an agent runner's turn loop ends (SPEC §16.6).
 // Err == nil indicates a clean exit; non-nil indicates an abnormal exit.
 type WorkerExit struct {
 	IssueID string
@@ -47,72 +45,108 @@ type WorkerExit struct {
 	Attempt int
 }
 
-// CodexActivity is sent on the codexActivity channel when the agent runner receives
-// a codex protocol notification (SPEC §10 / §13.5).
+// CodexActivity is sent on the CodexActivity channel when the agent runner receives a codex
+// protocol notification (SPEC §10 / §13.5).
 type CodexActivity struct {
 	IssueID       string
-	Event         string // codex notification method name
-	Message       string // non-empty for item/agentMessage/delta events
+	Event         string
+	Message       string
 	Timestamp     time.Time
-	Usage         *metrics.Usage             // non-nil for thread/tokenUsage/updated
-	RateLimit     *metrics.RateLimitSnapshot // non-nil for account/rateLimits/updated
-	TurnDuration  *time.Duration             // non-nil for turn/completed (elapsed turn time)
-	TurnCompleted bool                       // true when a turn/completed notification was received (SPEC §4.1.6)
+	Usage         *metrics.Usage
+	RateLimit     *metrics.RateLimitSnapshot
+	TurnDuration  *time.Duration
+	TurnCompleted bool
 }
 
-// Scheduler runs the polling loop per SPEC §16.2.
+// retryFireReq is sent by a retry timer callback to the Run loop.
+type retryFireReq struct {
+	IssueID    string
+	Identifier string
+	Attempt    int
+}
+
+// Scheduler is the imperative shell around the pure Reduce core (SPEC §16.2). The single Run
+// loop owns the authoritative State and is the only writer; it interprets the Effects that
+// Reduce returns into real I/O, holds live handles (workers, retry timers) in id→handle maps,
+// and publishes immutable State snapshots lock-free for the observability HTTP server.
 type Scheduler struct {
 	workflowPath     string
 	interval         time.Duration
-	lastGood         wfconfig.Config // last successfully resolved config; seeded from New
-	lastGoodTemplate string          // last successfully loaded prompt template body; seeded from New
-	reloadCh         chan struct{}   // fsnotify → loop coalesced reload signal (buffered 1)
-	degraded         bool            // true while workflow is invalid; controls warn/recovery log
-	available        atomic.Bool     // true while Run is executing (SPEC §13.3)
-	state            *State
-	deps             Deps
-	clock            Clock
-	retryFire        chan retryFireReq
-	workerDone       chan WorkerExit
-	codexActivity    chan CodexActivity
-	tracker          schedulerTrackerAPI
-	workspace        schedulerWorkspaceAPI
+	lastGood         wfconfig.Config
+	lastGoodTemplate string
+	reloadCh         chan struct{}
+	degraded         bool
+	available        atomic.Bool
+
+	deps      Deps
+	clock     Clock
+	tracker   schedulerTrackerAPI
+	workspace schedulerWorkspaceAPI
+
+	// Loop-owned state. cur is mutated only by the Run loop; published holds an immutable
+	// copy for concurrent lock-free reads (SnapshotCtx, SPEC §13.3).
+	cur       State
+	cfg       wfconfig.Config
+	published atomic.Pointer[State]
+	workers   map[string]Worker
+	timers    map[string]Timer
+
+	retryFire     chan retryFireReq
+	workerDone    chan WorkerExit
+	codexActivity chan CodexActivity
 }
 
-// New returns a Scheduler. cfg.Polling.IntervalMS determines the initial tick interval.
-// cfg is used as the initial last-known-good (caller must have validated it).
-// tmpl is the initial prompt template body; reloadConfig updates it on each successful reload.
+// New returns a Scheduler. cfg is the initial last-known-good config (caller must have
+// validated it). tmpl is the initial prompt template body.
 func New(workflowPath string, cfg wfconfig.Config, tmpl string, deps Deps) *Scheduler {
 	clk := deps.Clock
 	if clk == nil {
 		clk = realClock{}
 	}
 	deps.Clock = clk
-	return &Scheduler{
+	s := &Scheduler{
 		workflowPath:     workflowPath,
 		interval:         time.Duration(cfg.Polling.IntervalMS) * time.Millisecond,
 		lastGood:         cfg,
 		lastGoodTemplate: tmpl,
 		reloadCh:         make(chan struct{}, 1),
-		state:            NewState(),
 		deps:             deps,
 		clock:            clk,
+		tracker:          deps.RefreshTracker,
+		workspace:        deps.Workspace,
+		cur:              NewState(),
+		cfg:              cfg,
+		workers:          map[string]Worker{},
+		timers:           map[string]Timer{},
 		retryFire:        make(chan retryFireReq, 64),
 		workerDone:       make(chan WorkerExit, 64),
 		codexActivity:    make(chan CodexActivity, 64),
-		tracker:          deps.RefreshTracker,
-		workspace:        deps.Workspace,
 	}
+	s.publish()
+	return s
 }
 
 // LastGoodTemplate returns the most recently successfully loaded prompt template body.
-func (s *Scheduler) LastGoodTemplate() string {
-	return s.lastGoodTemplate
+func (s *Scheduler) LastGoodTemplate() string { return s.lastGoodTemplate }
+
+// WorkerDone returns the send-side of the worker-exit channel (SPEC §16.6).
+func (s *Scheduler) WorkerDone() chan<- WorkerExit { return s.workerDone }
+
+// CodexActivity returns the send-side of the codex-activity channel.
+func (s *Scheduler) CodexActivity() chan<- CodexActivity { return s.codexActivity }
+
+// Refresh queues an immediate poll+reconcile tick. Returns true when coalesced with a
+// pending request. Best-effort and non-blocking.
+func (s *Scheduler) Refresh() (coalesced bool) {
+	select {
+	case s.reloadCh <- struct{}{}:
+		return false
+	default:
+		return true
+	}
 }
 
 // Run starts the scheduler loop and blocks until ctx is cancelled.
-// Startup: startup cleanup → immediate tick → poll at interval.
-// WORKFLOW.md is watched via fsnotify for immediate re-apply; poll remains as a safety net.
 func (s *Scheduler) Run(ctx context.Context) error {
 	s.available.Store(true)
 	defer s.available.Store(false)
@@ -131,7 +165,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 
 	s.StartupCleanup(ctx)
-	s.tickOnce(ctx)
+	s.tick(ctx)
 
 	ticker := time.NewTicker(s.intervalOrFallback())
 	defer ticker.Stop()
@@ -141,96 +175,73 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			slog.Info("scheduler shutting down")
 			return nil
 		case <-ticker.C:
-			s.tickOnce(ctx)
+			s.tick(ctx)
 			s.applyInterval(ticker)
 		case req := <-s.retryFire:
-			s.handleRetry(ctx, req)
+			s.handleRetryFire(ctx, req)
 		case w := <-s.workerDone:
-			s.handleWorkerExit(ctx, w)
+			delete(s.workers, w.IssueID)
+			s.cfg, _ = s.reloadConfig()
+			s.step(ctx, EvWorkerExit(w))
 		case a := <-s.codexActivity:
-			s.handleCodexActivity(a)
+			s.step(ctx, codexEvent(a))
 		case <-s.reloadCh:
-			s.tickOnce(ctx)
+			s.tick(ctx)
 			s.applyInterval(ticker)
 		}
 	}
 }
 
-// WorkerDone returns the send-side of the worker-exit channel. The agent runner
-// sends a WorkerExit on this channel when its turn loop ends (SPEC §16.6).
-func (s *Scheduler) WorkerDone() chan<- WorkerExit {
-	return s.workerDone
+// tick reloads config and folds one EvTick (SPEC §8.1). Reconcile runs on last-known-good
+// config even when invalid; dispatch is gated on ConfigValid (§5.5).
+func (s *Scheduler) tick(ctx context.Context) {
+	cfg, valid := s.reloadConfig()
+	s.cfg = cfg
+	s.step(ctx, EvTick{ConfigValid: valid})
 }
 
-// CodexActivity returns the send-side of the codex-activity channel.
-func (s *Scheduler) CodexActivity() chan<- CodexActivity {
-	return s.codexActivity
-}
-
-// Snapshot returns a read-only copy of the current scheduler state (SPEC §7.3).
-// Safe to call concurrently with Run.
-func (s *Scheduler) Snapshot() StateSnapshot {
-	return s.state.Snapshot()
-}
-
-// SnapshotCtx returns a read-only copy of the current scheduler state with
-// context-aware error handling (SPEC §13.3 RECOMMENDED).
-// Returns ErrOrchestratorUnavailable when the scheduler is not running.
-// Returns ErrSnapshotTimeout when the context deadline expires before the
-// state lock can be acquired.
-func (s *Scheduler) SnapshotCtx(ctx context.Context) (StateSnapshot, error) {
-	if !s.available.Load() {
-		return StateSnapshot{}, ErrOrchestratorUnavailable
-	}
-	return s.state.SnapshotCtx(ctx)
-}
-
-// Refresh queues an immediate poll+reconcile tick. Returns true when the request
-// was coalesced with a pending one (i.e. the signal channel was already full).
-// The operation is best-effort and non-blocking.
-func (s *Scheduler) Refresh() (coalesced bool) {
-	select {
-	case s.reloadCh <- struct{}{}:
-		return false
-	default:
-		return true
-	}
-}
-
-// handleWorkerExit processes a worker-exit notification from the agent runner.
-// It releases the scheduler slot and schedules a continuation or backoff retry.
-func (s *Scheduler) handleWorkerExit(ctx context.Context, w WorkerExit) {
-	cfg, _ := s.reloadConfig()
-	if w.Err == nil {
-		if entry, ok := s.state.WorkerExitNormal(w.IssueID); ok {
-			scheduleRetry(s.state, s.clock, s.retryFire, ctx, entry, continuationDelay)
+// handleRetryFire processes a fired retry timer. While the workflow is invalid the request is
+// rescheduled with a fixed delay (no attempt increment) so the issue is not lost (§5.5).
+func (s *Scheduler) handleRetryFire(ctx context.Context, req retryFireReq) {
+	delete(s.timers, req.IssueID)
+	cfg, valid := s.reloadConfig()
+	if !valid {
+		// Transient infra problem, not an agent failure: re-arm without incrementing the
+		// attempt. Refresh the pending entry's DueAtMS so observability reflects the new
+		// fire time (the entry itself is retained from when the retry was first armed).
+		if entry, ok := s.cur.RetryAttempts[req.IssueID]; ok {
+			entry.DueAtMS = s.clock.Now().Add(continuationDelay).UnixMilli()
+			s.cur = enqueueRetry(s.cur, entry)
+			s.publish()
 		}
+		s.armTimer(ctx, req.IssueID, req.Identifier, req.Attempt, continuationDelay)
 		return
 	}
-	if entry, ok := s.state.WorkerExitAbnormal(w.IssueID, w.Err, w.Attempt); ok {
-		scheduleRetry(s.state, s.clock, s.retryFire, ctx, entry, backoffDelay(entry.Attempt, cfg))
+	s.cfg = cfg
+	s.step(ctx, EvRetryDue(req))
+}
+
+// step folds one event through the pure Reduce, publishes the new state, and interprets the
+// resulting effects (which may feed follow-up events back synchronously).
+func (s *Scheduler) step(ctx context.Context, ev Event) {
+	next, effs := Reduce(s.cur, ev, s.cfg, s.clock.Now())
+	s.cur = next
+	s.publish()
+	for _, eff := range effs {
+		s.exec(ctx, eff)
 	}
 }
 
-// handleCodexActivity processes a codex notification event from the agent runner.
-func (s *Scheduler) handleCodexActivity(a CodexActivity) {
-	s.state.UpdateCodexActivity(a.IssueID, a.Event, a.Message, a.Timestamp)
-	if a.Usage != nil {
-		s.state.RecordUsage(a.IssueID, *a.Usage)
-	}
-	if a.RateLimit != nil {
-		s.state.RecordRateLimit(a.IssueID, *a.RateLimit)
-	}
-	if a.TurnDuration != nil {
-		s.state.AddRuntime(a.IssueID, *a.TurnDuration)
-	}
-	if a.TurnCompleted {
-		s.state.IncrementTurnCount(a.IssueID)
-	}
+// publish stores an immutable copy of the current state for lock-free observability reads.
+func (s *Scheduler) publish() {
+	cp := s.cur
+	s.published.Store(&cp)
 }
+
+// codexEvent converts the public CodexActivity channel message into the internal event.
+func codexEvent(a CodexActivity) EvCodexActivity { return EvCodexActivity(a) }
 
 // intervalOrFallback returns the current interval, defaulting to 1s if zero.
-// A zero interval (e.g. in tests with empty cfg) would panic time.NewTicker.
 func (s *Scheduler) intervalOrFallback() time.Duration {
 	if s.interval > 0 {
 		return s.interval
@@ -238,7 +249,7 @@ func (s *Scheduler) intervalOrFallback() time.Duration {
 	return time.Second
 }
 
-// applyInterval resets ticker if the last-known-good config specifies a different interval.
+// applyInterval resets the ticker if the last-known-good config changed the poll interval.
 func (s *Scheduler) applyInterval(ticker *time.Ticker) {
 	want := time.Duration(s.lastGood.Polling.IntervalMS) * time.Millisecond
 	if want > 0 && want != s.interval {
@@ -248,35 +259,8 @@ func (s *Scheduler) applyInterval(ticker *time.Ticker) {
 	}
 }
 
-// tickOnce runs one poll cycle per SPEC §8.1.
-// reconcile always runs on last-known-good cfg (§5.5: stall/terminal cleanup must not stop).
-// dispatchOnce is skipped when the workflow is currently invalid (§5.5 dispatch gating).
-func (s *Scheduler) tickOnce(ctx context.Context) {
-	cfg, valid := s.reloadConfig()
-
-	// §8.1 step 1: reconcile runs even when workflow is invalid (keeps running agents healthy).
-	s.reconcile(ctx, cfg)
-
-	if !valid {
-		return
-	}
-
-	if s.deps.Tracker == nil || s.deps.Spawn == nil {
-		slog.Info("tick: tracker or spawn not wired, skipping dispatch")
-		return
-	}
-
-	cands, err := s.deps.Tracker.Candidates(ctx)
-	if err != nil {
-		slog.Error("tick: candidates fetch failed", "err", err)
-		return
-	}
-
-	dispatchOnce(ctx, cands, s.state, s.clock, s.retryFire, s.deps.Spawn, cfg, s.tracker)
-}
-
 // reloadConfig reloads WORKFLOW.md and resolves config (§6.2).
-// On failure: returns last-known-good with valid=false; emits one operator-visible warn.
+// On failure: returns last-known-good with valid=false and emits one operator-visible warn.
 // On success: updates last-known-good; logs recovery if previously degraded.
 func (s *Scheduler) reloadConfig() (wfconfig.Config, bool) {
 	wf, err := workflowfile.Load(s.workflowPath)
@@ -307,34 +291,4 @@ func (s *Scheduler) markDegraded(err error) {
 		slog.Warn("scheduler: workflow reload failed, gating new dispatch", "reason", err)
 		s.degraded = true
 	}
-}
-
-// errWorkflowInvalid is recorded in a RetryEntry when a retry-fire arrives
-// while the WORKFLOW.md cannot be parsed. The entry is rescheduled immediately
-// so the issue is not permanently lost (§5.5).
-var errWorkflowInvalid = errors.New("workflow config invalid")
-
-// handleRetry processes a retry-fire event from a timer callback.
-// Gated by §5.5: spawn is skipped while the workflow is invalid.
-// If the config is currently invalid the request is rescheduled with a short
-// fixed delay so the issue is not lost when WORKFLOW.md is transiently broken.
-func (s *Scheduler) handleRetry(ctx context.Context, req retryFireReq) {
-	cfg, valid := s.reloadConfig()
-	if !valid {
-		// Reschedule without incrementing attempt: the workflow being invalid is
-		// a transient infrastructure problem, not an agent failure.
-		entry := RetryEntry{
-			IssueID:    req.IssueID,
-			Identifier: req.Identifier,
-			Attempt:    req.Attempt,
-			Kind:       RetryBackoff,
-			Err:        errWorkflowInvalid,
-		}
-		scheduleRetry(s.state, s.clock, s.retryFire, ctx, entry, continuationDelay)
-		return
-	}
-	if s.deps.Tracker == nil || s.deps.Spawn == nil {
-		return
-	}
-	handleRetryFire(ctx, req, s.deps.Tracker, s.state, s.clock, s.retryFire, s.deps.Spawn, cfg)
 }

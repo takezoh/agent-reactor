@@ -6,9 +6,9 @@ roost is a *session lifecycle manager*, not an agent orchestrator. It gives you 
 
 ## Functional Core / Imperative Shell
 
-The defining structural principle:
+This is the **canonical statement** of how `client/` realizes the cross-layer core principles ([ARCHITECTURE.md → Design Principles](../../../ARCHITECTURE.md#design-principles)). It is the strict Functional Core / Imperative Shell form — pure reducer plus zero mutexes — shared by **both decision-loop layers**: the orchestrator's `scheduler` realizes the same form (`scheduler.Reduce` over an immutable, mutex-free `State`; see the [orchestrator deep dive](../orchestrator/README.md#design-principles-orchestrator-realization)). The pattern below is the reference implementation; `platform/`, being an I/O-wrapping library rather than a decision loop, uses dependency-injection seams instead.
 
-- **Functional Core (`client/state/`)** — all state transitions are a pure function `state.Reduce(state, event) → (state', []Effect)`. No goroutines, mutexes, or actors. Drivers run synchronously inside `Reduce`; the only permitted synchronous I/O is bounded read-only filesystem stat (e.g. checking whether a resume file exists). Everything else is emitted as an `Effect`.
+- **Functional Core (`client/state/`)** — all state transitions are a pure function `state.Reduce(state, event) → (state', []Effect)`. No goroutines, mutexes, or actors (the no-mutex rule is enforced by `forbidigo`). Drivers run synchronously inside `Reduce`; the only permitted synchronous I/O is bounded read-only filesystem stat (e.g. checking whether a resume file exists). Everything else is emitted as an `Effect`.
 - **Imperative Shell (`client/runtime/`)** — a single event loop owns state mutation and interprets `Effect` values into real I/O. Long-lived I/O readers only *emit* events; they never read or write state. The worker pool (discrete jobs) and stream readers (continuous sources) are both instances of this principle.
 
 This split is why the core is testable without mocks: `Reduce` and `Driver.Step` are verified purely by their return values.

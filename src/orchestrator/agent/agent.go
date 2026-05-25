@@ -77,7 +77,7 @@ func New(ws *workspace.Manager, cfg wfconfig.Config, tmpl string, d agentlaunch.
 }
 
 // Spawn satisfies scheduler.SpawnFunc. Events are logged via slog.
-func (r *Runner) Spawn(ctx context.Context, issue tracker.Issue, attempt int) (scheduler.LiveSession, error) {
+func (r *Runner) Spawn(ctx context.Context, issue tracker.Issue, attempt int) (scheduler.SpawnResult, error) {
 	return r.spawnWith(ctx, issue, attempt, func(e Event) {
 		slog.Info("agent event",
 			"kind", e.Kind,

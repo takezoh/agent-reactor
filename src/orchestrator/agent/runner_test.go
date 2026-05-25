@@ -178,7 +178,7 @@ func collectEvents(t *testing.T, r *Runner, issue tracker.Issue) []Event {
 	defer cancel()
 	sess, err := r.spawnWith(ctx, issue, 1, emit)
 	require.NoError(t, err)
-	assert.Equal(t, testThreadID+"-"+testTurnID, sess.SessionID)
+	assert.Equal(t, testThreadID+"-"+testTurnID, sess.Session.SessionID)
 	assert.NotNil(t, sess.Worker)
 
 	// wait for monitor to deliver turn_completed
@@ -756,7 +756,7 @@ func TestSpawn_promptLoaderUsedPerDispatch(t *testing.T) {
 		Cfg:          cfg,
 		PromptLoader: loader,
 		Dispatcher:   agentlaunch.DirectDispatcher{},
-		spawn:          makeFakeProc(fs),
+		spawn:        makeFakeProc(fs),
 	}
 
 	events := collectEvents(t, r, tracker.Issue{Identifier: "PROJ-PL1"})

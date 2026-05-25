@@ -41,6 +41,7 @@ github.com/takezoh/agent-roost/cmd/roost                           15
 github.com/takezoh/agent-roost/cmd/roost-bridge                     0
 
 # orchestrator/ — Symphony scheduler service
+github.com/takezoh/agent-roost/orchestrator/scheduler              82
 github.com/takezoh/agent-roost/orchestrator/tracker                85
 github.com/takezoh/agent-roost/orchestrator/wfconfig               70
 github.com/takezoh/agent-roost/orchestrator/workflowfile           95
@@ -71,5 +72,6 @@ github.com/takezoh/agent-roost/platform/lib/vcs                    85
 github.com/takezoh/agent-roost/platform/lib/wsl                    45
 github.com/takezoh/agent-roost/platform/logger                     60
 github.com/takezoh/agent-roost/platform/mcpproxy                   50
+github.com/takezoh/agent-roost/platform/metrics                    95
 github.com/takezoh/agent-roost/platform/pathmap                    95
 github.com/takezoh/agent-roost/platform/sandbox/devcontainer       70

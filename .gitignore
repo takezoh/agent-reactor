@@ -7,10 +7,16 @@ src/roost
 src/roost-bridge
 src/orchestrator
 src/claude-app-server
+# The patterns above ignore the built binaries (e.g. `src/orchestrator`), but
+# `src/orchestrator` also matches the orchestrator source package directory.
+# Re-include the directory (trailing slash = dirs only) so its sources are tracked;
+# the binary, being a regular file, stays ignored.
+!src/orchestrator/
 notify.ps1
 roost.log
 .codex
 .claude/worktrees/
+.claude/settings.local.json
 .roost/worktrees/
 .roost/settings.toml
 go.work

@@ -13,11 +13,11 @@ Concrete patterns in use:
 
 ## Test patterns by layer
 
-The Functional Core / Imperative Shell split (see [client internals](../technical/client/README.md)) determines how each layer is tested. Test files live beside the target as `*_test.go`.
+Both decision-loop layers (`client/` and `orchestrator/scheduler`) share the Functional Core / Imperative Shell test style: the pure `Reduce` is verified by its return value with no mocks, and the shell is exercised by injecting fakes for its dependencies. `platform/`, a library layer, injects fakes through interface seams. Test files live beside the target as `*_test.go`.
 
-- **`state.Reduce` tests** — no mocks. Pure function tests that verify the return value `(state', effects)` of `Reduce(state, event)`. No goroutine / channel / timing dependencies.
+- **`state.Reduce` / `scheduler.Reduce` tests** — no mocks. Pure function tests that verify the return value `(state', []Effect)` of `Reduce(state, event, …)`. No goroutine / channel / timing dependencies; time enters as a value.
 - **`Driver.Step` tests** — no mocks. Directly verify the return value `(next, effects, view)` of `Step(prev, driverEvent)`.
-- **`runtime` tests** — inject fakes for backend interfaces. Set `noopTmux` / `noopPersist` in `runtime.Config`; inject `t.TempDir()` into `Config.DataDir` to isolate file I/O.
+- **shell tests** (`client/runtime`, `orchestrator/scheduler` loop) — inject fakes for backend interfaces (`runtime.Config` `noopTmux`/`noopPersist`; scheduler `Deps{ Tracker, Spawn, Clock, … }` with a fake clock). Drive events through the loop and assert the published state.
 - **TUI tests** — pass messages directly to Bubbletea's `Model.Update` and verify the returned model. No real terminal required.
 
 ## Coverage Tiers
@@ -26,7 +26,7 @@ Coverage targets are tiered by architectural blast radius. A regression in `stat
 
 | Tier | Target | Layer | Members |
 |------|--------|-------|---------|
-| **S** | ≥85% | Pure domain layer & wire types | `state`, `state/view`, `proto`, `features` |
+| **S** | ≥85% | Pure domain layer & wire types | `state`, `state/view`, `proto`, `features`, `orchestrator/scheduler` (pure `Reduce` + transitions) |
 | **A** | ≥75% | Core execution layer | `runtime`, `runtime/worker`, `runtime/subsystem/*`, `driver`, `driver/vt`, `connector`, `config`, `sandbox/devcontainer` |
 | **B** | ≥60% | Infrastructure integrations | `lib/*` (except thin CLI wrappers), `proto/sessions`, `hostexec`, `mcpproxy`, `tui`, `tools` |
 | **C** | ≥40% | Thin CLI & wiring | `main`, `cli`, `lib/tmux`, `lib/gemini`, `lib/notify` |

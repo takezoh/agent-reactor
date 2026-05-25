@@ -41,6 +41,12 @@ linters:
         - pattern: 'sync\.RWMutex'
           pkg: github\.com/takezoh/agent-roost/client/state
           msg: "state/ is a pure functional core — no mutexes allowed"
+        - pattern: 'sync\.Mutex'
+          pkg: github\.com/takezoh/agent-roost/orchestrator/scheduler
+          msg: "scheduler/ is a pure functional core — no mutexes allowed (concurrency lives in the shell loop)"
+        - pattern: 'sync\.RWMutex'
+          pkg: github\.com/takezoh/agent-roost/orchestrator/scheduler
+          msg: "scheduler/ is a pure functional core — no mutexes allowed (concurrency lives in the shell loop)"
       # NOTE: "go" keyword (goroutines) cannot be detected by forbidigo because it matches
       # CallExpr nodes only; GoStmt is invisible to it. The "no goroutines in state/" rule
       # is enforced by code review. A custom staticcheck analyzer would be needed to automate it.

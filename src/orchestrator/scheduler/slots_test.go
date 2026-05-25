@@ -17,16 +17,13 @@ func agentCfg(global int, byState map[string]int) wfconfig.Config {
 	}
 }
 
-func snapWithRunning(states ...string) StateSnapshot {
-	snap := StateSnapshot{
-		Running: make(map[string]RunAttempt),
-		Claimed: make(map[string]struct{}),
-	}
+func snapWithRunning(states ...string) State {
+	st := NewState()
 	for i, s := range states {
 		id := strings.Repeat("x", i+1)
-		snap.Running[id] = RunAttempt{Issue: tracker.Issue{ID: id, State: s}}
+		st.Running[id] = RunAttempt{Issue: tracker.Issue{ID: id, State: s}}
 	}
-	return snap
+	return st
 }
 
 func TestAvailableGlobalSlots(t *testing.T) {

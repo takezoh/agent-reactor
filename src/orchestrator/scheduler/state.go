@@ -1,7 +1,7 @@
 package scheduler
 
 import (
-	"sync"
+	"maps"
 	"time"
 
 	"github.com/takezoh/agent-roost/platform/metrics"
@@ -44,10 +44,20 @@ const (
 	RetryBackoff                       // abnormal exit → exponential backoff
 )
 
-// Worker is the interface through which the scheduler stops an agent process (SPEC §7.2).
-// The concrete implementation lives in the codex agent runner (issue 013).
+// Worker is the handle through which the shell stops an agent process (SPEC §7.2).
+// It is a live resource and therefore lives in the runtime shell's id→handle map,
+// never inside the pure State. The concrete implementation is the agent runner's Worker.
 type Worker interface {
 	Kill(reason string) error
+}
+
+// LiveSession holds the session identity for a running attempt (SPEC §4.1.6).
+// It is a pure value (identity only) — the live kill handle is held by the shell.
+type LiveSession struct {
+	SessionID string
+	ThreadID  string
+	TurnID    string
+	StartedAt time.Time
 }
 
 // RunAttempt holds the runtime state of a running issue (SPEC §4.1.5 / §16.4).
@@ -74,17 +84,8 @@ type RunAttempt struct {
 	RateLimit         *metrics.RateLimitSnapshot
 }
 
-// LiveSession holds the session identity for a running attempt (SPEC §4.1.6).
-type LiveSession struct {
-	SessionID string
-	ThreadID  string
-	TurnID    string
-	StartedAt time.Time
-	Worker    Worker
-}
-
 // RetryEntry holds the scheduled retry for an issue (SPEC §4.1.7).
-// DueAtMS is set to 0 by transition functions; the caller (issue 012) fills in the delay.
+// It is a pure value: the live timer handle is held by the shell, keyed by IssueID.
 type RetryEntry struct {
 	IssueID    string
 	Identifier string
@@ -92,45 +93,71 @@ type RetryEntry struct {
 	Kind       RetryKind
 	Err        error // nil for continuation retries
 	DueAtMS    int64
-	Timer      Timer
 }
 
-// StateSnapshot is a read-only copy of State for observability (SPEC §7.3 Snapshot).
+// State is the orchestrator runtime state (SPEC §4.1.8 OrchestratorRuntimeState).
+//
+// State is an immutable value: every transition is a pure function that returns a
+// new State and never mutates the receiver (no mutex, no goroutines). The single
+// scheduler loop owns the authoritative value; the observability HTTP server reads
+// a published immutable copy lock-free (see snapshot.go). All maps are treated as
+// copy-on-write — transition helpers clone before modifying.
+type State struct {
+	Running       map[string]RunAttempt
+	Claimed       map[string]struct{}
+	RetryAttempts map[string]RetryEntry
+	Usage         map[string]metrics.Accumulator // per-issue token bookkeeping (§13.5 (b))
+	Runtime       map[string]time.Duration       // per-issue cumulative runtime across retries (§13.5 B'')
+
+	// CodexTotals / CodexRuntime accumulate ended-session contributions (§13.5 B'').
+	// Live-session contributions are added at Snapshot time from Usage/Runtime.
+	// Roll-up happens at releaseClaim (terminal); retry exits keep accumulators alive.
+	CodexTotals  metrics.Totals
+	CodexRuntime time.Duration
+}
+
+// NewState returns an initialized empty State.
+func NewState() State {
+	return State{
+		Running:       map[string]RunAttempt{},
+		Claimed:       map[string]struct{}{},
+		RetryAttempts: map[string]RetryEntry{},
+		Usage:         map[string]metrics.Accumulator{},
+		Runtime:       map[string]time.Duration{},
+	}
+}
+
+// StateSnapshot is a read-only projection of State for observability (SPEC §7.3 / §13.5).
+// CodexTotals and CodexSecondsRunning are lifetime cumulative values: ended-session
+// contributions plus all live accumulators (§13.5 B”).
 type StateSnapshot struct {
 	Running       map[string]RunAttempt
 	Claimed       map[string]struct{}
 	RetryAttempts map[string]RetryEntry
 
-	// CodexTotals and CodexSecondsRunning are lifetime cumulative token/runtime aggregates
-	// across all issues (ended + currently-running). Populated by Snapshot (§13.5, B'').
 	CodexTotals         metrics.Totals
 	CodexSecondsRunning float64
 }
 
-// State is the orchestrator runtime state (SPEC §4.1.8 OrchestratorRuntimeState).
-// All mutations must hold mu.
-type State struct {
-	mu            sync.Mutex
-	running       map[string]RunAttempt
-	claimed       map[string]struct{}
-	retryAttempts map[string]RetryEntry
-	usage         map[string]*metrics.Accumulator // per-issue token bookkeeping (§13.5 (b))
-	runtime       map[string]time.Duration        // per-issue cumulative runtime across retries (§13.5 B'')
-
-	// codexTotals / codexRuntime accumulate ended-session contributions (§13.5 B'').
-	// Live-session contributions are added at Snapshot time from usage/runtime maps.
-	// Roll-up happens at ReleaseClaim (terminal); retry exits keep accumulators alive.
-	codexTotals  metrics.Totals
-	codexRuntime time.Duration
-}
-
-// NewState returns an initialized State.
-func NewState() *State {
-	return &State{
-		running:       make(map[string]RunAttempt),
-		claimed:       make(map[string]struct{}),
-		retryAttempts: make(map[string]RetryEntry),
-		usage:         make(map[string]*metrics.Accumulator),
-		runtime:       make(map[string]time.Duration),
+// Snapshot projects the State into an observability StateSnapshot, folding in
+// live per-issue accumulators (§13.5 B”). The returned maps are independent copies.
+func (s State) Snapshot() StateSnapshot {
+	totals := s.CodexTotals
+	for _, acc := range s.Usage {
+		t := acc.Totals()
+		totals.Input += t.Input
+		totals.Output += t.Output
+		totals.Total += t.Total
+	}
+	rt := s.CodexRuntime
+	for _, d := range s.Runtime {
+		rt += d
+	}
+	return StateSnapshot{
+		Running:             maps.Clone(s.Running),
+		Claimed:             maps.Clone(s.Claimed),
+		RetryAttempts:       maps.Clone(s.RetryAttempts),
+		CodexTotals:         totals,
+		CodexSecondsRunning: rt.Seconds(),
 	}
 }

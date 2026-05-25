@@ -60,7 +60,7 @@ Key intents:
 
 ## 2. No mutexes in state/ (forbidigo)
 
-The `forbidigo` linter forbids mutex use in the `client/state` package (`forbidigo.patterns` in `.golangci.yml`), with the message **"state/ is a pure functional core — no mutexes allowed"**. Concurrency control lives outside the reducer (in the runtime layer); state is folded as a value.
+The `forbidigo` linter forbids mutex use in **both decision-loop functional cores** — `client/state` and `orchestrator/scheduler` (`forbidigo.patterns` in `.golangci.yml`) — with the message **"… is a pure functional core — no mutexes allowed"**. Concurrency control lives outside the reducer (in the event-loop shell); state is folded as an immutable value. Observability reads an immutable published snapshot lock-free (`atomic.Pointer[State]`), so neither core needs a mutex.
 
 ## 3. Length limits
 

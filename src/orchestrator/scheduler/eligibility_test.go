@@ -26,11 +26,8 @@ func baseIssue() tracker.Issue {
 	}
 }
 
-func emptySnap() StateSnapshot {
-	return StateSnapshot{
-		Running: map[string]RunAttempt{},
-		Claimed: map[string]struct{}{},
-	}
+func emptyState() State {
+	return NewState()
 }
 
 // TestEligible_RequiredFields verifies issues missing id/identifier/title/state are excluded.
@@ -49,7 +46,7 @@ func TestEligible_RequiredFields(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			iss := baseIssue()
 			tc.mutate(&iss)
-			got := filterEligible([]tracker.Issue{iss}, emptySnap(), cfg)
+			got := filterEligible([]tracker.Issue{iss}, emptyState(), cfg)
 			if len(got) != 0 {
 				t.Errorf("want 0 eligible, got %d", len(got))
 			}
@@ -64,14 +61,14 @@ func TestEligible_StateFilters(t *testing.T) {
 	t.Run("active state passes", func(t *testing.T) {
 		iss := baseIssue()
 		iss.State = "In Progress"
-		if got := filterEligible([]tracker.Issue{iss}, emptySnap(), cfg); len(got) != 1 {
+		if got := filterEligible([]tracker.Issue{iss}, emptyState(), cfg); len(got) != 1 {
 			t.Errorf("want 1, got %d", len(got))
 		}
 	})
 	t.Run("non-active state excluded", func(t *testing.T) {
 		iss := baseIssue()
 		iss.State = "Backlog"
-		if got := filterEligible([]tracker.Issue{iss}, emptySnap(), cfg); len(got) != 0 {
+		if got := filterEligible([]tracker.Issue{iss}, emptyState(), cfg); len(got) != 0 {
 			t.Errorf("want 0, got %d", len(got))
 		}
 	})
@@ -81,7 +78,7 @@ func TestEligible_StateFilters(t *testing.T) {
 		cfg2.Tracker.ActiveStates = append(cfg2.Tracker.ActiveStates, "Done")
 		iss := baseIssue()
 		iss.State = "Done"
-		if got := filterEligible([]tracker.Issue{iss}, emptySnap(), cfg2); len(got) != 0 {
+		if got := filterEligible([]tracker.Issue{iss}, emptyState(), cfg2); len(got) != 0 {
 			t.Errorf("want 0, got %d", len(got))
 		}
 	})
@@ -93,14 +90,14 @@ func TestEligible_RunningAndClaimed(t *testing.T) {
 	iss := baseIssue()
 
 	t.Run("running excluded", func(t *testing.T) {
-		snap := emptySnap()
+		snap := emptyState()
 		snap.Running["id1"] = RunAttempt{}
 		if got := filterEligible([]tracker.Issue{iss}, snap, cfg); len(got) != 0 {
 			t.Errorf("want 0, got %d", len(got))
 		}
 	})
 	t.Run("claimed excluded", func(t *testing.T) {
-		snap := emptySnap()
+		snap := emptyState()
 		snap.Claimed["id1"] = struct{}{}
 		if got := filterEligible([]tracker.Issue{iss}, snap, cfg); len(got) != 0 {
 			t.Errorf("want 0, got %d", len(got))
@@ -114,11 +111,8 @@ func TestEligible_RetryAttempts(t *testing.T) {
 	cfg := cfg2()
 	iss := baseIssue()
 
-	snap := StateSnapshot{
-		Running:       map[string]RunAttempt{},
-		Claimed:       map[string]struct{}{},
-		RetryAttempts: map[string]RetryEntry{"id1": {IssueID: "id1"}},
-	}
+	snap := emptyState()
+	snap.RetryAttempts["id1"] = RetryEntry{IssueID: "id1"}
 	if got := filterEligible([]tracker.Issue{iss}, snap, cfg); len(got) != 0 {
 		t.Errorf("want 0 eligible for RetryQueued issue, got %d", len(got))
 	}
@@ -132,7 +126,7 @@ func TestEligible_BlockerRule(t *testing.T) {
 		iss := baseIssue()
 		iss.State = "Todo"
 		iss.BlockedBy = []tracker.Blocker{{ID: "b1", Identifier: "P-0", State: "In Progress"}}
-		if got := filterEligible([]tracker.Issue{iss}, emptySnap(), cfg); len(got) != 0 {
+		if got := filterEligible([]tracker.Issue{iss}, emptyState(), cfg); len(got) != 0 {
 			t.Errorf("want 0, got %d", len(got))
 		}
 	})
@@ -140,7 +134,7 @@ func TestEligible_BlockerRule(t *testing.T) {
 		iss := baseIssue()
 		iss.State = "Todo"
 		iss.BlockedBy = []tracker.Blocker{{ID: "b1", Identifier: "P-0", State: "Done"}}
-		if got := filterEligible([]tracker.Issue{iss}, emptySnap(), cfg); len(got) != 1 {
+		if got := filterEligible([]tracker.Issue{iss}, emptyState(), cfg); len(got) != 1 {
 			t.Errorf("want 1, got %d", len(got))
 		}
 	})
@@ -148,7 +142,7 @@ func TestEligible_BlockerRule(t *testing.T) {
 		iss := baseIssue()
 		iss.State = "In Progress"
 		iss.BlockedBy = []tracker.Blocker{{ID: "b1", Identifier: "P-0", State: "In Progress"}}
-		if got := filterEligible([]tracker.Issue{iss}, emptySnap(), cfg); len(got) != 1 {
+		if got := filterEligible([]tracker.Issue{iss}, emptyState(), cfg); len(got) != 1 {
 			t.Errorf("want 1, got %d", len(got))
 		}
 	})

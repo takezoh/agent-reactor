@@ -10,13 +10,13 @@ import (
 )
 
 // filterEligible returns the subset of cands eligible for dispatch per SPEC §8.2.
-func filterEligible(cands []tracker.Issue, snap StateSnapshot, cfg wfconfig.Config) []tracker.Issue {
+func filterEligible(cands []tracker.Issue, s State, cfg wfconfig.Config) []tracker.Issue {
 	active := normSet(cfg.Tracker.ActiveStates)
 	terminal := normSet(cfg.Tracker.TerminalStates)
 
 	var out []tracker.Issue
 	for _, iss := range cands {
-		if !eligible(iss, snap, active, terminal) {
+		if !eligible(iss, s, active, terminal) {
 			continue
 		}
 		out = append(out, iss)
@@ -24,7 +24,7 @@ func filterEligible(cands []tracker.Issue, snap StateSnapshot, cfg wfconfig.Conf
 	return out
 }
 
-func eligible(iss tracker.Issue, snap StateSnapshot, active, terminal map[string]bool) bool {
+func eligible(iss tracker.Issue, s State, active, terminal map[string]bool) bool {
 	if iss.ID == "" || iss.Identifier == "" || iss.Title == "" || iss.State == "" {
 		return false
 	}
@@ -32,15 +32,15 @@ func eligible(iss tracker.Issue, snap StateSnapshot, active, terminal map[string
 	if !active[norm] || terminal[norm] {
 		return false
 	}
-	if _, ok := snap.Running[iss.ID]; ok {
+	if _, ok := s.Running[iss.ID]; ok {
 		return false
 	}
-	if _, ok := snap.Claimed[iss.ID]; ok {
+	if _, ok := s.Claimed[iss.ID]; ok {
 		return false
 	}
 	// Defense-in-depth: RetryQueued issues are also in claimed (SPEC §7.1), but guard
 	// explicitly here in case a future refactor breaks the claimed-retention invariant.
-	if _, ok := snap.RetryAttempts[iss.ID]; ok {
+	if _, ok := s.RetryAttempts[iss.ID]; ok {
 		return false
 	}
 	if strings.ToLower(iss.State) == "todo" && hasActiveBlocker(iss.BlockedBy, terminal) {

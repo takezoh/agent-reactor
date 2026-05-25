@@ -96,7 +96,7 @@ Naming convention: `TestSPEC_<section>_<short_name>` (see `plans/05-conformance.
 |---|---|
 | `/api/v1/state` response contains required top-level fields | `TestSPEC_17_6_StateShape` (`orchestrator/httpserver`) / `TestStateEndpoint_EmptySnapshot` |
 | 405 Method Not Allowed uses standard error envelope | `TestSPEC_17_6_MethodNotAllowedEnvelope` (`orchestrator/httpserver`) / `TestMethodNotAllowed_405` |
-| Snapshot timeout returns 503 with `snapshot_timeout` code (§13.3 RECOMMENDED) | `TestSPEC_17_6_SnapshotTimeout` (`orchestrator/httpserver`) / `TestSnapshotCtx_Timeout` (`scheduler`) |
+| Snapshot timeout 503 / `snapshot_timeout` (§13.3 RECOMMENDED) | **N/A — not applicable.** The scheduler publishes immutable state into an `atomic.Pointer[State]`; the HTTP read is lock-free (`scheduler/snapshot.go`), so a snapshot read cannot block or time out. The RECOMMENDED timeout path exists to bound a lock wait that no longer exists. |
 | Orchestrator unavailable returns 503 with `orchestrator_unavailable` code (§13.3 RECOMMENDED) | `TestSPEC_17_6_OrchestratorUnavailable` (`orchestrator/httpserver`) / `TestScheduler_SnapshotCtx_Unavailable` (`scheduler`) |
 | Logging sink failures do not crash orchestration | `TestRunContinuesAfterTickPreflightFailure` (`cmd/orchestrator`) |
 

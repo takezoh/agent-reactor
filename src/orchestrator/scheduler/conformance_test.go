@@ -24,7 +24,7 @@ func TestSPEC_17_1_LastKnownGoodOnInvalidReload(t *testing.T) {
 
 	// Write invalid config (missing project_slug fails Preflight).
 	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slug: test-proj\n", ""))
-	s.tickOnce(ctx)
+	s.tick(ctx)
 
 	if spawn.callCount() != 0 {
 		t.Errorf("want 0 spawn calls after invalid reload (dispatch gated), got %d", spawn.callCount())
@@ -85,21 +85,20 @@ func TestSPEC_7_1_RetryQueuedStaysClaimed(t *testing.T) {
 	ctx := context.Background()
 
 	// Initial tick dispatches the issue.
-	s.tickOnce(ctx)
+	s.tick(ctx)
 	if spawn.callCount() != 1 {
 		t.Fatalf("want 1 spawn after first tick, got %d", spawn.callCount())
 	}
 
 	// Worker exits normally — issue enters RetryQueued, claimed is retained.
-	s.handleWorkerExit(ctx, WorkerExit{IssueID: "1", Err: nil})
-	snap := s.state.Snapshot()
-	if _, ok := snap.Claimed["1"]; !ok {
-		t.Fatal("SPEC §7.1: want issue retained in claimed after WorkerExitNormal")
+	s.step(ctx, EvWorkerExit{IssueID: "1", Err: nil})
+	if _, ok := s.Snapshot().Claimed["1"]; !ok {
+		t.Fatal("SPEC §7.1: want issue retained in claimed after normal worker exit")
 	}
 
 	// Simulate multiple ticks during the retry backoff window.
 	for range 3 {
-		s.tickOnce(ctx)
+		s.tick(ctx)
 	}
 
 	// No additional spawns: the issue is still RetryQueued / claimed.

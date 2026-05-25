@@ -1,8 +1,7 @@
 package scheduler
 
 import (
-	"context"
-	"log/slog"
+	"errors"
 	"time"
 
 	"github.com/takezoh/agent-roost/orchestrator/wfconfig"
@@ -10,8 +9,11 @@ import (
 
 const continuationDelay = 1000 * time.Millisecond
 
+// errNoSlots records that a retry fired but no dispatch slot was free; the issue is requeued.
+var errNoSlots = errors.New("no available orchestrator slots")
+
 // backoffDelay calculates the exponential backoff delay for a failure retry (SPEC §8.4).
-// attempt is the upcoming attempt number (already incremented by WorkerExitAbnormal).
+// attempt is the upcoming attempt number (already incremented by workerExitAbnormal).
 func backoffDelay(attempt int, cfg wfconfig.Config) time.Duration {
 	if attempt < 1 {
 		attempt = 1
@@ -26,28 +28,4 @@ func backoffDelay(attempt int, cfg wfconfig.Config) time.Duration {
 		ms = maxMS
 	}
 	return time.Duration(ms) * time.Millisecond
-}
-
-// retryFireReq is sent by a timer callback to the Run loop retry channel.
-type retryFireReq struct {
-	IssueID    string
-	Identifier string
-	Attempt    int
-}
-
-// scheduleRetry sets DueAtMS and Timer on entry, enqueues it in state, and arranges
-// for a retryFireReq to be delivered to fireCh when the delay elapses.
-func scheduleRetry(st *State, clk Clock, fireCh chan<- retryFireReq, ctx context.Context, entry RetryEntry, delay time.Duration) {
-	entry.DueAtMS = clk.Now().Add(delay).UnixMilli()
-	issueID := entry.IssueID
-	identifier := entry.Identifier
-	attempt := entry.Attempt
-	entry.Timer = clk.NewTimer(delay, func() {
-		select {
-		case fireCh <- retryFireReq{IssueID: issueID, Identifier: identifier, Attempt: attempt}:
-		case <-ctx.Done():
-		}
-	})
-	st.EnqueueRetry(entry)
-	slog.Info("retry scheduled", "issue_id", issueID, "attempt", attempt, "delay_ms", delay.Milliseconds())
 }

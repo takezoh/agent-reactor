@@ -13,7 +13,7 @@ import (
 
 var errFetch = errors.New("fetch failed")
 
-// fakeRevalidator implements IssueRevalidator for dispatch tests.
+// fakeRevalidator implements schedulerTrackerAPI for dispatch revalidation tests.
 type fakeRevalidator struct {
 	mu      sync.Mutex
 	issues  []tracker.Issue
@@ -39,6 +39,10 @@ func (f *fakeRevalidator) RefreshStates(_ context.Context, ids []string) ([]trac
 	return out, nil
 }
 
+func (f *fakeRevalidator) TerminalIssues(_ context.Context) ([]tracker.Issue, error) {
+	return nil, nil
+}
+
 func dispCfg() wfconfig.Config {
 	return wfconfig.Config{
 		Tracker: wfconfig.TrackerConfig{
@@ -56,98 +60,76 @@ func makeIssue(id, state string) tracker.Issue {
 	return tracker.Issue{ID: id, Identifier: "P-" + id, Title: "t", State: state}
 }
 
-// setupRetryQueued drives a state machine through Dispatch → WorkerExitNormal → EnqueueRetry,
-// leaving the issue in RetryQueued (claimed, in retryAttempts, not running).
-func setupRetryQueued(t *testing.T, st *State, id string) {
-	t.Helper()
-	iss := makeIssue(id, "In Progress")
-	if err := st.Dispatch(iss, 1, LiveSession{}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := st.WorkerExitNormal(id); !ok {
-		t.Fatal("WorkerExitNormal failed")
-	}
-	st.EnqueueRetry(RetryEntry{IssueID: id, Identifier: "P-" + id, Attempt: 2, Kind: RetryContinuation})
+// dispatchScheduler builds a scheduler for driving the dispatch path directly via step.
+// revalidator may be nil (then EffRevalidate passes through without an I/O re-check).
+func dispatchScheduler(cfg wfconfig.Config, spawn SpawnFunc, clk Clock, revalidator schedulerTrackerAPI) *Scheduler {
+	return New("", cfg, "", Deps{Spawn: spawn, Clock: clk, RefreshTracker: revalidator})
 }
 
-// TestDispatchOnce_EligibleIssueSpawned verifies a basic eligible dispatch.
-func TestDispatchOnce_EligibleIssueSpawned(t *testing.T) {
-	st := NewState()
+// TestDispatch_EligibleIssueSpawned verifies a basic eligible dispatch.
+func TestDispatch_EligibleIssueSpawned(t *testing.T) {
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
+	s := dispatchScheduler(dispCfg(), spawn.fn, newFakeClock(time.Now()), nil)
 
-	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), nil)
+	s.step(context.Background(), EvCandidatesFetched{Issues: []tracker.Issue{makeIssue("1", "In Progress")}})
 
 	if spawn.callCount() != 1 {
 		t.Errorf("want 1 spawn, got %d", spawn.callCount())
 	}
-	snap := st.Snapshot()
-	if _, ok := snap.Running["1"]; !ok {
+	if _, ok := s.Snapshot().Running["1"]; !ok {
 		t.Error("want issue 1 in running")
 	}
 }
 
-// TestDispatchOnce_GlobalSlotsCap verifies only MaxConcurrentAgents issues are dispatched.
-func TestDispatchOnce_GlobalSlotsCap(t *testing.T) {
-	st := NewState()
+// TestDispatch_GlobalSlotsCap verifies only MaxConcurrentAgents issues are dispatched.
+func TestDispatch_GlobalSlotsCap(t *testing.T) {
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
+	cfg := dispCfg()
+	cfg.Agent.MaxConcurrentAgents = 2
+	s := dispatchScheduler(cfg, spawn.fn, newFakeClock(time.Now()), nil)
 
-	cands := []tracker.Issue{
+	s.step(context.Background(), EvCandidatesFetched{Issues: []tracker.Issue{
 		makeIssue("1", "In Progress"),
 		makeIssue("2", "In Progress"),
 		makeIssue("3", "In Progress"),
 		makeIssue("4", "In Progress"),
-	}
-	cfg := dispCfg()
-	cfg.Agent.MaxConcurrentAgents = 2
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, cfg, nil)
+	}})
 
 	if spawn.callCount() != 2 {
 		t.Errorf("want 2 spawns (global cap), got %d", spawn.callCount())
 	}
 }
 
-// TestDispatchOnce_PerStateSlotsCap verifies per-state limits are respected.
-func TestDispatchOnce_PerStateSlotsCap(t *testing.T) {
-	st := NewState()
+// TestDispatch_PerStateSlotsCap verifies per-state limits are respected.
+func TestDispatch_PerStateSlotsCap(t *testing.T) {
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
+	cfg := dispCfg()
+	cfg.Agent.MaxConcurrentAgentsByState = map[string]int{"in progress": 1}
+	s := dispatchScheduler(cfg, spawn.fn, newFakeClock(time.Now()), nil)
 
-	cands := []tracker.Issue{
+	s.step(context.Background(), EvCandidatesFetched{Issues: []tracker.Issue{
 		makeIssue("1", "In Progress"),
 		makeIssue("2", "In Progress"),
 		makeIssue("3", "Todo"),
-	}
-	cfg := dispCfg()
-	cfg.Agent.MaxConcurrentAgentsByState = map[string]int{"in progress": 1}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, cfg, nil)
+	}})
 
-	snap := st.Snapshot()
-	// "In Progress" cap=1, "Todo" uses global (3) — so 1 + 1 = 2 total
+	// "In Progress" cap=1, "Todo" uses global (3) — so 1 + 1 = 2 total.
 	if spawn.callCount() != 2 {
 		t.Errorf("want 2 spawns, got %d", spawn.callCount())
 	}
-	if _, ok := snap.Running["3"]; !ok {
+	if _, ok := s.Snapshot().Running["3"]; !ok {
 		t.Error("want todo issue dispatched")
 	}
 }
 
-// TestDispatchOnce_SpawnFailSchedulesRetry verifies spawn failure leads to retry.
-func TestDispatchOnce_SpawnFailSchedulesRetry(t *testing.T) {
-	st := NewState()
+// TestDispatch_SpawnFailSchedulesRetry verifies spawn failure leads to retry.
+func TestDispatch_SpawnFailSchedulesRetry(t *testing.T) {
 	spawn := &fakeSpawn{err: errors.New("oops")}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
+	s := dispatchScheduler(dispCfg(), spawn.fn, newFakeClock(time.Now()), nil)
 
-	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), nil)
+	s.step(context.Background(), EvCandidatesFetched{Issues: []tracker.Issue{makeIssue("1", "In Progress")}})
 
-	snap := st.Snapshot()
+	snap := s.Snapshot()
 	if _, ok := snap.Running["1"]; ok {
 		t.Error("want issue 1 not in running after spawn fail")
 	}
@@ -161,16 +143,12 @@ func TestDispatchOnce_SpawnFailSchedulesRetry(t *testing.T) {
 
 // --- Revalidation tests (SPEC §16.4) ---
 
-// TestDispatchOnce_RevalidationActiveProceeds verifies that an issue confirmed active is spawned.
-func TestDispatchOnce_RevalidationActiveProceeds(t *testing.T) {
-	st := NewState()
+func TestDispatch_RevalidationActiveProceeds(t *testing.T) {
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
 	rv := &fakeRevalidator{issues: []tracker.Issue{makeIssue("1", "In Progress")}}
+	s := dispatchScheduler(dispCfg(), spawn.fn, newFakeClock(time.Now()), rv)
 
-	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), rv)
+	s.step(context.Background(), EvCandidatesFetched{Issues: []tracker.Issue{makeIssue("1", "In Progress")}})
 
 	if spawn.callCount() != 1 {
 		t.Errorf("want 1 spawn for active issue, got %d", spawn.callCount())
@@ -180,91 +158,70 @@ func TestDispatchOnce_RevalidationActiveProceeds(t *testing.T) {
 	}
 }
 
-// TestDispatchOnce_RevalidationStaleSkipped verifies a stale (non-active) issue is skipped.
-func TestDispatchOnce_RevalidationStaleSkipped(t *testing.T) {
-	st := NewState()
+func TestDispatch_RevalidationStaleSkipped(t *testing.T) {
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
 	// Issue transitioned to "Done" between candidate fetch and dispatch.
 	rv := &fakeRevalidator{issues: []tracker.Issue{makeIssue("1", "Done")}}
+	s := dispatchScheduler(dispCfg(), spawn.fn, newFakeClock(time.Now()), rv)
 
-	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), rv)
+	s.step(context.Background(), EvCandidatesFetched{Issues: []tracker.Issue{makeIssue("1", "In Progress")}})
 
 	if spawn.callCount() != 0 {
 		t.Errorf("want 0 spawns for stale issue, got %d", spawn.callCount())
 	}
-	snap := st.Snapshot()
-	if _, ok := snap.Claimed["1"]; ok {
+	if _, ok := s.Snapshot().Claimed["1"]; ok {
 		t.Error("want claim released after stale revalidation")
 	}
 }
 
-// TestDispatchOnce_RevalidationMissingSkipped verifies a missing issue is skipped.
-func TestDispatchOnce_RevalidationMissingSkipped(t *testing.T) {
-	st := NewState()
+func TestDispatch_RevalidationMissingSkipped(t *testing.T) {
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
-	// Empty response — issue not found.
-	rv := &fakeRevalidator{issues: []tracker.Issue{}}
+	rv := &fakeRevalidator{issues: []tracker.Issue{}} // not found
+	s := dispatchScheduler(dispCfg(), spawn.fn, newFakeClock(time.Now()), rv)
 
-	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), rv)
+	s.step(context.Background(), EvCandidatesFetched{Issues: []tracker.Issue{makeIssue("1", "In Progress")}})
 
 	if spawn.callCount() != 0 {
 		t.Errorf("want 0 spawns for missing issue, got %d", spawn.callCount())
 	}
-	snap := st.Snapshot()
-	if _, ok := snap.Claimed["1"]; ok {
+	if _, ok := s.Snapshot().Claimed["1"]; ok {
 		t.Error("want claim released for missing issue")
 	}
 }
 
-// TestDispatchOnce_RevalidationErrorSkipped verifies a revalidation error causes skip and claim release.
-func TestDispatchOnce_RevalidationErrorSkipped(t *testing.T) {
-	st := NewState()
+func TestDispatch_RevalidationErrorSkipped(t *testing.T) {
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
 	rv := &fakeRevalidator{callErr: errors.New("tracker unavailable")}
+	s := dispatchScheduler(dispCfg(), spawn.fn, newFakeClock(time.Now()), rv)
 
-	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), rv)
+	s.step(context.Background(), EvCandidatesFetched{Issues: []tracker.Issue{makeIssue("1", "In Progress")}})
 
 	if spawn.callCount() != 0 {
 		t.Errorf("want 0 spawns on revalidation error, got %d", spawn.callCount())
 	}
-	snap := st.Snapshot()
-	if _, ok := snap.Claimed["1"]; ok {
+	if _, ok := s.Snapshot().Claimed["1"]; ok {
 		t.Error("want claim released after revalidation error")
 	}
 }
 
-// TestDispatchOnce_RevalidationPartial verifies only revalidated-active issues are spawned
-// when multiple candidates exist but some are stale.
-func TestDispatchOnce_RevalidationPartial(t *testing.T) {
-	st := NewState()
+func TestDispatch_RevalidationPartial(t *testing.T) {
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
 	// Issue "2" went terminal; issue "1" is still active.
 	rv := &fakeRevalidator{issues: []tracker.Issue{
 		makeIssue("1", "In Progress"),
 		makeIssue("2", "Done"),
 	}}
+	s := dispatchScheduler(dispCfg(), spawn.fn, newFakeClock(time.Now()), rv)
 
-	cands := []tracker.Issue{
+	s.step(context.Background(), EvCandidatesFetched{Issues: []tracker.Issue{
 		makeIssue("1", "In Progress"),
 		makeIssue("2", "In Progress"),
-	}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), rv)
+	}})
 
 	if spawn.callCount() != 1 {
 		t.Errorf("want 1 spawn (only active issue), got %d", spawn.callCount())
 	}
-	snap := st.Snapshot()
+	snap := s.Snapshot()
 	if _, ok := snap.Running["1"]; !ok {
 		t.Error("want issue 1 running")
 	}
@@ -273,14 +230,11 @@ func TestDispatchOnce_RevalidationPartial(t *testing.T) {
 	}
 }
 
-func TestDispatchOnce_FirstRunAttemptIsZero(t *testing.T) {
-	st := NewState()
+func TestDispatch_FirstRunAttemptIsZero(t *testing.T) {
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
+	s := dispatchScheduler(dispCfg(), spawn.fn, newFakeClock(time.Now()), nil)
 
-	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), nil)
+	s.step(context.Background(), EvCandidatesFetched{Issues: []tracker.Issue{makeIssue("1", "In Progress")}})
 
 	if spawn.callCount() != 1 {
 		t.Fatalf("want 1 spawn, got %d", spawn.callCount())
@@ -288,26 +242,22 @@ func TestDispatchOnce_FirstRunAttemptIsZero(t *testing.T) {
 	if got := spawn.calls[0].Attempt; got != 0 {
 		t.Errorf("first run: want attempt=0, got %d", got)
 	}
-	snap := st.Snapshot()
-	if run, ok := snap.Running["1"]; !ok {
+	if run, ok := s.Snapshot().Running["1"]; !ok {
 		t.Error("want issue 1 in running")
 	} else if run.Attempt != 0 {
 		t.Errorf("RunAttempt.Attempt: want 0, got %d", run.Attempt)
 	}
 }
 
-func TestDispatchOnce_SpawnFail_FirstBackoff10s(t *testing.T) {
-	st := NewState()
+func TestDispatch_SpawnFail_FirstBackoff10s(t *testing.T) {
 	spawn := &fakeSpawn{err: errors.New("spawn error")}
 	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
-
 	cfg := dispCfg()
-	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, cfg, nil)
+	s := dispatchScheduler(cfg, spawn.fn, clk, nil)
 
-	snap := st.Snapshot()
-	entry, ok := snap.RetryAttempts["1"]
+	s.step(context.Background(), EvCandidatesFetched{Issues: []tracker.Issue{makeIssue("1", "In Progress")}})
+
+	entry, ok := s.Snapshot().RetryAttempts["1"]
 	if !ok {
 		t.Fatal("want retry entry after spawn fail")
 	}
@@ -315,82 +265,73 @@ func TestDispatchOnce_SpawnFail_FirstBackoff10s(t *testing.T) {
 		t.Errorf("first retry: want attempt=1, got %d", entry.Attempt)
 	}
 	want10s := backoffDelay(1, cfg)
-	gotDelayMS := entry.DueAtMS - clk.Now().UnixMilli()
-	if gotDelayMS != want10s.Milliseconds() {
+	if gotDelayMS := entry.DueAtMS - clk.Now().UnixMilli(); gotDelayMS != want10s.Milliseconds() {
 		t.Errorf("first backoff: want %dms (10s), got %dms", want10s.Milliseconds(), gotDelayMS)
 	}
 }
 
-// TestHandleRetryFire_IssueNotFound releases the claim.
-func TestHandleRetryFire_IssueNotFound(t *testing.T) {
-	st := NewState()
-	// Put issue in RetryAttempts to simulate retry state.
-	st.EnqueueRetry(RetryEntry{IssueID: "1", Identifier: "P-1"})
+// --- Retry-fire tests (EvRetryDue → EffRetryFetch → EvRetryResolved) ---
+
+// retryScheduler builds a scheduler whose Tracker yields the given candidates on retry fetch.
+func retryScheduler(cfg wfconfig.Config, tr CandidateSource, spawn SpawnFunc, clk Clock) *Scheduler {
+	return New("", cfg, "", Deps{Tracker: tr, Spawn: spawn, Clock: clk})
+}
+
+func TestRetryFire_IssueNotFound(t *testing.T) {
 	tr := &fakeTracker{issues: []tracker.Issue{}} // empty — not found
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
+	s := retryScheduler(dispCfg(), tr, spawn.fn, newFakeClock(time.Now()))
+	s.cur = enqueueRetry(s.cur, RetryEntry{IssueID: "1", Identifier: "P-1"})
+	s.publish()
 
-	handleRetryFire(context.Background(), retryFireReq{IssueID: "1", Attempt: 2}, tr, st, clk, fireCh, spawn.fn, dispCfg())
+	s.step(context.Background(), EvRetryDue{IssueID: "1", Attempt: 2})
 
-	snap := st.Snapshot()
-	if _, ok := snap.RetryAttempts["1"]; ok {
+	if _, ok := s.Snapshot().RetryAttempts["1"]; ok {
 		t.Error("want retry cleared after not-found release")
 	}
 }
 
-// TestHandleRetryFire_NotActive releases the claim.
-func TestHandleRetryFire_NotActive(t *testing.T) {
-	st := NewState()
-	st.EnqueueRetry(RetryEntry{IssueID: "1"})
+func TestRetryFire_NotActive(t *testing.T) {
 	tr := &fakeTracker{issues: []tracker.Issue{makeIssue("1", "Done")}}
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
+	s := retryScheduler(dispCfg(), tr, spawn.fn, newFakeClock(time.Now()))
+	s.cur = enqueueRetry(s.cur, RetryEntry{IssueID: "1"})
+	s.publish()
 
-	handleRetryFire(context.Background(), retryFireReq{IssueID: "1", Attempt: 2}, tr, st, clk, fireCh, spawn.fn, dispCfg())
+	s.step(context.Background(), EvRetryDue{IssueID: "1", Attempt: 2})
 
 	if spawn.callCount() != 0 {
 		t.Error("want no spawn for non-active issue")
 	}
 }
 
-// TestHandleRetryFire_EligibleAndSlots dispatches and marks running.
-// The issue must be in RetryQueued state (claimed + retryAttempts) before firing.
-func TestHandleRetryFire_EligibleAndSlots(t *testing.T) {
-	st := NewState()
-	setupRetryQueued(t, st, "1")
-
+func TestRetryFire_EligibleAndSlots(t *testing.T) {
 	tr := &fakeTracker{issues: []tracker.Issue{makeIssue("1", "In Progress")}}
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
+	s := retryScheduler(dispCfg(), tr, spawn.fn, newFakeClock(time.Now()))
+	s.seedRetryQueued(makeIssue("1", "In Progress"))
 
-	handleRetryFire(context.Background(), retryFireReq{IssueID: "1", Attempt: 2}, tr, st, clk, fireCh, spawn.fn, dispCfg())
+	s.step(context.Background(), EvRetryDue{IssueID: "1", Identifier: "P-1", Attempt: 2})
 
 	if spawn.callCount() != 1 {
 		t.Errorf("want 1 spawn, got %d", spawn.callCount())
 	}
-	snap := st.Snapshot()
-	if _, ok := snap.Running["1"]; !ok {
+	if _, ok := s.Snapshot().Running["1"]; !ok {
 		t.Error("want issue in running after retry dispatch")
 	}
 }
 
-func TestHandleRetryFire_FetchFailReschedules(t *testing.T) {
-	st := NewState()
+func TestRetryFire_FetchFailReschedules(t *testing.T) {
 	tr := &fakeTracker{callErr: errFetch}
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
+	s := retryScheduler(dispCfg(), tr, spawn.fn, newFakeClock(time.Now()))
 
-	handleRetryFire(context.Background(), retryFireReq{IssueID: "1", Identifier: "P-1", Attempt: 2}, tr, st, clk, fireCh, spawn.fn, dispCfg())
+	s.step(context.Background(), EvRetryDue{IssueID: "1", Identifier: "P-1", Attempt: 2})
 
 	if spawn.callCount() != 0 {
 		t.Error("want no spawn on fetch failure")
 	}
-	snap := st.Snapshot()
-	entry, ok := snap.RetryAttempts["1"]
+	entry, ok := s.Snapshot().RetryAttempts["1"]
 	if !ok {
 		t.Fatal("want retry rescheduled after fetch failure")
 	}
@@ -402,25 +343,20 @@ func TestHandleRetryFire_FetchFailReschedules(t *testing.T) {
 	}
 }
 
-// TestDispatchOnce_RetryQueuedNotRedispatched is the §7.4 acceptance test:
-// a tick during the retry backoff window must not re-dispatch the same issue.
-func TestDispatchOnce_RetryQueuedNotRedispatched(t *testing.T) {
-	st := NewState()
+// TestDispatch_RetryQueuedNotRedispatched is the §7.4 acceptance test: a tick during the
+// retry backoff window must not re-dispatch the same issue.
+func TestDispatch_RetryQueuedNotRedispatched(t *testing.T) {
 	spawn := &fakeSpawn{}
-	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
-
-	setupRetryQueued(t, st, "1")
+	s := dispatchScheduler(dispCfg(), spawn.fn, newFakeClock(time.Now()), nil)
+	s.seedRetryQueued(makeIssue("1", "In Progress"))
 
 	// Simulate a poll tick while the issue is still in the retry window.
-	cands := []tracker.Issue{makeIssue("1", "In Progress")}
-	dispatchOnce(context.Background(), cands, st, clk, fireCh, spawn.fn, dispCfg(), nil)
+	s.step(context.Background(), EvCandidatesFetched{Issues: []tracker.Issue{makeIssue("1", "In Progress")}})
 
-	// The spawn must NOT be called: issue is still claimed (RetryQueued).
 	if spawn.callCount() != 0 {
 		t.Errorf("want 0 spawns during retry window, got %d (double-dispatch bug)", spawn.callCount())
 	}
-	snap := st.Snapshot()
+	snap := s.Snapshot()
 	if _, ok := snap.Claimed["1"]; !ok {
 		t.Error("want issue still claimed during retry window")
 	}
@@ -429,72 +365,105 @@ func TestDispatchOnce_RetryQueuedNotRedispatched(t *testing.T) {
 	}
 }
 
-// TestHandleRetryFire_NoSlots requeues the issue with attempt+1 and backoff delay (SPEC §8.4).
-func TestHandleRetryFire_NoSlots(t *testing.T) {
-	st := NewState()
-	// Fill all global slots.
-	for i := range 3 {
-		id := string(rune('a' + i))
-		iss := makeIssue(id, "In Progress")
-		_ = st.Dispatch(iss, 1, LiveSession{}, time.Now())
-	}
+// TestRetryFire_NoSlots requeues the issue with attempt+1 and backoff delay (SPEC §8.4).
+func TestRetryFire_NoSlots(t *testing.T) {
 	tr := &fakeTracker{issues: []tracker.Issue{makeIssue("1", "In Progress")}}
 	spawn := &fakeSpawn{}
 	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
-
 	cfg := dispCfg()
+	s := retryScheduler(cfg, tr, spawn.fn, clk)
+	// Fill all global slots.
+	for i := range 3 {
+		id := string(rune('a' + i))
+		s.seedRunning(makeIssue(id, "In Progress"), time.Now(), nil)
+	}
+
 	const reqAttempt = 2
-	handleRetryFire(context.Background(), retryFireReq{IssueID: "1", Attempt: reqAttempt}, tr, st, clk, fireCh, spawn.fn, cfg)
+	s.step(context.Background(), EvRetryDue{IssueID: "1", Attempt: reqAttempt})
 
 	if spawn.callCount() != 0 {
 		t.Error("want no spawn when slots exhausted")
 	}
-	snap := st.Snapshot()
-	entry, ok := snap.RetryAttempts["1"]
+	entry, ok := s.Snapshot().RetryAttempts["1"]
 	if !ok {
 		t.Fatal("want requeue when no slots")
 	}
-	// SPEC §8.4: attempt must be incremented so backoff grows.
 	wantAttempt := reqAttempt + 1
 	if entry.Attempt != wantAttempt {
 		t.Errorf("want attempt %d, got %d", wantAttempt, entry.Attempt)
 	}
-	// SPEC §8.4: must use failure backoff, not the 1s continuation delay.
 	wantDelay := backoffDelay(wantAttempt, cfg)
-	wantDueAtMS := clk.Now().Add(wantDelay).UnixMilli()
-	if entry.DueAtMS != wantDueAtMS {
+	if wantDueAtMS := clk.Now().Add(wantDelay).UnixMilli(); entry.DueAtMS != wantDueAtMS {
 		t.Errorf("want DueAtMS %d (backoff=%v), got %d", wantDueAtMS, wantDelay, entry.DueAtMS)
 	}
-	// The error must indicate slot exhaustion, not be nil (which would mark it as a continuation).
 	if entry.Err == nil {
 		t.Error("want non-nil Err for slot-exhaustion requeue")
 	}
 }
 
-// TestHandleRetryFire_NoSlots_FiresWithIncrementedAttempt verifies the timer fires with attempt+1.
-func TestHandleRetryFire_NoSlots_FiresWithIncrementedAttempt(t *testing.T) {
-	st := NewState()
-	for i := range 3 {
-		id := string(rune('a' + i))
-		_ = st.Dispatch(makeIssue(id, "In Progress"), 1, LiveSession{}, time.Now())
-	}
+// TestRetryFire_NoSlots_FiresWithIncrementedAttempt verifies the requeued timer fires with attempt+1.
+func TestRetryFire_NoSlots_FiresWithIncrementedAttempt(t *testing.T) {
 	tr := &fakeTracker{issues: []tracker.Issue{makeIssue("1", "In Progress")}}
 	spawn := &fakeSpawn{}
 	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
+	s := retryScheduler(dispCfg(), tr, spawn.fn, clk)
+	for i := range 3 {
+		id := string(rune('a' + i))
+		s.seedRunning(makeIssue(id, "In Progress"), time.Now(), nil)
+	}
 
-	handleRetryFire(context.Background(), retryFireReq{IssueID: "1", Attempt: 2}, tr, st, clk, fireCh, spawn.fn, dispCfg())
+	s.step(context.Background(), EvRetryDue{IssueID: "1", Attempt: 2})
 
-	// Advance clock to trigger the scheduled timer.
 	clk.Advance(backoffDelay(3, dispCfg()))
 
 	select {
-	case fired := <-fireCh:
+	case fired := <-s.retryFire:
 		if fired.Attempt != 3 {
 			t.Errorf("want fired attempt=3, got %d", fired.Attempt)
 		}
 	default:
 		t.Error("want timer to fire after backoff delay")
+	}
+}
+
+// TestRetryFire_SingleSlotReclaim verifies a RetryQueued issue re-dispatches into the slot it
+// already holds, even at max_concurrent_agents=1. Regression guard: the firing issue used to
+// count its own RetryQueued reservation against the global limit and starve forever (§7.1/§8.3).
+func TestRetryFire_SingleSlotReclaim(t *testing.T) {
+	cfg := dispCfg()
+	cfg.Agent.MaxConcurrentAgents = 1
+	tr := &fakeTracker{issues: []tracker.Issue{makeIssue("1", "In Progress")}}
+	spawn := &fakeSpawn{}
+	s := retryScheduler(cfg, tr, spawn.fn, newFakeClock(time.Now()))
+	s.seedRetryQueued(makeIssue("1", "In Progress"))
+
+	s.step(context.Background(), EvRetryDue{IssueID: "1", Identifier: "P-1", Attempt: 2})
+
+	if spawn.callCount() != 1 {
+		t.Errorf("want 1 spawn (issue reclaims its own slot at cap=1), got %d", spawn.callCount())
+	}
+	if _, ok := s.Snapshot().Running["1"]; !ok {
+		t.Error("want issue running after retry reclaim")
+	}
+}
+
+// TestRetryFire_NoSlotWhenOtherRunning verifies the reclaim is still blocked when a different
+// issue occupies the only slot — the fix must not let a retry preempt a running agent.
+func TestRetryFire_NoSlotWhenOtherRunning(t *testing.T) {
+	cfg := dispCfg()
+	cfg.Agent.MaxConcurrentAgents = 1
+	tr := &fakeTracker{issues: []tracker.Issue{makeIssue("1", "In Progress")}}
+	spawn := &fakeSpawn{}
+	s := retryScheduler(cfg, tr, spawn.fn, newFakeClock(time.Now()))
+	s.seedRunning(makeIssue("other", "In Progress"), time.Now(), nil) // occupies the only slot
+	s.seedRetryQueued(makeIssue("1", "In Progress"))
+
+	s.step(context.Background(), EvRetryDue{IssueID: "1", Identifier: "P-1", Attempt: 2})
+
+	if spawn.callCount() != 0 {
+		t.Errorf("want 0 spawns (slot occupied by a running agent), got %d", spawn.callCount())
+	}
+	if _, ok := s.Snapshot().RetryAttempts["1"]; !ok {
+		t.Error("want issue requeued when the slot is genuinely occupied")
 	}
 }

@@ -51,11 +51,12 @@ func (f *fakeTracker) Candidates(_ context.Context) ([]ptrackerv.Issue, error) {
 	return f.issues, nil
 }
 
-// fakeSpawn records calls and returns the configured session/error.
+// fakeSpawn records calls and returns the configured spawn result/error.
 type fakeSpawn struct {
 	mu      sync.Mutex
 	calls   []spawnCall
 	session LiveSession
+	worker  Worker
 	err     error
 }
 
@@ -64,11 +65,11 @@ type spawnCall struct {
 	Attempt int
 }
 
-func (f *fakeSpawn) fn(ctx context.Context, iss ptrackerv.Issue, attempt int) (LiveSession, error) {
+func (f *fakeSpawn) fn(_ context.Context, iss ptrackerv.Issue, attempt int) (SpawnResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, spawnCall{iss, attempt})
-	return f.session, f.err
+	return SpawnResult{Session: f.session, Worker: f.worker}, f.err
 }
 
 func (f *fakeSpawn) callCount() int {
@@ -153,6 +154,33 @@ func schedCfg() wfconfig.Config {
 	}
 }
 
+// seedRunning is a white-box helper that puts an issue into Running and registers a live
+// worker handle in the shell, mirroring a completed spawn. It bypasses the spawn I/O path.
+func (s *Scheduler) seedRunning(iss ptrackerv.Issue, started time.Time, w Worker) {
+	var err error
+	s.cur, err = dispatch(s.cur, iss, 1, LiveSession{StartedAt: started})
+	if err != nil {
+		panic(err)
+	}
+	if w != nil {
+		s.workers[iss.ID] = w
+	}
+	s.publish()
+}
+
+// seedRetryQueued drives an issue into RetryQueued state (claimed + retryAttempts, not running)
+// at attempt 2 — the state reached after the initial dispatch (attempt 1) exits and re-queues.
+func (s *Scheduler) seedRetryQueued(iss ptrackerv.Issue) {
+	var err error
+	s.cur, err = dispatch(s.cur, iss, 1, LiveSession{})
+	if err != nil {
+		panic(err)
+	}
+	s.cur, _, _ = workerExitNormal(s.cur, iss.ID)
+	s.cur = enqueueRetry(s.cur, RetryEntry{IssueID: iss.ID, Identifier: iss.Identifier, Attempt: 2, Kind: RetryContinuation})
+	s.publish()
+}
+
 // TestRunGracefulShutdown verifies Run exits cleanly when ctx is cancelled.
 func TestRunGracefulShutdown(t *testing.T) {
 	path := writeWorkflow(t)
@@ -215,7 +243,7 @@ func TestTickDispatchesEligibleIssues(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s.tickOnce(ctx)
+	s.tick(ctx)
 
 	if spawn.callCount() != 1 {
 		t.Errorf("want 1 spawn call, got %d", spawn.callCount())
@@ -276,7 +304,7 @@ func TestApplyIntervalUpdatesOnChange(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s.tickOnce(ctx) // loads WORKFLOW.md → lastGood.Polling.IntervalMS = 30000
+	s.tick(ctx) // loads WORKFLOW.md → lastGood.Polling.IntervalMS = 30000
 
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -311,21 +339,21 @@ func TestDispatchGatingOnBadReload(t *testing.T) {
 	})
 
 	// Put issue "1" in running state so reconcile has something to process.
-	_ = s.state.Dispatch(testIssue("1", "P-1"), 1, LiveSession{Worker: &fakeWorker{}}, time.Now())
+	s.seedRunning(testIssue("1", "P-1"), time.Now(), newFakeWorker())
 
 	// Write invalid config (missing project_slug fails Preflight).
 	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slug: test-proj\n", ""))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s.tickOnce(ctx)
+	s.tick(ctx)
 
 	// Dispatch must be gated.
 	if spawn.callCount() != 0 {
 		t.Errorf("want 0 spawn calls on bad reload, got %d", spawn.callCount())
 	}
 	// Reconcile must have run: terminal state "Done" should have cleaned up running["1"].
-	if _, ok := s.state.Snapshot().Running["1"]; ok {
+	if _, ok := s.Snapshot().Running["1"]; ok {
 		t.Error("reconcile should have cleaned up terminal issue '1' using last-known-good config")
 	}
 }
@@ -345,14 +373,14 @@ func TestDispatchResumesAfterRecovery(t *testing.T) {
 
 	// Degrade: write bad config.
 	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slug: test-proj\n", ""))
-	s.tickOnce(ctx)
+	s.tick(ctx)
 	if spawn.callCount() != 0 {
 		t.Fatalf("want 0 spawn calls while degraded, got %d", spawn.callCount())
 	}
 
 	// Recover: restore valid config.
 	writeFrontMatter(t, path, validFrontMatter)
-	s.tickOnce(ctx)
+	s.tick(ctx)
 	if spawn.callCount() != 1 {
 		t.Errorf("want 1 spawn call after recovery, got %d", spawn.callCount())
 	}
@@ -360,7 +388,6 @@ func TestDispatchResumesAfterRecovery(t *testing.T) {
 
 // TestDegradedWarnEmittedOnce verifies that the operator-visible Warn is emitted
 // once when the workflow turns bad, and not repeated on subsequent bad ticks.
-// Also verifies degraded resets to false on recovery.
 func TestDegradedWarnEmittedOnce(t *testing.T) {
 	cap := installWarnCapture(t)
 
@@ -373,9 +400,9 @@ func TestDegradedWarnEmittedOnce(t *testing.T) {
 	badContent := strings.ReplaceAll(validFrontMatter, "project_slug: test-proj\n", "")
 	writeFrontMatter(t, path, badContent)
 
-	s.tickOnce(ctx)
-	s.tickOnce(ctx)
-	s.tickOnce(ctx)
+	s.tick(ctx)
+	s.tick(ctx)
+	s.tick(ctx)
 
 	if got := cap.count(); got != 1 {
 		t.Errorf("want exactly 1 warn on repeated bad reloads, got %d", got)
@@ -386,7 +413,7 @@ func TestDegradedWarnEmittedOnce(t *testing.T) {
 
 	// Restore valid config: degraded should clear.
 	writeFrontMatter(t, path, validFrontMatter)
-	s.tickOnce(ctx)
+	s.tick(ctx)
 	if s.degraded {
 		t.Error("want s.degraded == false after successful reload")
 	}
@@ -405,9 +432,9 @@ func TestTickSpawnFailSchedulesRetry(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s.tickOnce(ctx)
+	s.tick(ctx)
 
-	snap := s.state.Snapshot()
+	snap := s.Snapshot()
 	if _, ok := snap.RetryAttempts["1"]; !ok {
 		t.Error("want retry entry after spawn failure")
 	}
@@ -419,7 +446,6 @@ func TestTickSpawnFailSchedulesRetry(t *testing.T) {
 // TestReloadConfig_updatesLastGoodTemplate verifies that reloadConfig picks up
 // WORKFLOW.md body changes and stores them in lastGoodTemplate (SPEC §6.2).
 func TestReloadConfig_updatesLastGoodTemplate(t *testing.T) {
-	// Write WORKFLOW.md with initial body.
 	path := filepath.Join(t.TempDir(), "WORKFLOW.md")
 	const initialBody = "Work on {{ issue.identifier }}."
 	content := validFrontMatter + initialBody
@@ -429,7 +455,6 @@ func TestReloadConfig_updatesLastGoodTemplate(t *testing.T) {
 
 	s := New(path, schedCfg(), "", Deps{})
 
-	// First reload should capture the initial body.
 	_, ok := s.reloadConfig()
 	if !ok {
 		t.Fatal("reloadConfig should succeed on valid workflow")
@@ -438,7 +463,6 @@ func TestReloadConfig_updatesLastGoodTemplate(t *testing.T) {
 		t.Errorf("want lastGoodTemplate %q, got %q", initialBody, s.lastGoodTemplate)
 	}
 
-	// Edit the body in-place; a second reload must reflect the change.
 	const updatedBody = "Updated: work on {{ issue.identifier }} now."
 	if err := os.WriteFile(path, []byte(validFrontMatter+updatedBody), 0o644); err != nil {
 		t.Fatal(err)
@@ -469,8 +493,6 @@ func TestLastGoodTemplate_notOverwrittenOnBadReload(t *testing.T) {
 	const initial = "stable template"
 	s := New(path, schedCfg(), initial, Deps{})
 
-	// Corrupt the workflow; reloadConfig must return the last-known-good and
-	// must not zero out lastGoodTemplate.
 	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slug: test-proj\n", ""))
 	_, ok := s.reloadConfig()
 	if ok {
@@ -481,7 +503,7 @@ func TestLastGoodTemplate_notOverwrittenOnBadReload(t *testing.T) {
 	}
 }
 
-// TestTickRevalidationSkipsStaleIssue verifies that tickOnce skips an issue that went
+// TestTickRevalidationSkipsStaleIssue verifies that a tick skips an issue that went
 // non-active between candidate fetch and dispatch (SPEC §16.4).
 func TestTickRevalidationSkipsStaleIssue(t *testing.T) {
 	tr := &fakeTracker{issues: []ptrackerv.Issue{
@@ -504,59 +526,42 @@ func TestTickRevalidationSkipsStaleIssue(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s.tickOnce(ctx)
+	s.tick(ctx)
 
 	if spawn.callCount() != 0 {
 		t.Errorf("want 0 spawns for stale issue, got %d", spawn.callCount())
 	}
-	snap := s.state.Snapshot()
-	if _, ok := snap.Claimed["1"]; ok {
+	if _, ok := s.Snapshot().Claimed["1"]; ok {
 		t.Error("want claim released for stale issue")
 	}
 }
 
-// TestHandleCodexActivity_TurnCompleted_IncrementsTurnCount verifies that a
-// CodexActivity with TurnCompleted=true increments the TurnCount in State (SPEC §4.1.6).
-func TestHandleCodexActivity_TurnCompleted_IncrementsTurnCount(t *testing.T) {
+// TestCodexActivity_TurnCompleted_IncrementsTurnCount verifies that a codex activity event
+// with TurnCompleted=true increments the TurnCount in State (SPEC §4.1.6).
+func TestCodexActivity_TurnCompleted_IncrementsTurnCount(t *testing.T) {
 	issue := ptrackerv.Issue{ID: "tc-1", Identifier: "TC-1", Title: "t", State: "In Progress"}
-	session := LiveSession{SessionID: "s1"}
 
 	s := New("", schedCfg(), "", Deps{})
-	if err := s.state.Dispatch(issue, 1, session, time.Now()); err != nil {
-		t.Fatalf("dispatch: %v", err)
-	}
+	s.seedRunning(issue, time.Now(), nil)
 
-	s.handleCodexActivity(CodexActivity{
-		IssueID:       "tc-1",
-		Event:         "turn/completed",
-		Timestamp:     time.Now(),
-		TurnCompleted: true,
-	})
-	s.handleCodexActivity(CodexActivity{
-		IssueID:       "tc-1",
-		Event:         "turn/completed",
-		Timestamp:     time.Now(),
-		TurnCompleted: true,
-	})
+	ctx := context.Background()
+	s.step(ctx, EvCodexActivity{IssueID: "tc-1", Event: "turn/completed", Timestamp: time.Now(), TurnCompleted: true})
+	s.step(ctx, EvCodexActivity{IssueID: "tc-1", Event: "turn/completed", Timestamp: time.Now(), TurnCompleted: true})
 
-	snap := s.state.Snapshot()
-	if got := snap.Running["tc-1"].TurnCount; got != 2 {
+	if got := s.Snapshot().Running["tc-1"].TurnCount; got != 2 {
 		t.Errorf("got TurnCount=%d, want 2", got)
 	}
 }
 
-// TestHandleCodexActivity_NonTurnCompleted_DoesNotIncrementTurnCount verifies that
+// TestCodexActivity_NonTurnCompleted_DoesNotIncrementTurnCount verifies that
 // other events do not modify TurnCount.
-func TestHandleCodexActivity_NonTurnCompleted_DoesNotIncrementTurnCount(t *testing.T) {
+func TestCodexActivity_NonTurnCompleted_DoesNotIncrementTurnCount(t *testing.T) {
 	issue := ptrackerv.Issue{ID: "tc-2", Identifier: "TC-2", Title: "t", State: "In Progress"}
-	session := LiveSession{SessionID: "s2"}
 
 	s := New("", schedCfg(), "", Deps{})
-	if err := s.state.Dispatch(issue, 1, session, time.Now()); err != nil {
-		t.Fatalf("dispatch: %v", err)
-	}
+	s.seedRunning(issue, time.Now(), nil)
 
-	s.handleCodexActivity(CodexActivity{
+	s.step(context.Background(), EvCodexActivity{
 		IssueID:       "tc-2",
 		Event:         "item/agentMessage/delta",
 		Message:       "hello",
@@ -564,8 +569,7 @@ func TestHandleCodexActivity_NonTurnCompleted_DoesNotIncrementTurnCount(t *testi
 		TurnCompleted: false,
 	})
 
-	snap := s.state.Snapshot()
-	if got := snap.Running["tc-2"].TurnCount; got != 0 {
+	if got := s.Snapshot().Running["tc-2"].TurnCount; got != 0 {
 		t.Errorf("got TurnCount=%d, want 0 for non-turn-completed event", got)
 	}
 }

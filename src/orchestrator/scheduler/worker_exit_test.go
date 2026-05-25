@@ -9,47 +9,31 @@ import (
 	"github.com/takezoh/agent-roost/platform/tracker"
 )
 
-func makeRunningScheduler(t *testing.T) (*Scheduler, *fakeClock, chan retryFireReq) {
-	t.Helper()
-	st := NewState()
-	iss := tracker.Issue{ID: "1", Identifier: "P-1", State: "In Progress"}
-	if err := st.Dispatch(iss, 0, LiveSession{}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
+// TestWorkerExit_Normal_ReleasesSlotAndSchedulesContinuation verifies that a clean worker
+// exit removes the issue from running and enqueues a continuation retry with the 1s fixed
+// delay; the armed timer fires after that delay (§16.6 / §8.4).
+func TestWorkerExit_Normal_ReleasesSlotAndSchedulesContinuation(t *testing.T) {
 	clk := newFakeClock(time.Now())
-	fireCh := make(chan retryFireReq, 4)
-	s := &Scheduler{
-		workflowPath: writeWorkflow(t),
-		state:        st,
-		clock:        clk,
-		retryFire:    fireCh,
-		workerDone:   make(chan WorkerExit, 4),
-	}
-	return s, clk, fireCh
-}
+	s := New("", schedCfg(), "", Deps{Clock: clk})
+	s.seedRunning(testIssue("1", "P-1"), time.Now(), nil)
 
-// TestHandleWorkerExit_Normal_ReleasesSlotAndSchedulesContinuation verifies that a
-// clean worker exit removes the issue from running and enqueues a continuation retry
-// with the 1s fixed delay (§16.6 / §8.4).
-func TestHandleWorkerExit_Normal_ReleasesSlotAndSchedulesContinuation(t *testing.T) {
-	s, clk, fireCh := makeRunningScheduler(t)
+	s.step(context.Background(), EvWorkerExit{IssueID: "1", Err: nil})
 
-	s.handleWorkerExit(context.Background(), WorkerExit{IssueID: "1", Err: nil})
-
-	snap := s.state.Snapshot()
+	snap := s.Snapshot()
 	if _, ok := snap.Running["1"]; ok {
 		t.Error("want issue removed from running after normal exit")
 	}
-	if _, ok := snap.RetryAttempts["1"]; !ok {
-		t.Error("want continuation retry enqueued")
+	entry, ok := snap.RetryAttempts["1"]
+	if !ok {
+		t.Fatal("want continuation retry enqueued")
 	}
-	if snap.RetryAttempts["1"].Kind != RetryContinuation {
-		t.Errorf("want RetryContinuation kind, got %v", snap.RetryAttempts["1"].Kind)
+	if entry.Kind != RetryContinuation {
+		t.Errorf("want RetryContinuation kind, got %v", entry.Kind)
 	}
 
 	clk.Advance(continuationDelay + time.Millisecond)
 	select {
-	case req := <-fireCh:
+	case req := <-s.retryFire:
 		if req.IssueID != "1" {
 			t.Errorf("fireCh got IssueID %q, want %q", req.IssueID, "1")
 		}
@@ -58,62 +42,52 @@ func TestHandleWorkerExit_Normal_ReleasesSlotAndSchedulesContinuation(t *testing
 	}
 }
 
-// TestHandleWorkerExit_Normal_ActiveIssue_Respawns verifies the full continuation path:
-// worker exits normally → 1s retry fires → active issue → second spawn.
-func TestHandleWorkerExit_Normal_ActiveIssue_Respawns(t *testing.T) {
-	s, clk, fireCh := makeRunningScheduler(t)
+// TestWorkerExit_Normal_ActiveIssue_Respawns verifies the full continuation path:
+// worker exits normally → retry due → active issue → second spawn.
+func TestWorkerExit_Normal_ActiveIssue_Respawns(t *testing.T) {
 	tr := &fakeTracker{issues: []tracker.Issue{makeIssue("1", "In Progress")}}
 	spawn := &fakeSpawn{}
-	cfg := dispCfg()
+	s := New("", schedCfg(), "", Deps{Tracker: tr, Spawn: spawn.fn, Clock: newFakeClock(time.Now())})
+	s.seedRunning(makeIssue("1", "In Progress"), time.Now(), nil)
 	ctx := context.Background()
 
-	s.handleWorkerExit(ctx, WorkerExit{IssueID: "1", Err: nil})
-
-	clk.Advance(continuationDelay + time.Millisecond)
-	req := <-fireCh
-	handleRetryFire(ctx, req, tr, s.state, clk, fireCh, spawn.fn, cfg)
+	s.step(ctx, EvWorkerExit{IssueID: "1", Err: nil})
+	s.step(ctx, EvRetryDue{IssueID: "1", Identifier: "P-1", Attempt: 2})
 
 	if spawn.callCount() != 1 {
 		t.Errorf("want 1 spawn on continuation, got %d", spawn.callCount())
 	}
 }
 
-// TestHandleWorkerExit_Normal_TerminalIssue_NoRespawn verifies that a terminal issue
-// is released without spawning a new worker.
-func TestHandleWorkerExit_Normal_TerminalIssue_NoRespawn(t *testing.T) {
-	s, clk, fireCh := makeRunningScheduler(t)
+// TestWorkerExit_Normal_TerminalIssue_NoRespawn verifies that a terminal issue is released
+// without spawning a new worker.
+func TestWorkerExit_Normal_TerminalIssue_NoRespawn(t *testing.T) {
 	tr := &fakeTracker{issues: []tracker.Issue{makeIssue("1", "Done")}}
 	spawn := &fakeSpawn{}
-	cfg := dispCfg()
+	s := New("", schedCfg(), "", Deps{Tracker: tr, Spawn: spawn.fn, Clock: newFakeClock(time.Now())})
+	s.seedRunning(makeIssue("1", "In Progress"), time.Now(), nil)
 	ctx := context.Background()
 
-	s.handleWorkerExit(ctx, WorkerExit{IssueID: "1", Err: nil})
-
-	clk.Advance(continuationDelay + time.Millisecond)
-	req := <-fireCh
-	handleRetryFire(ctx, req, tr, s.state, clk, fireCh, spawn.fn, cfg)
+	s.step(ctx, EvWorkerExit{IssueID: "1", Err: nil})
+	s.step(ctx, EvRetryDue{IssueID: "1", Identifier: "P-1", Attempt: 2})
 
 	if spawn.callCount() != 0 {
 		t.Errorf("want 0 spawns for terminal issue, got %d", spawn.callCount())
 	}
-	snap := s.state.Snapshot()
-	if _, ok := snap.Claimed["1"]; ok {
+	if _, ok := s.Snapshot().Claimed["1"]; ok {
 		t.Error("want claim released for terminal issue")
 	}
 }
 
-// TestHandleWorkerExit_Abnormal_EnqueuesBackoffRetry verifies that an abnormal exit
-// schedules a backoff retry (§8.4).
-func TestHandleWorkerExit_Abnormal_EnqueuesBackoffRetry(t *testing.T) {
-	s, _, _ := makeRunningScheduler(t)
+// TestWorkerExit_Abnormal_EnqueuesBackoffRetry verifies that an abnormal exit schedules a
+// backoff retry (§8.4).
+func TestWorkerExit_Abnormal_EnqueuesBackoffRetry(t *testing.T) {
+	s := New("", schedCfg(), "", Deps{Clock: newFakeClock(time.Now())})
+	s.seedRunning(testIssue("1", "P-1"), time.Now(), nil)
 
-	s.handleWorkerExit(context.Background(), WorkerExit{
-		IssueID: "1",
-		Err:     errors.New("turn failed"),
-		Attempt: 1,
-	})
+	s.step(context.Background(), EvWorkerExit{IssueID: "1", Err: errors.New("turn failed"), Attempt: 1})
 
-	snap := s.state.Snapshot()
+	snap := s.Snapshot()
 	if _, ok := snap.Running["1"]; ok {
 		t.Error("want issue removed from running after abnormal exit")
 	}
@@ -129,20 +103,20 @@ func TestHandleWorkerExit_Abnormal_EnqueuesBackoffRetry(t *testing.T) {
 	}
 }
 
-// TestWorkerExitNormal_ClaimedRetained verifies SPEC §7.1: a normal worker exit must
-// keep the issue in claimed (RetryQueued) so dispatchOnce cannot re-dispatch it.
+// TestWorkerExitNormal_ClaimedRetained verifies SPEC §7.1: a normal worker exit keeps the
+// issue in claimed (RetryQueued) so dispatch cannot re-dispatch it.
 func TestWorkerExitNormal_ClaimedRetained(t *testing.T) {
-	st := NewState()
-	iss := tracker.Issue{ID: "1", Identifier: "P-1", State: "In Progress"}
-	if err := st.Dispatch(iss, 1, LiveSession{}, time.Now()); err != nil {
+	s, err := dispatch(NewState(), testIssue("1", "P-1"), 1, LiveSession{})
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, ok := st.WorkerExitNormal("1"); !ok {
-		t.Fatal("WorkerExitNormal: expected ok=true for running issue")
+	s, _, ok := workerExitNormal(s, "1")
+	if !ok {
+		t.Fatal("workerExitNormal: expected ok=true for running issue")
 	}
 
-	snap := st.Snapshot()
+	snap := s.Snapshot()
 	if _, ok := snap.Running["1"]; ok {
 		t.Error("want issue removed from running after normal exit")
 	}
@@ -151,20 +125,20 @@ func TestWorkerExitNormal_ClaimedRetained(t *testing.T) {
 	}
 }
 
-// TestWorkerExitAbnormal_ClaimedRetained verifies SPEC §7.1: an abnormal worker exit must
-// keep the issue in claimed (RetryQueued) so dispatchOnce cannot re-dispatch it.
+// TestWorkerExitAbnormal_ClaimedRetained verifies SPEC §7.1: an abnormal worker exit keeps
+// the issue in claimed (RetryQueued).
 func TestWorkerExitAbnormal_ClaimedRetained(t *testing.T) {
-	st := NewState()
-	iss := tracker.Issue{ID: "1", Identifier: "P-1", State: "In Progress"}
-	if err := st.Dispatch(iss, 1, LiveSession{}, time.Now()); err != nil {
+	s, err := dispatch(NewState(), testIssue("1", "P-1"), 1, LiveSession{})
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, ok := st.WorkerExitAbnormal("1", errors.New("failed"), 1); !ok {
-		t.Fatal("WorkerExitAbnormal: expected ok=true for running issue")
+	s, _, ok := workerExitAbnormal(s, "1", errors.New("failed"), 1)
+	if !ok {
+		t.Fatal("workerExitAbnormal: expected ok=true for running issue")
 	}
 
-	snap := st.Snapshot()
+	snap := s.Snapshot()
 	if _, ok := snap.Running["1"]; ok {
 		t.Error("want issue removed from running after abnormal exit")
 	}

@@ -11,14 +11,14 @@ import (
 func TestSPEC_17_5_AbsoluteTokenNoDoubleCount(t *testing.T) {
 	acc := metrics.NewAccumulator()
 
-	first := acc.Observe(metrics.Usage{ThreadID: "t1", Input: 100, Output: 50, Total: 150})
-	if first.Total != 150 {
-		t.Fatalf("after first report: Total want 150, got %d", first.Total)
+	acc = acc.Observe(metrics.Usage{ThreadID: "t1", Input: 100, Output: 50, Total: 150})
+	if acc.Totals().Total != 150 {
+		t.Fatalf("after first report: Total want 150, got %d", acc.Totals().Total)
 	}
 
 	// Reporting the same absolute value again must contribute zero delta.
-	second := acc.Observe(metrics.Usage{ThreadID: "t1", Input: 100, Output: 50, Total: 150})
-	if second.Total != 150 {
-		t.Errorf("after identical second report: Total want 150 (no double-count), got %d", second.Total)
+	acc = acc.Observe(metrics.Usage{ThreadID: "t1", Input: 100, Output: 50, Total: 150})
+	if acc.Totals().Total != 150 {
+		t.Errorf("after identical second report: Total want 150 (no double-count), got %d", acc.Totals().Total)
 	}
 }

@@ -7,7 +7,10 @@
 // Delta-style payloads (§13.5 "Ignore delta-style payloads") must not be passed here.
 package metrics
 
-import "time"
+import (
+	"maps"
+	"time"
+)
 
 // Totals holds aggregated token counts across all threads for one run attempt.
 type Totals struct {
@@ -28,29 +31,36 @@ type Usage struct {
 // Accumulator aggregates absolute token reports across threads (§13.5).
 // It tracks the last-reported absolute per thread so successive reports
 // from the same thread are not double-counted.
+//
+// Accumulator is an immutable value type: Observe returns a new Accumulator and
+// never mutates the receiver, so it can be folded into a pure state machine. The
+// zero value is a valid empty accumulator.
 type Accumulator struct {
 	lastSeen map[string]Usage
 	totals   Totals
 }
 
-// NewAccumulator returns an initialized Accumulator.
-func NewAccumulator() *Accumulator {
-	return &Accumulator{lastSeen: make(map[string]Usage)}
-}
+// NewAccumulator returns an empty Accumulator. The zero value is equivalent.
+func NewAccumulator() Accumulator { return Accumulator{} }
 
-// Observe incorporates an absolute cumulative report and returns updated Totals.
-// Negative deltas (monotonic violation) are clamped to zero and ignored.
-func (a *Accumulator) Observe(u Usage) Totals {
+// Observe returns a new Accumulator incorporating an absolute cumulative report.
+// The receiver is not modified. Negative deltas (monotonic violation) are clamped
+// to zero and ignored.
+func (a Accumulator) Observe(u Usage) Accumulator {
 	prev := a.lastSeen[u.ThreadID]
-	a.totals.Input += clampPos(u.Input - prev.Input)
-	a.totals.Output += clampPos(u.Output - prev.Output)
-	a.totals.Total += clampPos(u.Total - prev.Total)
-	a.lastSeen[u.ThreadID] = u
-	return a.totals
+	totals := Totals{
+		Input:  a.totals.Input + clampPos(u.Input-prev.Input),
+		Output: a.totals.Output + clampPos(u.Output-prev.Output),
+		Total:  a.totals.Total + clampPos(u.Total-prev.Total),
+	}
+	lastSeen := make(map[string]Usage, len(a.lastSeen)+1)
+	maps.Copy(lastSeen, a.lastSeen)
+	lastSeen[u.ThreadID] = u
+	return Accumulator{lastSeen: lastSeen, totals: totals}
 }
 
-// Snapshot returns the current Totals without modifying state.
-func (a *Accumulator) Snapshot() Totals { return a.totals }
+// Totals returns the current aggregated totals.
+func (a Accumulator) Totals() Totals { return a.totals }
 
 func clampPos(v int64) int64 {
 	if v < 0 {

@@ -43,30 +43,22 @@ func TestBackoffDelay(t *testing.T) {
 	}
 }
 
-// TestScheduleRetry verifies timer fires and sends to channel after delay.
-func TestScheduleRetry_TimerFires(t *testing.T) {
+// TestArmTimer_Fires verifies the shell's retry timer delivers a retryFireReq after the delay.
+func TestArmTimer_Fires(t *testing.T) {
 	clk := newFakeClock(time.Now())
-	st := NewState()
-	fireCh := make(chan retryFireReq, 1)
+	s := New("", schedCfg(), "", Deps{Clock: clk})
 
-	entry := RetryEntry{IssueID: "id1", Identifier: "P-1", Attempt: 2, Kind: RetryBackoff}
-	scheduleRetry(st, clk, fireCh, context.Background(), entry, 5*time.Second)
+	s.armTimer(context.Background(), "id1", "P-1", 2, 5*time.Second)
 
-	// Enqueued but not fired yet.
-	snap := st.Snapshot()
-	if _, ok := snap.RetryAttempts["id1"]; !ok {
-		t.Fatal("want retry entry enqueued")
-	}
 	select {
-	case <-fireCh:
+	case <-s.retryFire:
 		t.Fatal("timer fired too early")
 	default:
 	}
 
-	// Advance past delay.
 	clk.Advance(5 * time.Second)
 	select {
-	case req := <-fireCh:
+	case req := <-s.retryFire:
 		if req.IssueID != "id1" || req.Attempt != 2 {
 			t.Errorf("unexpected req: %+v", req)
 		}
@@ -75,43 +67,39 @@ func TestScheduleRetry_TimerFires(t *testing.T) {
 	}
 }
 
-// TestScheduleRetry_CancelledContextDropped verifies timer callback does not block on cancelled ctx.
-func TestScheduleRetry_CancelledContextDropped(t *testing.T) {
+// TestArmTimer_CancelledContextDropped verifies the timer callback does not block on a
+// cancelled context (the fire is dropped rather than blocking the goroutine).
+func TestArmTimer_CancelledContextDropped(t *testing.T) {
 	clk := newFakeClock(time.Now())
-	st := NewState()
-	fireCh := make(chan retryFireReq) // unbuffered; no reader
+	s := New("", schedCfg(), "", Deps{Clock: clk})
+	s.retryFire = make(chan retryFireReq) // unbuffered; no reader
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	entry := RetryEntry{IssueID: "id2", Identifier: "P-2", Attempt: 1, Kind: RetryBackoff}
-	scheduleRetry(st, clk, fireCh, ctx, entry, time.Millisecond)
+	s.armTimer(ctx, "id2", "P-2", 1, time.Millisecond)
 	clk.Advance(time.Millisecond)
 	select {
-	case req := <-fireCh:
+	case req := <-s.retryFire:
 		t.Fatalf("cancelled ctx: unexpected fire: %+v", req)
 	default:
 	}
 }
 
-// TestScheduleRetry_RearmStopsOldTimer verifies that re-arming a retry for the same
-// issue stops the previous timer so it does not fire (SPEC §8.4 / Elixir cancel_timer).
-func TestScheduleRetry_RearmStopsOldTimer(t *testing.T) {
+// TestArmTimer_RearmStopsOldTimer verifies that re-arming a retry for the same issue stops
+// the previous timer so it does not fire (SPEC §8.4 / Elixir cancel_timer).
+func TestArmTimer_RearmStopsOldTimer(t *testing.T) {
 	clk := newFakeClock(time.Now())
-	st := NewState()
-	fireCh := make(chan retryFireReq, 1)
+	s := New("", schedCfg(), "", Deps{Clock: clk})
 
-	e1 := RetryEntry{IssueID: "id3", Identifier: "P-3", Attempt: 1, Kind: RetryBackoff}
-	scheduleRetry(st, clk, fireCh, context.Background(), e1, 10*time.Second)
-
+	s.armTimer(context.Background(), "id3", "P-3", 1, 10*time.Second)
 	// Re-arm before first timer fires.
-	e2 := RetryEntry{IssueID: "id3", Identifier: "P-3", Attempt: 2, Kind: RetryBackoff}
-	scheduleRetry(st, clk, fireCh, context.Background(), e2, 20*time.Second)
+	s.armTimer(context.Background(), "id3", "P-3", 2, 20*time.Second)
 
 	// Advance past the first timer's deadline; it should NOT fire (was stopped).
 	clk.Advance(10 * time.Second)
 	select {
-	case req := <-fireCh:
+	case req := <-s.retryFire:
 		t.Fatalf("orphan fire from old timer: %+v", req)
 	default:
 	}
@@ -119,7 +107,7 @@ func TestScheduleRetry_RearmStopsOldTimer(t *testing.T) {
 	// Advance to the second timer's deadline; it SHOULD fire.
 	clk.Advance(10 * time.Second)
 	select {
-	case req := <-fireCh:
+	case req := <-s.retryFire:
 		if req.IssueID != "id3" || req.Attempt != 2 {
 			t.Errorf("unexpected req: %+v", req)
 		}

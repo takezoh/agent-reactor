@@ -44,10 +44,10 @@ type workerParams struct {
 	emit         func(Event)
 }
 
-func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int, emit func(Event)) (scheduler.LiveSession, error) {
+func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int, emit func(Event)) (scheduler.SpawnResult, error) {
 	wsPath, err := r.ensureWorkspace(ctx, issue.Identifier)
 	if err != nil {
-		return scheduler.LiveSession{}, err
+		return scheduler.SpawnResult{}, err
 	}
 
 	// AfterRun must fire on every exit path from here (SPEC §9.4); committed transfers ownership to runLoop.
@@ -59,12 +59,12 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 	}()
 
 	if err := r.Workspace.BeforeRun(ctx, issue.Identifier); err != nil {
-		return scheduler.LiveSession{}, fmt.Errorf("agent: before run: %w", err)
+		return scheduler.SpawnResult{}, fmt.Errorf("agent: before run: %w", err)
 	}
 
 	rendered, err := r.renderPrompt(issue, attempt)
 	if err != nil {
-		return scheduler.LiveSession{}, err
+		return scheduler.SpawnResult{}, err
 	}
 
 	frameID := fmt.Sprintf("%s#%d", issue.Identifier, attempt)
@@ -73,7 +73,7 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 	lr, err := r.launchConn(workerCtx, frameID, wsPath, issue.ID, emit)
 	if err != nil {
 		cancel()
-		return scheduler.LiveSession{}, err
+		return scheduler.SpawnResult{}, err
 	}
 
 	threadOpts := r.buildThreadOptions(issue)
@@ -87,7 +87,7 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 			Timestamp: time.Now(),
 			Err:       err,
 		})
-		return scheduler.LiveSession{}, err
+		return scheduler.SpawnResult{}, err
 	}
 
 	committed = true
@@ -95,9 +95,10 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 }
 
 // startRunLoop wires the Worker, launches the §16.5 multi-turn runLoop, emits
-// EventSessionStarted, and returns the LiveSession handle. Callers must set
-// committed=true (ownership of AfterRun transfers to runLoop) before calling.
-func (r *Runner) startRunLoop(workerCtx context.Context, lr *launchResult, issue tracker.Issue, attempt int, ids sessionIDs, cancel context.CancelFunc, emit func(Event)) scheduler.LiveSession {
+// EventSessionStarted, and returns the spawn result: the pure session identity plus the live
+// Worker handle (which the scheduler shell stores in its id→handle map, never in State).
+// Callers must set committed=true (ownership of AfterRun transfers to runLoop) before calling.
+func (r *Runner) startRunLoop(workerCtx context.Context, lr *launchResult, issue tracker.Issue, attempt int, ids sessionIDs, cancel context.CancelFunc, emit func(Event)) scheduler.SpawnResult {
 	worker := &Worker{
 		cancel:          cancel,
 		done:            lr.doneCh,
@@ -129,12 +130,14 @@ func (r *Runner) startRunLoop(workerCtx context.Context, lr *launchResult, issue
 		Timestamp: time.Now(),
 	})
 
-	return scheduler.LiveSession{
-		SessionID: ids.sessionID(),
-		ThreadID:  ids.threadID,
-		TurnID:    ids.turnID,
-		StartedAt: time.Now(),
-		Worker:    worker,
+	return scheduler.SpawnResult{
+		Session: scheduler.LiveSession{
+			SessionID: ids.sessionID(),
+			ThreadID:  ids.threadID,
+			TurnID:    ids.turnID,
+			StartedAt: time.Now(),
+		},
+		Worker: worker,
 	}
 }
 

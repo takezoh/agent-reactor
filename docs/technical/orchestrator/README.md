@@ -6,6 +6,18 @@ It lives entirely inside `orchestrator/`, does **not** import `client/`, and sha
 
 User-facing operation (running it, the `WORKFLOW.md` config, agent selection) is in the [orchestrator user guide](../../user/orchestrator.md). Authoring the driving prompt is in [WORKFLOW.md authoring](../../agent/workflow-authoring.md).
 
+## Design principles (orchestrator realization)
+
+The orchestrator is a **decision-loop layer**, so — like roost's `client/` — it realizes the cross-layer [core principles](../../../ARCHITECTURE.md#core-principles-all-layers) as **strict Functional Core / Imperative Shell**: a pure reducer over an immutable, mutex-free `State`, interpreted by a single event-loop shell that owns all I/O and live handles.
+
+- **Pure functional core** — `scheduler.Reduce(state, event, cfg, now) → (state', []Effect)` (`scheduler/reduce.go` and the `reduce_*.go` files) is the entire decision surface: eligibility, slot allocation, stall detection, reconcile transitions, retry/backoff. It performs no I/O, holds no mutex, spawns no goroutine, and reads no wall clock (time enters as `now`). `State` (`scheduler/state.go`) is an immutable value folded copy-on-write by the pure transition helpers in `scheduler/transitions.go`. The no-mutex rule is enforced by `forbidigo`.
+- **Single-writer event loop** — `scheduler.Run` (`scheduler/scheduler.go`) is one `for { select {} }`. The agent runner, retry timers, and the fsnotify watcher only *emit* on channels (`workerDone`, `codexActivity`, `retryFire`, `reloadCh`); they never touch state. Each event is folded by `Reduce`; the loop is the only writer.
+- **Decisions separated from I/O via Effects** — `Reduce` returns `[]Effect` descriptors (`scheduler/effect.go`: `EffSpawn`, `EffKillWorker`, `EffRefreshTracker`, `EffArmRetryTimer`, …). The shell (`scheduler/effects_exec.go`) interprets them against injected dependencies (`Deps{ Tracker, Spawn, Clock, … }`), performs the real I/O, and feeds results back as events (`scheduler/event.go`: `EvSpawned`, `EvTrackerRefreshed`, …). Live handles (the agent `Worker`, retry `Timer`) live in the shell's id→handle maps, never in `State`. Fakes replace `Deps` in tests; the whole pipeline is exercised by feeding events and asserting state.
+- **Single-authority** — at most one claim/run per issue; `ErrDuplicateDispatch` (`scheduler/transitions.go`) enforces SPEC §7.4.
+- **Agent-agnostic** — codex `app-server` and `claude-app-server` emit one uniform event sequence, so the scheduler never branches on agent identity.
+- **Reconcile = truth reconciliation** — agents transition issue state autonomously; reconcile re-reads the tracker and detects the change. Issue truth is never fabricated locally.
+- **Lock-free observability** — after each reduce the loop publishes the immutable `State` into an `atomic.Pointer[State]`; the HTTP server reads it lock-free (`scheduler/snapshot.go`). There is no lock to contend, so a snapshot read cannot block or time out.
+
 ## Packages
 
 | Package | SPEC | Responsibility |
@@ -109,7 +121,7 @@ stateDiagram-v2
     CanceledByReconciliation --> [*]
 ```
 
-Transition functions live in `scheduler/state_transitions.go` (`Claim`, `MarkRunning`, `WorkerExitNormal`, `WorkerExitAbnormal`, `EnqueueRetry`, `ReleaseClaim`); retry/backoff in `retry.go`; eligibility rules in `eligibility.go`; slot allocation in `slots.go`.
+Pure transition functions live in `scheduler/transitions.go` (`claim`, `markRunning`, `workerExitNormal`, `workerExitAbnormal`, `enqueueRetry`, `releaseClaim`) — each takes a `State` value and returns a new one, never mutating in place. They are composed by the per-event reducers in `scheduler/reduce*.go`; retry/backoff in `retry.go`; eligibility rules in `eligibility.go`; slot allocation in `slots.go`.
 
 ## Agent protocol
 
