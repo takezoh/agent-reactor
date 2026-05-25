@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	serverDialTimeout    = 15 * time.Second
-resumePhasePending  = "resume_pending"
+	serverDialTimeout   = 15 * time.Second
+	resumePhasePending  = "resume_pending"
 	resumePhaseAttached = "attached"
 
 	// stopGrace bounds how long Stop waits for the read loop + process Wait to
@@ -297,7 +297,6 @@ func (b *Backend) OnNotification(method string, params json.RawMessage) {
 func (b *Backend) OnServerRequest(id int64, method string, params json.RawMessage) {
 	b.handleRequest(id, method, params)
 }
-
 
 // bindThread associates a new frame with a thread in the app-server and
 // returns the thread ID bound (either resumed or empty if a new thread).

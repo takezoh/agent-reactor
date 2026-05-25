@@ -16,8 +16,8 @@ func SplitArgs(command string) ([]string, error) {
 
 	for i := 0; i < len(command); {
 		c := command[i]
-		switch {
-		case c == '\'' : // single-quoted: literal content until closing '
+		switch c {
+		case '\'': // single-quoted: literal content until closing '
 			i++
 			inToken = true
 			for i < len(command) && command[i] != '\'' {
@@ -28,7 +28,7 @@ func SplitArgs(command string) ([]string, error) {
 				return nil, fmt.Errorf("agentlaunch: unterminated single quote in %q", command)
 			}
 			i++ // consume closing '
-		case c == '"': // double-quoted: backslash-escape inside
+		case '"': // double-quoted: backslash-escape inside
 			i++
 			inToken = true
 			for i < len(command) && command[i] != '"' {
@@ -44,7 +44,7 @@ func SplitArgs(command string) ([]string, error) {
 				return nil, fmt.Errorf("agentlaunch: unterminated double quote in %q", command)
 			}
 			i++ // consume closing "
-		case c == ' ' || c == '\t' || c == '\n': // whitespace: flush token
+		case ' ', '\t', '\n': // whitespace: flush token
 			if inToken {
 				args = append(args, cur.String())
 				cur.Reset()

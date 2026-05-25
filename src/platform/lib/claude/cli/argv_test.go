@@ -7,10 +7,10 @@ import (
 
 func TestSandboxFlags(t *testing.T) {
 	tests := []struct {
-		name     string
-		command  string
+		name      string
+		command   string
 		sandboxed bool
-		want     string
+		want      string
 	}{
 		{"not sandboxed returns unchanged", "claude --verbose", false, "claude --verbose"},
 		{"sandboxed appends skip flag", "claude", true, "claude " + sandboxSkipFlag},

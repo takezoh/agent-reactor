@@ -161,10 +161,10 @@ func TestRemoteAttachArgs(t *testing.T) {
 			wantContains: []string{"-C", "/workspace/foo"},
 		},
 		{
-			name:         "no startDir omits -C",
-			bridgePort:   8282,
-			sessionID:    "sess4",
-			wantAbsent:   []string{"-C"},
+			name:       "no startDir omits -C",
+			bridgePort: 8282,
+			sessionID:  "sess4",
+			wantAbsent: []string{"-C"},
 		},
 	}
 	for _, tt := range tests {
