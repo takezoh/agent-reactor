@@ -207,8 +207,8 @@ func TestEffectiveOverlayProject(t *testing.T) {
 		want        string
 	}{
 		{"project mode passes project through", "/workspace/myapp", "/workspace/myapp", "/workspace/myapp"},
-		{"shared mode erases project", sandboxdc.SharedContainerKey, "/workspace/fintech", ""},
-		{"shared mode erases empty project", sandboxdc.SharedContainerKey, "", ""},
+		{"shared mode keys proxy by SharedContainerKey", sandboxdc.SharedContainerKey, "/workspace/fintech", sandboxdc.SharedContainerKey},
+		{"shared mode keys proxy by SharedContainerKey (empty project)", sandboxdc.SharedContainerKey, "", sandboxdc.SharedContainerKey},
 		{"project mode with empty project", "", "", ""},
 	}
 	for _, tc := range cases {
@@ -219,6 +219,29 @@ func TestEffectiveOverlayProject(t *testing.T) {
 					tc.instanceKey, tc.projectPath, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSharedOverlay_ProxyDirMatchesRunDir pins the invariant whose violation
+// broke gh/ssh inside shared containers. credproxy providers create their
+// per-project sockets (hostexec.sock, agent.sock, hostexec-shims/) under
+// runBase/container.ProjectRunHash(effectiveProject); the overlay bind-mounts
+// ProjectRunDir(runBase, runDirKey) to ContainerRunDir. For the shared
+// container these MUST resolve to the same host directory, or the proxy
+// sockets never appear under /opt/roost/run and gh/ssh fail. Before the fix
+// effectiveOverlayProject returned "" (hash("")), diverging from the
+// SharedContainerKey-based run-dir bind.
+func TestSharedOverlay_ProxyDirMatchesRunDir(t *testing.T) {
+	const runBase = "/data/run"
+	runDirKey := sandboxdc.SharedContainerKey // see DevcontainerLauncher.runDirKey
+	proxyKey := effectiveOverlayProject(sandboxdc.SharedContainerKey, "/workspace/fintech")
+
+	bindDir := ProjectRunDir(runBase, runDirKey)
+	proxyDir := filepath.Join(runBase, container.ProjectRunHash(proxyKey))
+
+	if proxyDir != bindDir {
+		t.Errorf("shared proxy socket dir %q != run-dir bind %q; gh/ssh sockets unreachable in container",
+			proxyDir, bindDir)
 	}
 }
 
@@ -393,8 +416,11 @@ func TestResolveFrameContext_SharedMode_DropsProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveFrameContext: %v", err)
 	}
-	if lastKey != "" {
-		t.Errorf("shared mode: resolveSandbox called with %q, want \"\" (user scope)", lastKey)
+	// Shared mode must NOT resolve the real project (user-scope config), and the
+	// key must be the SharedContainerKey so the proxy socket dir matches the
+	// shared run-dir bind. Resolve maps this non-absolute sentinel to user config.
+	if lastKey != sandboxdc.SharedContainerKey {
+		t.Errorf("shared mode: resolveSandbox called with %q, want %q", lastKey, sandboxdc.SharedContainerKey)
 	}
 }
 
@@ -469,8 +495,8 @@ func TestBuildContainerOverlay_SharedMode_UsesUserScope(t *testing.T) {
 	if _, err := overlay(sandboxdc.SharedContainerKey, "/workspace/fintech", "/tmp/dc"); err != nil {
 		t.Fatalf("shared overlay: %v", err)
 	}
-	if lastConfigKey != "" {
-		t.Errorf("shared mode: resolveSandbox got %q, want \"\" (user scope)", lastConfigKey)
+	if lastConfigKey != sandboxdc.SharedContainerKey {
+		t.Errorf("shared mode: resolveSandbox got %q, want %q (user scope via non-abs sentinel)", lastConfigKey, sandboxdc.SharedContainerKey)
 	}
 
 	if _, err := overlay("/workspace/myapp", "/workspace/myapp", "/tmp/dc"); err != nil {

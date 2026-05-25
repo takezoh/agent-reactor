@@ -3,6 +3,7 @@ package config
 import (
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -34,7 +35,7 @@ func NewSandboxResolver(user SandboxConfig) *SandboxResolver {
 // without merging with user config. Returns nil when no project settings are found
 // or the file has no [sandbox] table.
 func (r *SandboxResolver) ResolveProjectScope(projectPath string) *SandboxConfig {
-	if projectPath == "" {
+	if !filepath.IsAbs(projectPath) {
 		return nil
 	}
 	settingsPath := findProjectSettings(projectPath)
@@ -49,10 +50,16 @@ func (r *SandboxResolver) ResolveProjectScope(projectPath string) *SandboxConfig
 }
 
 // Resolve returns the effective SandboxConfig for projectPath, merging user
-// and project scopes. An empty projectPath or absent settings file returns the
-// user config unchanged. Parse errors fall back to user config with a warning.
+// and project scopes. Parse errors fall back to user config with a warning.
+//
+// Project identity is always an absolute path. A non-absolute key — empty, or a
+// sentinel such as the shared-container key "__shared__" — carries no project
+// scope and resolves to the user config directly. This MUST short-circuit
+// before findProjectSettings, whose cwd-relative upward walk could otherwise
+// match a settings.toml under the daemon's working directory and silently apply
+// an unrelated project's sandbox config to the shared container.
 func (r *SandboxResolver) Resolve(projectPath string) SandboxConfig {
-	if projectPath == "" {
+	if !filepath.IsAbs(projectPath) {
 		return r.user
 	}
 

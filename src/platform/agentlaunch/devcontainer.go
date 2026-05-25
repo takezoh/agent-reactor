@@ -301,12 +301,35 @@ func BuildContainerOverlay(
 			ExtraWorkspaces:         extraWorkspaces,
 			ExtraCreateArgs:         dc.ExtraCreateArgs,
 			PostCreate:              postCreate,
-			WorkspaceFolderFallback: resolveWorkspaceFallback(overlayProject, dc.HostPathMountPrefix),
+			WorkspaceFolderFallback: resolveWorkspaceFallback(workspaceFallbackProject(instanceKey, projectPath), dc.HostPathMountPrefix),
 		}, nil
 	}
 }
 
+// effectiveOverlayProject returns the project key used to resolve the proxy
+// ContainerSpec for an instance. For shared containers it returns the
+// SharedContainerKey (not ""): credproxy providers derive their per-project
+// socket directory from this key via container.ProjectRunHash, and that
+// directory MUST equal the run-dir that the overlay bind-mounts to
+// ContainerRunDir (EnsureProjectRunDir keys off the same instanceKey).
+// Returning "" placed the sockets under hash("") while the bind used
+// hash(SharedContainerKey), so hostexec/ssh sockets never appeared under
+// /opt/roost/run inside the shared container. Config stays user-scope because
+// SandboxResolver.Resolve maps non-absolute keys (including this sentinel) to
+// the user config.
 func effectiveOverlayProject(instanceKey, projectPath string) string {
+	if instanceKey == sandboxdc.SharedContainerKey {
+		return instanceKey
+	}
+	return projectPath
+}
+
+// workspaceFallbackProject returns the project whose path seeds the container's
+// default workspace folder. A shared container has no single project — it binds
+// every project via ExtraWorkspaces (sharedWorkspaceBindMounts) and sets -w per
+// frame — so the single fallback is erased. Distinct from
+// effectiveOverlayProject, which must stay aligned with the run-dir key.
+func workspaceFallbackProject(instanceKey, projectPath string) string {
 	if instanceKey == sandboxdc.SharedContainerKey {
 		return ""
 	}
@@ -340,10 +363,7 @@ func resolveWorkspaceFallback(projectPath, prefix string) string {
 // frameID is plain string; callers that hold a typed FrameID should convert with string().
 func (l *DevcontainerLauncher) ResolveFrameContext(ctx context.Context, projectPath string, frameID string) (sandbox.FrameContext, error) {
 	opts := l.resolveStartOptions(projectPath)
-	effectiveProject := projectPath
-	if opts.SharedMode {
-		effectiveProject = ""
-	}
+	effectiveProject := effectiveOverlayProject(l.runDirKey(projectPath, opts), projectPath)
 	dc := l.resolveSandbox(effectiveProject).Devcontainer
 
 	proxySpec, _, err := resolveOverlaySpecs(l.proxy, effectiveProject, dc)
