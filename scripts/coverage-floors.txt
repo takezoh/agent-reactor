@@ -8,49 +8,70 @@
 # variance does not break the build. Raise the floor whenever a package
 # gains durable coverage — never lower it without a written justification.
 
-github.com/takezoh/agent-roost                              15
-github.com/takezoh/agent-roost/cli                          12
-github.com/takezoh/agent-roost/cmd/bridge                    0
-github.com/takezoh/agent-roost/config                       85
-github.com/takezoh/agent-roost/connector                    70
-github.com/takezoh/agent-roost/driver                       75
-github.com/takezoh/agent-roost/driver/vt                    55
-github.com/takezoh/agent-roost/event                        20
-github.com/takezoh/agent-roost/features                     85
-github.com/takezoh/agent-roost/hostexec                     50
-github.com/takezoh/agent-roost/internal/globutil            95
-github.com/takezoh/agent-roost/lib/claude                   55
-github.com/takezoh/agent-roost/lib/claude/cli               95
-github.com/takezoh/agent-roost/lib/claude/transcript        75
-github.com/takezoh/agent-roost/lib/codex                    75
-github.com/takezoh/agent-roost/lib/codex/transcript         60
-github.com/takezoh/agent-roost/lib/gemini                   80
-github.com/takezoh/agent-roost/lib/git                      70
-github.com/takezoh/agent-roost/lib/github                   85
-github.com/takezoh/agent-roost/lib/notify                   30
-github.com/takezoh/agent-roost/lib/openurl                  60
-github.com/takezoh/agent-roost/lib/pathmap                  95
-github.com/takezoh/agent-roost/lib/peers                    50
-github.com/takezoh/agent-roost/lib/plastic                  45
-github.com/takezoh/agent-roost/lib/tmux                     10
-github.com/takezoh/agent-roost/lib/vcs                      85
-github.com/takezoh/agent-roost/lib/wsl                      45
-github.com/takezoh/agent-roost/logger                       60
-github.com/takezoh/agent-roost/mcpproxy                     50
-github.com/takezoh/agent-roost/procio                       95
-github.com/takezoh/agent-roost/proto                        85
-github.com/takezoh/agent-roost/proto/sessions               80
-github.com/takezoh/agent-roost/runtime                      55
-github.com/takezoh/agent-roost/runtime/framereg             100
-github.com/takezoh/agent-roost/runtime/subsystem            15
-github.com/takezoh/agent-roost/runtime/subsystem/cli        70
-github.com/takezoh/agent-roost/runtime/subsystem/stream     50
-github.com/takezoh/agent-roost/runtime/worker               90
-github.com/takezoh/agent-roost/sandbox/devcontainer         70
-github.com/takezoh/agent-roost/state                        80
-github.com/takezoh/agent-roost/state/view                   95
-github.com/takezoh/agent-roost/tools                        50
-github.com/takezoh/agent-roost/tui                          50
-github.com/takezoh/agent-roost/tui/glyphs                   85
-github.com/takezoh/agent-roost/tui/image                    50
-github.com/takezoh/agent-roost/uiproc                       95
+# client/ — roost-specific session lifecycle layer
+github.com/takezoh/agent-roost/client/cli                          12
+github.com/takezoh/agent-roost/client/config                       85
+github.com/takezoh/agent-roost/client/connector                    70
+github.com/takezoh/agent-roost/client/driver                       75
+github.com/takezoh/agent-roost/client/driver/vt                    55
+github.com/takezoh/agent-roost/client/event                        20
+github.com/takezoh/agent-roost/client/lib/claude/transcript        75
+github.com/takezoh/agent-roost/client/lib/codex/transcript         60
+github.com/takezoh/agent-roost/client/lib/peers                    50
+github.com/takezoh/agent-roost/client/procio                       95
+github.com/takezoh/agent-roost/client/proto                        85
+github.com/takezoh/agent-roost/client/proto/sessions               80
+github.com/takezoh/agent-roost/client/runtime                      55
+github.com/takezoh/agent-roost/client/runtime/subsystem            15
+github.com/takezoh/agent-roost/client/runtime/subsystem/cli        70
+github.com/takezoh/agent-roost/client/runtime/subsystem/stream     50
+github.com/takezoh/agent-roost/client/runtime/worker               90
+github.com/takezoh/agent-roost/client/state                        80
+github.com/takezoh/agent-roost/client/state/view                   95
+github.com/takezoh/agent-roost/client/tools                        50
+github.com/takezoh/agent-roost/client/tui                          50
+github.com/takezoh/agent-roost/client/tui/glyphs                   85
+github.com/takezoh/agent-roost/client/tui/image                    50
+github.com/takezoh/agent-roost/client/uiproc                       95
+
+# cmd/ — binary entry points
+github.com/takezoh/agent-roost/cmd/claude-app-server               60
+github.com/takezoh/agent-roost/cmd/orchestrator                    65
+github.com/takezoh/agent-roost/cmd/roost                           15
+github.com/takezoh/agent-roost/cmd/roost-bridge                     0
+
+# orchestrator/ — Symphony scheduler service
+github.com/takezoh/agent-roost/orchestrator/scheduler              82
+github.com/takezoh/agent-roost/orchestrator/tracker                85
+github.com/takezoh/agent-roost/orchestrator/wfconfig               70
+github.com/takezoh/agent-roost/orchestrator/workflowfile           95
+github.com/takezoh/agent-roost/orchestrator/workspace              80
+
+# platform/ — shared execution base
+github.com/takezoh/agent-roost/platform/agent/codexclient          60
+github.com/takezoh/agent-roost/platform/tracker/linear             80
+github.com/takezoh/agent-roost/platform/agent/codexschema/v1        0
+github.com/takezoh/agent-roost/platform/agent/codexschema/v2        0
+github.com/takezoh/agent-roost/platform/agentlaunch                63
+github.com/takezoh/agent-roost/platform/config                     62
+github.com/takezoh/agent-roost/platform/credproxy                  10
+github.com/takezoh/agent-roost/platform/features                   85
+github.com/takezoh/agent-roost/platform/hostexec                   50
+github.com/takezoh/agent-roost/platform/internal/globutil          95
+github.com/takezoh/agent-roost/platform/lib/claude                 55
+github.com/takezoh/agent-roost/platform/lib/claude/cli             95
+github.com/takezoh/agent-roost/platform/lib/codex                  75
+github.com/takezoh/agent-roost/platform/lib/gemini                 80
+github.com/takezoh/agent-roost/platform/lib/git                    70
+github.com/takezoh/agent-roost/platform/lib/github                 85
+github.com/takezoh/agent-roost/platform/lib/notify                 30
+github.com/takezoh/agent-roost/platform/lib/openurl                60
+github.com/takezoh/agent-roost/platform/lib/plastic                45
+github.com/takezoh/agent-roost/platform/lib/tmux                   10
+github.com/takezoh/agent-roost/platform/lib/vcs                    85
+github.com/takezoh/agent-roost/platform/lib/wsl                    45
+github.com/takezoh/agent-roost/platform/logger                     60
+github.com/takezoh/agent-roost/platform/mcpproxy                   50
+github.com/takezoh/agent-roost/platform/metrics                    95
+github.com/takezoh/agent-roost/platform/pathmap                    95
+github.com/takezoh/agent-roost/platform/sandbox/devcontainer       70

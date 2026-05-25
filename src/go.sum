@@ -524,6 +524,10 @@ github.com/onsi/ginkgo/v2 v2.28.1 h1:S4hj+HbZp40fNKuLUQOYLDgZLwNUVn19N3Atb98NCyI
 github.com/onsi/ginkgo/v2 v2.28.1/go.mod h1:CLtbVInNckU3/+gC8LzkGUb9oF+e8W8TdUsxPwvdOgE=
 github.com/onsi/gomega v1.39.1 h1:1IJLAad4zjPn2PsnhH70V4DKRFlrCzGBNrNaru+Vf28=
 github.com/onsi/gomega v1.39.1/go.mod h1:hL6yVALoTOxeWudERyfppUcZXjMwIMLnuSfruD2lcfg=
+github.com/osteele/liquid v1.8.1 h1:b+uxMOkD1OOLxueaSvrE0yx6nMqf023DZPPAjPWT5eI=
+github.com/osteele/liquid v1.8.1/go.mod h1:SFqQ9ddbCoKceuG6RckCLJ0hcxUbGhLpvcXJGmHlCWA=
+github.com/osteele/tuesday v1.0.4 h1:iX0xOLW08/FJtXUCr20ngYwOwBE6l/mf7mz8NIv4yl8=
+github.com/osteele/tuesday v1.0.4/go.mod h1:5fgEemYhErJF09RNEwU+PdYiwm5Ar7Bknlhs1CD/Ol8=
 github.com/otiai10/copy v1.2.0/go.mod h1:rrF5dJ5F0t/EWSYODDu4j9/vEeYHMkc8jt0zJChqQWw=
 github.com/otiai10/copy v1.14.0 h1:dCI/t1iTdYGtkvCuBG2BgR6KZa83PTclw4U5n2wAllU=
 github.com/otiai10/copy v1.14.0/go.mod h1:ECfuL02W+/FkTWZWgQqXPWZgW9oeKCSQ5qVfSc4qc4w=
@@ -648,14 +652,10 @@ github.com/subosito/gotenv v1.4.1 h1:jyEFiXpy21Wm81FBN71l9VoMMV8H8jG+qIK3GCpY6Qs
 github.com/subosito/gotenv v1.4.1/go.mod h1:ayKnFf/c6rvx/2iiLrJUk1e6plDbT3edrFNGqEflhK0=
 github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd h1:Rf9uhF1+VJ7ZHqxrG8pJ6YacmHvVCmByDmGbAWCc/gA=
 github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd/go.mod h1:EbW0wDK/qEUYI0A5bqq0C2kF8JTQwWONmGDBbzsxxHo=
-github.com/takezoh/credproxy v0.0.0-20260504020020-c81353bc8c87 h1:VjTkBNzjiHMPKoaAAfkei3V2sSbiDU2pnofvFASTH8A=
-github.com/takezoh/credproxy v0.0.0-20260504020020-c81353bc8c87/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
-github.com/takezoh/credproxy v0.0.0-20260504022500-2857445b0060 h1:jC5iArh4Fl9GGrZUHWYtiQL35SomD0/8nuzdkLwaocA=
-github.com/takezoh/credproxy v0.0.0-20260504022500-2857445b0060/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
-github.com/takezoh/credproxy v0.0.0-20260505054453-843a4461ad62 h1:7DDDv5sfP6zK+kNnkwkgaUIWJn8T0LZt2oMeuSLOkPc=
-github.com/takezoh/credproxy v0.0.0-20260505054453-843a4461ad62/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
 github.com/takezoh/credproxy v0.0.0-20260508093545-1605b93c0b4f h1:0TCNWvDSaTPz5+TdkIk57ttw5Lbnlo4xfZZRW56wh68=
 github.com/takezoh/credproxy v0.0.0-20260508093545-1605b93c0b4f/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
+github.com/takezoh/credproxy v0.0.0-20260524125243-1aa9888bce76 h1:JctgP5IHokfKPwbjlWFjdXpCVt2YIvKwhY+6phl3lpY=
+github.com/takezoh/credproxy v0.0.0-20260524125243-1aa9888bce76/go.mod h1:VYriEdkZkTqZKDQ7yE45iA0EVyjCSRNV4Tp3iQcO9Sc=
 github.com/takezoh/fishpath-go v0.1.0 h1:50mRtsddcLxhqWHymJDyL8+Ja9yyjbFIncis1nIttts=
 github.com/takezoh/fishpath-go v0.1.0/go.mod h1:74mSi4sk/bOHk8zJmDOQ90WKaxhDNG51icC/P/VolPc=
 github.com/tenntenn/modver v1.0.1 h1:2klLppGhDgzJrScMpkj9Ujy3rXPUspSjAcev9tSEBgA=

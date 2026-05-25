@@ -1,0 +1,1904 @@
+package state
+
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+	"time"
+
+	"github.com/takezoh/agent-roost/client/uiproc"
+)
+
+// === Test driver registration ===
+//
+// reduce_session_test.go is the only place state pkg tests need a
+// real Driver. We register a tiny stub here in init() so we can drive
+// reducers without importing state/driver (which would create an
+// import cycle).
+
+type stubJobInput struct{}
+
+func (stubJobInput) JobKind() string { return "stub" }
+
+type stubDriverState struct {
+	DriverStateBase
+	status Status
+}
+
+type stubDriver struct{}
+
+func (stubDriver) Name() string                       { return "stub" }
+func (stubDriver) DisplayName() string                { return "stub" }
+func (stubDriver) Status(s DriverState) Status        { return s.(stubDriverState).status }
+func (stubDriver) NewState(now time.Time) DriverState { return stubDriverState{} }
+func (stubDriver) PrepareLaunch(s DriverState, mode LaunchMode, project, baseCommand string, options LaunchOptions, _ bool) (LaunchPlan, error) {
+	return LaunchPlan{Command: baseCommand, StartDir: project}, nil
+}
+func (stubDriver) Persist(s DriverState) map[string]string                  { return nil }
+func (stubDriver) Restore(bag map[string]string, now time.Time) DriverState { return stubDriverState{} }
+func (stubDriver) View(s DriverState) View                                  { return View{} }
+func (stubDriver) Step(prev DriverState, ctx FrameContext, ev DriverEvent) (DriverState, []Effect, View) {
+	return prev, nil, View{}
+}
+
+type plannerDriver struct{ stubDriver }
+
+func (plannerDriver) Name() string { return "planner" }
+func (plannerDriver) PrepareLaunch(s DriverState, mode LaunchMode, project, baseCommand string, options LaunchOptions, _ bool) (LaunchPlan, error) {
+	return LaunchPlan{Command: "planner --prepared", StartDir: "/prepared"}, nil
+}
+func (plannerDriver) PrepareCreate(s DriverState, sessionID SessionID, project, command string, options LaunchOptions) (DriverState, CreateLaunch, error) {
+	return s, CreateLaunch{Command: "planner --prepared", StartDir: project}, nil
+}
+
+type fallbackDriver struct{ stubDriver }
+
+func (fallbackDriver) Name() string { return "" }
+
+type bootstrapState struct {
+	DriverStateBase
+	status       Status
+	bootstrapped bool
+}
+
+type bootstrapDriver struct{}
+
+func (bootstrapDriver) Name() string                       { return "bootstrap" }
+func (bootstrapDriver) DisplayName() string                { return "bootstrap" }
+func (bootstrapDriver) Status(s DriverState) Status        { return s.(bootstrapState).status }
+func (bootstrapDriver) NewState(now time.Time) DriverState { return bootstrapState{} }
+func (bootstrapDriver) PrepareLaunch(s DriverState, mode LaunchMode, project, baseCommand string, options LaunchOptions, _ bool) (LaunchPlan, error) {
+	return LaunchPlan{Command: baseCommand, StartDir: project}, nil
+}
+func (bootstrapDriver) Persist(s DriverState) map[string]string { return nil }
+func (bootstrapDriver) Restore(bag map[string]string, now time.Time) DriverState {
+	return bootstrapState{}
+}
+func (bootstrapDriver) View(s DriverState) View { return View{} }
+func (bootstrapDriver) Step(prev DriverState, ctx FrameContext, ev DriverEvent) (DriverState, []Effect, View) {
+	return prev, nil, View{}
+}
+func (bootstrapDriver) BootstrapSessionStart(s DriverState, ctx FrameContext, now time.Time) (DriverState, []Effect) {
+	bs, _ := s.(bootstrapState)
+	bs.status = StatusIdle
+	bs.bootstrapped = true
+	return bs, []Effect{EffEventLogAppend{Line: "[event:SessionStart] startup"}}
+}
+
+// sdState is a StartDirAware driver state for testing StartDir inheritance.
+type sdState struct {
+	DriverStateBase
+	startDir string
+}
+
+// sdDriver implements StartDirAware in addition to the Driver interface.
+type sdDriver struct{ stubDriver }
+
+func (sdDriver) Name() string { return "sdstub" }
+func (sdDriver) NewState(now time.Time) DriverState {
+	return sdState{}
+}
+func (sdDriver) PrepareLaunch(s DriverState, mode LaunchMode, project, baseCommand string, options LaunchOptions, _ bool) (LaunchPlan, error) {
+	ss := s.(sdState)
+	startDir := project
+	if ss.startDir != "" {
+		startDir = ss.startDir
+	}
+	return LaunchPlan{Command: baseCommand, StartDir: startDir}, nil
+}
+func (sdDriver) Persist(s DriverState) map[string]string                  { return nil }
+func (sdDriver) Restore(bag map[string]string, now time.Time) DriverState { return sdState{} }
+func (sdDriver) View(s DriverState) View {
+	return View{Card: Card{BorderTitle: Tag{Text: "sdstub"}}}
+}
+func (sdDriver) Step(prev DriverState, ctx FrameContext, ev DriverEvent) (DriverState, []Effect, View) {
+	return prev, nil, View{}
+}
+func (sdDriver) Status(s DriverState) Status { return StatusIdle }
+func (sdDriver) StartDir(s DriverState) string {
+	if ss, ok := s.(sdState); ok {
+		return ss.startDir
+	}
+	return ""
+}
+func (sdDriver) WithStartDir(s DriverState, dir string) DriverState {
+	ss, ok := s.(sdState)
+	if !ok {
+		return s
+	}
+	ss.startDir = dir
+	return ss
+}
+
+func init() {
+	if _, exists := driverRegistry[""]; !exists {
+		Register(fallbackDriver{})
+	}
+	if _, exists := driverRegistry["stub"]; !exists {
+		Register(stubDriver{})
+	}
+	if _, exists := driverRegistry["planner"]; !exists {
+		Register(plannerDriver{})
+	}
+	if _, exists := driverRegistry["bootstrap"]; !exists {
+		Register(bootstrapDriver{})
+	}
+	if _, exists := driverRegistry["sdstub"]; !exists {
+		Register(sdDriver{})
+	}
+}
+
+// === Helpers ===
+
+func mustOK(t *testing.T, effs []Effect) {
+	t.Helper()
+	for _, e := range effs {
+		if _, ok := e.(EffSendError); ok {
+			t.Fatalf("unexpected error effect: %+v", e)
+		}
+	}
+}
+
+func findEff[T Effect](effs []Effect) (T, bool) {
+	var zero T
+	for _, e := range effs {
+		if v, ok := e.(T); ok {
+			return v, true
+		}
+	}
+	return zero, false
+}
+
+func countEff[T Effect](effs []Effect) int {
+	n := 0
+	for _, e := range effs {
+		if _, ok := e.(T); ok {
+			n++
+		}
+	}
+	return n
+}
+
+// assertEffectOrder asserts that effect of type A appears before effect of
+// type B in effs, and that both are present.
+func assertEffectOrder[A, B Effect](t *testing.T, effs []Effect) {
+	t.Helper()
+	aIdx, bIdx := -1, -1
+	for i, e := range effs {
+		if _, ok := e.(A); ok && aIdx < 0 {
+			aIdx = i
+		}
+		if _, ok := e.(B); ok {
+			bIdx = i
+		}
+	}
+	var zeroA A
+	var zeroB B
+	if aIdx < 0 {
+		t.Fatalf("expected %T in effects", zeroA)
+	}
+	if bIdx < 0 {
+		t.Fatalf("expected %T in effects", zeroB)
+	}
+	if aIdx > bIdx {
+		t.Errorf("%T (idx %d) must precede %T (idx %d)", zeroA, aIdx, zeroB, bIdx)
+	}
+}
+
+func mustPayload(fields map[string]string) json.RawMessage {
+	b, _ := json.Marshal(fields)
+	return json.RawMessage(b)
+}
+
+func stubSession(id SessionID) Session {
+	return Session{
+		ID:      id,
+		Project: "/foo",
+		Command: "stub",
+		Driver:  stubDriverState{},
+		Frames: []SessionFrame{{
+			ID:      FrameID(id),
+			Project: "/foo",
+			Command: "stub",
+			Driver:  stubDriverState{},
+		}},
+	}
+}
+
+// === reduceCreateSession ===
+
+func TestCreateSessionMissingProject(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{ConnID: 1, ReqID: "r", Event: "create-session"})
+	if _, ok := findEff[EffSendError](effs); !ok {
+		t.Error("expected EffSendError")
+	}
+}
+
+func TestCreateSessionAllocatesAndSpawns(t *testing.T) {
+	s := New()
+	s.Now = time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "create-session",
+		Payload: mustPayload(map[string]string{"project": "/foo", "command": "stub"}),
+	})
+	if len(next.Sessions) != 1 {
+		t.Fatalf("session count = %d, want 1", len(next.Sessions))
+	}
+	var sess Session
+	for _, v := range next.Sessions {
+		sess = v
+	}
+	if sess.Project != "/foo" || sess.Command != "stub" {
+		t.Errorf("session = %+v", sess)
+	}
+	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	if !ok {
+		t.Fatal("expected EffSpawnTmuxWindow")
+	}
+	if spawn.SessionID != sess.ID || spawn.Project != "/foo" || spawn.Command != "stub" {
+		t.Errorf("spawn = %+v", spawn)
+	}
+	if spawn.ReplyConn != 1 || spawn.ReplyReqID != "r" {
+		t.Error("spawn missing reply context")
+	}
+	if spawn.Env["ROOST_SESSION_ID"] != string(sess.ID) {
+		t.Errorf("env ROOST_SESSION_ID = %q", spawn.Env["ROOST_SESSION_ID"])
+	}
+}
+
+func TestCreateSessionLeavesSubsystemIDEmptyUntilBind(t *testing.T) {
+	s := New()
+	s.Now = time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
+
+	next, _ := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "create-session",
+		Payload: mustPayload(map[string]string{
+			"project": "/foo",
+			"command": "planner",
+		}),
+	})
+
+	if len(next.Sessions) != 1 {
+		t.Fatalf("session count = %d, want 1", len(next.Sessions))
+	}
+	for _, sess := range next.Sessions {
+		if len(sess.Frames) != 1 {
+			t.Fatalf("frame count = %d, want 1", len(sess.Frames))
+		}
+		frame := sess.Frames[0]
+		if frame.SubsystemID != "" {
+			t.Fatalf("SubsystemID = %q, want empty (factory fills in via EvTmuxPaneSpawned)", frame.SubsystemID)
+		}
+		if frame.TargetID != TargetID(frame.ID) {
+			t.Fatalf("TargetID = %q, want %q", frame.TargetID, frame.ID)
+		}
+	}
+}
+
+func TestCreateSessionDefaultCommand(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "create-session",
+		Payload: mustPayload(map[string]string{"project": "/foo"}),
+	})
+	if _, ok := findEff[EffSpawnTmuxWindow](effs); !ok {
+		t.Error("expected EffSpawnTmuxWindow with default command")
+	}
+}
+
+func TestCreateSessionUnknownCommandFallsBackToFallback(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "create-session",
+		Payload: mustPayload(map[string]string{"project": "/foo", "command": "nonexistent"}),
+	})
+	if _, ok := findEff[EffSpawnTmuxWindow](effs); !ok {
+		t.Error("expected fallback driver to allow spawn")
+	}
+}
+
+func TestCreateSessionPlannerSpawnsImmediately(t *testing.T) {
+	s := New()
+	s.Now = time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "create-session",
+		Payload: mustPayload(map[string]string{"project": "/foo", "command": "planner"}),
+	})
+	if len(next.Sessions) != 1 {
+		t.Fatalf("session count = %d, want 1 (spawn is immediate)", len(next.Sessions))
+	}
+	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	if !ok {
+		t.Fatal("expected EffSpawnTmuxWindow")
+	}
+	if spawn.Mode != LaunchModeCreate {
+		t.Fatalf("spawn mode = %v", spawn.Mode)
+	}
+	if spawn.Command != "planner --prepared" {
+		t.Fatalf("spawn command = %q, want planner --prepared", spawn.Command)
+	}
+}
+
+// === reduceTmuxPaneSpawned ===
+
+func TestTmuxSpawnedRegistersWindowAndActivates(t *testing.T) {
+	s := New()
+	s.Now = time.Now()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+
+	next, effs := Reduce(s, EvTmuxPaneSpawned{
+		SessionID:  id,
+		FrameID:    FrameID(id),
+		PaneTarget: "%1",
+		ReplyConn:  1,
+		ReplyReqID: "r",
+	})
+	if next.ActiveSession != id {
+		t.Errorf("ActiveSession = %q, want %q", next.ActiveSession, id)
+	}
+	if _, ok := findEff[EffRegisterPane](effs); !ok {
+		t.Error("expected EffRegisterPane")
+	}
+	if _, ok := findEff[EffActivateSession](effs); !ok {
+		t.Error("expected EffActivateSession")
+	}
+	if _, ok := findEff[EffPersistSnapshot](effs); !ok {
+		t.Error("expected EffPersistSnapshot")
+	}
+	if _, ok := findEff[EffBroadcastSessionsChanged](effs); !ok {
+		t.Error("expected EffBroadcastSessionsChanged")
+	}
+	if _, ok := findEff[EffSendResponse](effs); !ok {
+		t.Error("expected EffSendResponse")
+	}
+}
+
+func TestTmuxSpawnedRootFrameSetsTapTrue(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id) // Frames[0] is the root
+	_, effs := Reduce(s, EvTmuxPaneSpawned{
+		SessionID: id, FrameID: FrameID(id), PaneTarget: "%1",
+	})
+	reg, ok := findEff[EffRegisterPane](effs)
+	if !ok {
+		t.Fatal("expected EffRegisterPane")
+	}
+	if !reg.Tap {
+		t.Error("EffRegisterPane.Tap should be true for root frame (Frames[0])")
+	}
+}
+
+func TestTmuxSpawnedChildFrameSetsTapFalse(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	childID := FrameID("child-frame")
+	sess := stubSession(id)
+	// Append a child frame at index 1.
+	sess.Frames = append(sess.Frames, SessionFrame{
+		ID: childID, Project: "/foo", Command: "stub", Driver: stubDriverState{},
+	})
+	s.Sessions[id] = sess
+	_, effs := Reduce(s, EvTmuxPaneSpawned{
+		SessionID: id, FrameID: childID, PaneTarget: "%2",
+	})
+	reg, ok := findEff[EffRegisterPane](effs)
+	if !ok {
+		t.Fatal("expected EffRegisterPane")
+	}
+	if reg.Tap {
+		t.Error("EffRegisterPane.Tap should be false for non-root frame (Frames[1])")
+	}
+}
+
+func TestTmuxSpawnedRootBootstrapRunsBeforeRegister(t *testing.T) {
+	s := New()
+	id := SessionID("boot")
+	s.Sessions[id] = Session{
+		ID:      id,
+		Project: "/foo",
+		Command: "bootstrap",
+		Driver:  bootstrapState{},
+		Frames: []SessionFrame{{
+			ID:      FrameID(id),
+			Project: "/foo",
+			Command: "bootstrap",
+			Driver:  bootstrapState{},
+		}},
+	}
+
+	next, effs := Reduce(s, EvTmuxPaneSpawned{
+		SessionID:  id,
+		FrameID:    FrameID(id),
+		PaneTarget: "%1",
+	})
+
+	got := next.Sessions[id].Frames[0].Driver.(bootstrapState)
+	if !got.bootstrapped {
+		t.Fatal("root frame should be bootstrapped")
+	}
+	assertEffectOrder[EffEventLogAppend, EffRegisterPane](t, effs)
+}
+
+func TestTmuxSpawnedChildFrameSkipsBootstrap(t *testing.T) {
+	s := New()
+	id := SessionID("boot")
+	childID := FrameID("boot-child")
+	s.Sessions[id] = Session{
+		ID:      id,
+		Project: "/foo",
+		Command: "bootstrap",
+		Driver:  bootstrapState{},
+		Frames: []SessionFrame{
+			{ID: FrameID(id), Project: "/foo", Command: "bootstrap", Driver: bootstrapState{}},
+			{ID: childID, Project: "/foo", Command: "bootstrap", Driver: bootstrapState{}},
+		},
+	}
+
+	next, effs := Reduce(s, EvTmuxPaneSpawned{
+		SessionID:  id,
+		FrameID:    childID,
+		PaneTarget: "%2",
+	})
+
+	root := next.Sessions[id].Frames[0].Driver.(bootstrapState)
+	child := next.Sessions[id].Frames[1].Driver.(bootstrapState)
+	if root.bootstrapped || child.bootstrapped {
+		t.Fatal("non-root spawn should not bootstrap")
+	}
+	if _, ok := findEff[EffEventLogAppend](effs); ok {
+		t.Fatal("child spawn should not emit bootstrap event log")
+	}
+}
+
+func TestTmuxSpawnedUnknownSessionDropsSilently(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvTmuxPaneSpawned{
+		SessionID: "ghost", FrameID: "ghost", PaneTarget: "%1", ReplyConn: 1, ReplyReqID: "r",
+	})
+	if len(effs) != 0 {
+		t.Errorf("expected no effects, got %d", len(effs))
+	}
+}
+
+func TestTmuxSpawnFailedEvictsAndReplies(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+	next, effs := Reduce(s, EvTmuxSpawnFailed{
+		SessionID: id, FrameID: FrameID(id), Err: "boom", ReplyConn: 1, ReplyReqID: "r",
+	})
+	if _, ok := next.Sessions[id]; ok {
+		t.Error("session should be evicted")
+	}
+	if _, ok := findEff[EffSendError](effs); !ok {
+		t.Error("expected EffSendError")
+	}
+}
+
+func TestTmuxSpawnFailedEvictsSession(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+	next, _ := Reduce(s, EvTmuxSpawnFailed{
+		SessionID: id, FrameID: FrameID(id), Err: "boom", ReplyConn: 1, ReplyReqID: "r",
+	})
+	if _, ok := next.Sessions[id]; ok {
+		t.Error("session should be evicted on spawn failure")
+	}
+}
+
+// === reduceStopSession ===
+
+func TestStopSessionEvictsImmediately(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "stop-session",
+		Payload: mustPayload(map[string]string{"session_id": string(id)}),
+	})
+	if _, ok := next.Sessions[id]; ok {
+		t.Error("session must be evicted immediately from state")
+	}
+	if _, ok := findEff[EffKillSessionWindow](effs); !ok {
+		t.Error("expected EffKillSessionWindow")
+	}
+	if _, ok := findEff[EffBroadcastSessionsChanged](effs); !ok {
+		t.Error("expected EffBroadcastSessionsChanged")
+	}
+	if _, ok := findEff[EffPersistSnapshot](effs); !ok {
+		t.Error("expected EffPersistSnapshot")
+	}
+	mustOK(t, effs)
+}
+
+func TestStopSessionThenVanishIsNoop(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+	frame, _ := activeFrame(s.Sessions[id])
+
+	s, _ = Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "stop-session",
+		Payload: mustPayload(map[string]string{"session_id": string(id)}),
+	})
+	if _, ok := s.Sessions[id]; ok {
+		t.Fatal("session must be evicted by stop-session")
+	}
+
+	// EvTmuxWindowVanished should be a no-op since session is gone
+	_, effs := Reduce(s, EvTmuxWindowVanished{FrameID: frame.ID})
+	if _, ok := findEff[EffBroadcastSessionsChanged](effs); ok {
+		t.Error("EvTmuxWindowVanished after eviction should be no-op, not broadcast again")
+	}
+}
+
+func TestStopSessionUnknownReturnsError(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "stop-session",
+		Payload: mustPayload(map[string]string{"session_id": "ghost"}),
+	})
+	if _, ok := findEff[EffSendError](effs); !ok {
+		t.Error("expected EffSendError")
+	}
+}
+
+func TestStopActiveSessionEmitsDeactivate(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+	s.ActiveOccupant = OccupantFrame
+	s.ActiveSession = id
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "stop-session",
+		Payload: mustPayload(map[string]string{"session_id": string(id)}),
+	})
+	if _, ok := findEff[EffDeactivateSession](effs); !ok {
+		t.Error("expected EffDeactivateSession for active session")
+	}
+	if next.ActiveSession != "" {
+		t.Errorf("ActiveSession = %q, want empty", next.ActiveSession)
+	}
+}
+
+func TestStopInactiveSessionNoDeactivate(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	other := SessionID("other")
+	s.Sessions[id] = stubSession(id)
+	s.ActiveSession = other
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "stop-session",
+		Payload: mustPayload(map[string]string{"session_id": string(id)}),
+	})
+	if _, ok := findEff[EffDeactivateSession](effs); ok {
+		t.Error("must not emit EffDeactivateSession for inactive session")
+	}
+	if _, ok := findEff[EffKillSessionWindow](effs); !ok {
+		t.Error("expected EffKillSessionWindow for inactive session")
+	}
+}
+
+func TestStopSessionMultiFrameKillsAllWindows(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	sess := stubSession(id)
+	// add a second frame
+	sess.Frames = append(sess.Frames, SessionFrame{
+		ID:      "abc-frame-2",
+		Command: "shell",
+		Driver:  GetDriver("shell").NewState(sess.CreatedAt),
+	})
+	s.Sessions[id] = sess
+	s.ActiveOccupant = OccupantFrame
+	s.ActiveSession = id
+
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "stop-session",
+		Payload: mustPayload(map[string]string{"session_id": string(id)}),
+	})
+	if _, ok := next.Sessions[id]; ok {
+		t.Error("session must be evicted immediately")
+	}
+	// EffKillSessionWindow must appear for every frame
+	killCount := 0
+	for _, e := range effs {
+		if _, ok := e.(EffKillSessionWindow); ok {
+			killCount++
+		}
+	}
+	if killCount != 2 {
+		t.Errorf("EffKillSessionWindow count = %d, want 2", killCount)
+	}
+	// EffDeactivateSession must appear exactly once
+	deactivateCount := 0
+	for _, e := range effs {
+		if _, ok := e.(EffDeactivateSession); ok {
+			deactivateCount++
+		}
+	}
+	if deactivateCount != 1 {
+		t.Errorf("EffDeactivateSession count = %d, want 1", deactivateCount)
+	}
+}
+
+func TestStopSessionBroadcastBeforeKill(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "stop-session",
+		Payload: mustPayload(map[string]string{"session_id": string(id)}),
+	})
+	broadcastIdx := -1
+	killIdx := -1
+	for i, e := range effs {
+		if _, ok := e.(EffBroadcastSessionsChanged); ok && broadcastIdx == -1 {
+			broadcastIdx = i
+		}
+		if _, ok := e.(EffKillSessionWindow); ok && killIdx == -1 {
+			killIdx = i
+		}
+	}
+	if broadcastIdx == -1 {
+		t.Fatal("expected EffBroadcastSessionsChanged")
+	}
+	if killIdx == -1 {
+		t.Fatal("expected EffKillSessionWindow")
+	}
+	if broadcastIdx > killIdx {
+		t.Errorf("broadcast (idx=%d) must come before kill (idx=%d)", broadcastIdx, killIdx)
+	}
+}
+
+// === reducePreviewSession / reduceSwitchSession ===
+
+func TestPreviewSessionActivatesAndBroadcasts(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "preview-session",
+		Payload: mustPayload(map[string]string{"session_id": string(id)}),
+	})
+	if next.ActiveSession != id {
+		t.Errorf("ActiveSession = %q, want %q", next.ActiveSession, id)
+	}
+	if eff, ok := findEff[EffActivateSession](effs); !ok {
+		t.Error("expected EffActivateSession")
+	} else if eff.Reason != EventPreviewSession {
+		t.Errorf("EffActivateSession.Reason = %q, want %q", eff.Reason, EventPreviewSession)
+	}
+	mustOK(t, effs)
+}
+
+func TestPreviewSessionUnknownErrors(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "preview-session",
+		Payload: mustPayload(map[string]string{"session_id": "ghost"}),
+	})
+	if _, ok := findEff[EffSendError](effs); !ok {
+		t.Error("expected EffSendError")
+	}
+}
+
+func TestSwitchSessionAlsoSelectsPane(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "switch-session",
+		Payload: mustPayload(map[string]string{"session_id": string(id)}),
+	})
+	if eff, ok := findEff[EffActivateSession](effs); !ok {
+		t.Error("expected EffActivateSession")
+	} else if eff.Reason != EventSwitchSession {
+		t.Errorf("EffActivateSession.Reason = %q, want %q", eff.Reason, EventSwitchSession)
+	}
+	if _, ok := findEff[EffSelectPane](effs); !ok {
+		t.Error("expected EffSelectPane")
+	}
+	mustOK(t, effs)
+}
+
+// === reducePreviewProject ===
+
+func TestPreviewProjectDeactivatesActive(t *testing.T) {
+	s := New()
+	s.ActiveOccupant = OccupantFrame
+	s.ActiveSession = "abc"
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "preview-project",
+		Payload: mustPayload(map[string]string{"project": "/foo"}),
+	})
+	if next.ActiveSession != "" {
+		t.Errorf("ActiveSession = %q, want empty", next.ActiveSession)
+	}
+	if _, ok := findEff[EffDeactivateSession](effs); !ok {
+		t.Error("expected EffDeactivateSession to swap back")
+	}
+	if _, ok := findEff[EffBroadcastEvent](effs); !ok {
+		t.Error("expected EffBroadcastEvent")
+	}
+}
+
+func TestPreviewProjectNoActiveStillBroadcasts(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "preview-project",
+		Payload: mustPayload(map[string]string{"project": "/foo"}),
+	})
+	if _, ok := findEff[EffBroadcastEvent](effs); !ok {
+		t.Error("expected EffBroadcastEvent")
+	}
+}
+
+// === reduceListSessions ===
+
+func TestListSessionsResponds(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{ConnID: 1, ReqID: "r", Event: "list-sessions"})
+	if _, ok := findEff[EffSendResponse](effs); !ok {
+		t.Error("expected EffSendResponse")
+	}
+}
+
+// === reduceFocusPane ===
+
+func TestFocusPaneSelectsAndBroadcasts(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "focus-pane",
+		Payload: mustPayload(map[string]string{"pane": "0.1"}),
+	})
+	if _, ok := findEff[EffSelectPane](effs); !ok {
+		t.Error("expected EffSelectPane")
+	}
+	if _, ok := findEff[EffBroadcastEvent](effs); !ok {
+		t.Error("expected EffBroadcastEvent")
+	}
+}
+
+func TestFocusPaneEmptyErrors(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{ConnID: 1, ReqID: "r", Event: "focus-pane"})
+	if _, ok := findEff[EffSendError](effs); !ok {
+		t.Error("expected EffSendError")
+	}
+}
+
+// === reduceLaunchTool ===
+
+func TestLaunchToolDisplaysPopup(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "launch-tool",
+		Payload: mustPayload(map[string]string{"tool": "new-session"}),
+	})
+	if _, ok := findEff[EffDisplayPopup](effs); !ok {
+		t.Error("expected EffDisplayPopup")
+	}
+}
+
+func TestLaunchToolEmptyErrors(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{ConnID: 1, ReqID: "r", Event: "launch-tool"})
+	if _, ok := findEff[EffSendError](effs); !ok {
+		t.Error("expected EffSendError")
+	}
+}
+
+// === reduceShutdown / reduceDetach ===
+
+func TestShutdownKillsSession(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{ConnID: 1, ReqID: "r", Event: "shutdown"})
+	if _, ok := findEff[EffKillSession](effs); !ok {
+		t.Error("expected EffKillSession")
+	}
+	if _, ok := findEff[EffSendResponseSync](effs); !ok {
+		t.Error("expected EffSendResponseSync")
+	}
+	if _, ok := findEff[EffSendResponse](effs); ok {
+		t.Error("did not expect EffSendResponse")
+	}
+	if _, ok := findEff[EffDetachClient](effs); ok {
+		t.Error("did not expect EffDetachClient")
+	}
+}
+
+func TestDetach(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{ConnID: 1, ReqID: "r", Event: "detach"})
+	if _, ok := findEff[EffDetachClient](effs); !ok {
+		t.Error("expected EffDetachClient")
+	}
+}
+
+// === reduceTmuxWindowVanished ===
+
+func TestTmuxWindowVanishedEvicts(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+	s.ActiveSession = id
+	next, effs := Reduce(s, EvTmuxWindowVanished{FrameID: FrameID(id)})
+	if _, ok := next.Sessions[id]; ok {
+		t.Error("session should be evicted")
+	}
+	if next.ActiveSession != "" {
+		t.Errorf("ActiveSession not cleared: %q", next.ActiveSession)
+	}
+	if _, ok := findEff[EffBroadcastSessionsChanged](effs); !ok {
+		t.Error("expected broadcast")
+	}
+	if _, ok := findEff[EffUnregisterPane](effs); !ok {
+		t.Error("expected EffUnregisterPane")
+	}
+}
+
+// === reduceConnOpened / reduceConnClosed ===
+
+func TestConnOpenedRecordsHighWaterMark(t *testing.T) {
+	s := New()
+	next, _ := Reduce(s, EvConnOpened{ConnID: 7})
+	if next.NextConnID != 7 {
+		t.Errorf("NextConnID = %d, want 7", next.NextConnID)
+	}
+}
+
+func TestConnClosedRemovesSubscriber(t *testing.T) {
+	s := New()
+	s.Subscribers[5] = Subscriber{ConnID: 5}
+	next, _ := Reduce(s, EvConnClosed{ConnID: 5})
+	if _, ok := next.Subscribers[5]; ok {
+		t.Error("subscriber should be removed")
+	}
+}
+
+func TestSubscribeAddsAndBroadcasts(t *testing.T) {
+	s := New()
+	next, effs := Reduce(s, EvCmdSubscribe{ConnID: 5, ReqID: "r", Filters: []string{"sessions-changed"}})
+	if _, ok := next.Subscribers[5]; !ok {
+		t.Error("subscriber not registered")
+	}
+	if _, ok := findEff[EffBroadcastSessionsChanged](effs); !ok {
+		t.Error("expected initial broadcast")
+	}
+}
+
+func TestUnsubscribeRemoves(t *testing.T) {
+	s := New()
+	s.Subscribers[5] = Subscriber{ConnID: 5}
+	next, _ := Reduce(s, EvCmdUnsubscribe{ConnID: 5, ReqID: "r"})
+	if _, ok := next.Subscribers[5]; ok {
+		t.Error("subscriber should be removed")
+	}
+}
+
+// === reducePaneDied ===
+
+func TestPaneDiedEmitsRespawn(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvPaneDied{Pane: "{sessionName}:0.1"})
+	respawn, ok := findEff[EffRespawnPane](effs)
+	if !ok {
+		t.Fatal("expected EffRespawnPane")
+	}
+	if respawn.Pane != "{sessionName}:0.1" {
+		t.Errorf("pane = %q", respawn.Pane)
+	}
+}
+
+func TestPaneDiedUnknownPaneIsNoop(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvPaneDied{Pane: "garbage"})
+	if len(effs) != 0 {
+		t.Errorf("expected 0 effects, got %d", len(effs))
+	}
+}
+
+func TestPaneDiedEvictsSessionByOwnerID(t *testing.T) {
+	s := New()
+	s.Sessions = map[SessionID]Session{
+		"s1": stubSession("s1"),
+	}
+	s.ActiveOccupant = OccupantFrame
+	s.ActiveSession = "s1"
+
+	next, effs := Reduce(s, EvPaneDied{
+		Pane:         "{sessionName}:0.1",
+		OwnerFrameID: "s1",
+	})
+	if _, ok := next.Sessions["s1"]; ok {
+		t.Fatal("session should be deleted")
+	}
+	if next.ActiveSession != "" {
+		t.Errorf("ActiveSession = %q, want empty", next.ActiveSession)
+	}
+	if _, ok := findEff[EffKillSessionWindow](effs); !ok {
+		t.Error("expected EffKillSessionWindow")
+	}
+	if _, ok := findEff[EffBroadcastSessionsChanged](effs); !ok {
+		t.Error("expected EffBroadcastSessionsChanged")
+	}
+	if _, ok := findEff[EffRespawnPane](effs); ok {
+		t.Error("should not respawn pane 0.1 directly after eviction")
+	}
+}
+
+func TestPaneDiedFallbackViaActiveSession(t *testing.T) {
+	s := New()
+	s.Sessions = map[SessionID]Session{
+		"s1": stubSession("s1"),
+	}
+	s.ActiveOccupant = OccupantFrame
+	s.ActiveSession = "s1"
+
+	next, effs := Reduce(s, EvPaneDied{
+		Pane:         "{sessionName}:0.1",
+		OwnerFrameID: "", // runtime couldn't identify owner
+	})
+	if _, ok := next.Sessions["s1"]; ok {
+		t.Fatal("session should be deleted via ActiveSession fallback")
+	}
+	if _, ok := findEff[EffKillSessionWindow](effs); !ok {
+		t.Error("expected EffKillSessionWindow")
+	}
+	if _, ok := findEff[EffRespawnPane](effs); ok {
+		t.Error("should not respawn pane 0.1 directly after fallback eviction")
+	}
+}
+
+func TestPaneDiedNoActiveRespawnsMainTUI(t *testing.T) {
+	s := New()
+	s.Sessions = map[SessionID]Session{
+		"s1": stubSession("s1"),
+	}
+
+	_, effs := Reduce(s, EvPaneDied{
+		Pane:         "{sessionName}:0.1",
+		OwnerFrameID: "",
+	})
+	respawn, ok := findEff[EffRespawnPane](effs)
+	if !ok {
+		t.Fatal("expected EffRespawnPane for main TUI")
+	}
+	if respawn.Pane != "{sessionName}:0.1" {
+		t.Errorf("pane = %q, want {sessionName}:0.1", respawn.Pane)
+	}
+	if !reflect.DeepEqual(respawn.Proc, uiproc.Main()) {
+		t.Errorf("proc = %+v, want Main()", respawn.Proc)
+	}
+}
+
+// TestChildFrameEvictionSyncsStatusLine verifies that when a child frame exits
+// the active session, EffSyncStatusLine is emitted so the parent frame's
+// StatusLine (e.g. "PLAN") is restored in the status bar.
+func TestChildFrameEvictionSyncsStatusLine(t *testing.T) {
+	s := New()
+	id := SessionID("sess1")
+	childID := FrameID("child")
+	sess := stubSession(id)
+	sess.Frames = append(sess.Frames, SessionFrame{
+		ID: childID, Project: "/foo", Command: "stub", Driver: stubDriverState{},
+	})
+	sess.ActiveFrameID = childID
+	s.Sessions = map[SessionID]Session{id: sess}
+	s.ActiveSession = id
+	s.ActiveOccupant = OccupantFrame
+
+	_, effs := Reduce(s, EvPaneDied{Pane: "{sessionName}:0.1", OwnerFrameID: childID})
+	if _, ok := findEff[EffSyncStatusLine](effs); !ok {
+		t.Error("expected EffSyncStatusLine after child frame eviction")
+	}
+}
+
+// === reduceJobResult ===
+
+func TestJobResultUnknownDropsSilently(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvJobResult{JobID: 99})
+	if len(effs) != 0 {
+		t.Errorf("expected 0 effects, got %d", len(effs))
+	}
+}
+
+func TestJobResultRoutesToDriver(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+	s.Jobs[1] = JobMeta{SessionID: id, FrameID: FrameID(id)}
+	next, effs := Reduce(s, EvJobResult{JobID: 1, Result: "irrelevant"})
+	if _, ok := next.Jobs[1]; ok {
+		t.Error("job should be removed")
+	}
+	if countEff[EffPersistSnapshot](effs) != 1 {
+		t.Errorf("persist count = %d", countEff[EffPersistSnapshot](effs))
+	}
+}
+
+func TestJobResultRoutesToConnector(t *testing.T) {
+	orig := connectorRegistry
+	connectorRegistry = map[string]Connector{}
+	defer func() { connectorRegistry = orig }()
+
+	RegisterConnector(stubConnector{name: "test"})
+
+	s := New()
+	s.ConnectorsReady = true
+	s.Connectors["test"] = stubConnectorState{}
+	s.Jobs[1] = JobMeta{Connector: "test"}
+
+	next, effs := Reduce(s, EvJobResult{JobID: 1, Result: "data"})
+	if _, ok := next.Jobs[1]; ok {
+		t.Error("job should be removed")
+	}
+	if countEff[EffBroadcastSessionsChanged](effs) != 1 {
+		t.Errorf("broadcast count = %d, want 1", countEff[EffBroadcastSessionsChanged](effs))
+	}
+	cs := next.Connectors["test"].(stubConnectorState)
+	if cs.Val != 1 {
+		t.Errorf("Val = %d, want 1", cs.Val)
+	}
+}
+
+// === reduceFileChanged ===
+
+func TestFileChangedRoutes(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+	_, effs := Reduce(s, EvFileChanged{FrameID: FrameID(id), Path: "/x"})
+	if len(effs) != 0 {
+		t.Errorf("expected 0 effects from no-op driver, got %d", len(effs))
+	}
+}
+
+func TestFileChangedUnknownSession(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvFileChanged{FrameID: "ghost", Path: "/x"})
+	if len(effs) != 0 {
+		t.Errorf("expected 0 effects, got %d", len(effs))
+	}
+}
+
+// === reduceHook ===
+
+func TestReduceHookMissingSenderID(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvDriverEvent{ConnID: 1, ReqID: "r", Event: "custom-hook"})
+	if _, ok := findEff[EffSendError](effs); !ok {
+		t.Error("expected EffSendError")
+	}
+}
+
+func TestReduceHookUnknownSession(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvDriverEvent{ConnID: 1, ReqID: "r", Event: "custom-hook", SenderID: "ghost"})
+	if _, ok := findEff[EffSendError](effs); !ok {
+		t.Error("expected EffSendError")
+	}
+}
+
+func TestReduceHookRoutes(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+	_, effs := Reduce(s, EvDriverEvent{
+		ConnID: 1, ReqID: "r", SenderID: FrameID(id), Event: "session-start",
+		Payload: json.RawMessage(`{}`),
+	})
+	if _, ok := findEff[EffSendResponse](effs); !ok {
+		t.Error("expected EffSendResponse")
+	}
+}
+
+func TestReduceHookInjectsRoostSessionID(t *testing.T) {
+	s := New()
+	id := SessionID("roost-xyz")
+	s.Sessions[id] = stubSession(id)
+	_, effs := Reduce(s, EvDriverEvent{
+		ConnID: 1, ReqID: "r", SenderID: FrameID(id), Event: "test",
+		Payload: json.RawMessage(`{}`),
+	})
+	if _, ok := findEff[EffSendError](effs); ok {
+		t.Error("unexpected error from hook with empty payload")
+	}
+}
+
+// === postProcessEffect ===
+
+func TestPostProcessAssignsJobID(t *testing.T) {
+	s := New()
+	s.Now = time.Now()
+	patched, next := postProcessEffect(s, "abc", "abc", EffStartJob{Input: stubJobInput{}})
+	job := patched.(EffStartJob)
+	if job.JobID == 0 {
+		t.Error("JobID should be assigned")
+	}
+	if next.NextJobID != job.JobID {
+		t.Errorf("NextJobID = %d, want %d", next.NextJobID, job.JobID)
+	}
+	meta, ok := next.Jobs[job.JobID]
+	if !ok {
+		t.Fatal("JobMeta not registered")
+	}
+	if meta.SessionID != "abc" {
+		t.Errorf("meta.SessionID = %q, want abc", meta.SessionID)
+	}
+}
+
+func TestPostProcessFillsSessionID(t *testing.T) {
+	s := New()
+	patched, _ := postProcessEffect(s, "abc", "abc", EffEventLogAppend{Line: "x"})
+	eff := patched.(EffEventLogAppend)
+	if eff.FrameID != "abc" {
+		t.Errorf("FrameID = %q, want abc", eff.FrameID)
+	}
+}
+
+func TestPostProcessLeavesSessionIDIfSet(t *testing.T) {
+	s := New()
+	patched, _ := postProcessEffect(s, "abc", "abc", EffWatchFile{FrameID: "preset", Path: "/x"})
+	if patched.(EffWatchFile).FrameID != "preset" {
+		t.Error("preset FrameID overwritten")
+	}
+}
+
+// === DefaultCommand ===
+
+func TestReduceCreateSession_DefaultCommand(t *testing.T) {
+	s := New()
+	s.DefaultCommand = "gemini"
+	s, _ = Reduce(s, EvEvent{
+		Event:   "create-session",
+		Payload: mustPayload(map[string]string{"project": "test"}),
+		ConnID:  1, ReqID: "r1",
+	})
+	for _, sess := range s.Sessions {
+		if sess.Command != "gemini" {
+			t.Errorf("Command = %q, want gemini", sess.Command)
+		}
+		return
+	}
+	t.Fatal("no session created")
+}
+
+func TestReduceCreateSession_FallbackToShell(t *testing.T) {
+	s := New()
+	s, _ = Reduce(s, EvEvent{
+		Event:   "create-session",
+		Payload: mustPayload(map[string]string{"project": "test"}),
+		ConnID:  1, ReqID: "r1",
+	})
+	for _, sess := range s.Sessions {
+		if sess.Command != "shell" {
+			t.Errorf("Command = %q, want shell", sess.Command)
+		}
+		return
+	}
+	t.Fatal("no session created")
+}
+
+// === reducePushDriver ===
+
+func TestPushDriverAppendsFrame(t *testing.T) {
+	s := New()
+	id := SessionID("abc")
+	s.Sessions[id] = stubSession(id)
+
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "push-driver",
+		Payload: mustPayload(map[string]string{
+			"session_id": string(id),
+			"project":    "/bar",
+			"command":    "stub",
+		}),
+	})
+	mustOK(t, effs)
+
+	sess := next.Sessions[id]
+	if len(sess.Frames) != 2 {
+		t.Fatalf("frames = %d, want 2", len(sess.Frames))
+	}
+	newFrame := sess.Frames[1]
+	if newFrame.Command != "stub" {
+		t.Errorf("frame.Command = %q, want stub", newFrame.Command)
+	}
+	if newFrame.Project != "/bar" {
+		t.Errorf("frame.Project = %q, want /bar", newFrame.Project)
+	}
+	if newFrame.ID == FrameID(id) {
+		t.Error("new frame should have a different FrameID from the root frame")
+	}
+
+	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	if !ok {
+		t.Fatal("expected EffSpawnTmuxWindow")
+	}
+	if spawn.SessionID != id {
+		t.Errorf("spawn.SessionID = %q, want %q", spawn.SessionID, id)
+	}
+	if spawn.FrameID != newFrame.ID {
+		t.Errorf("spawn.FrameID = %q, want %q", spawn.FrameID, newFrame.ID)
+	}
+	if spawn.Env["ROOST_SESSION_ID"] != string(id) {
+		t.Errorf("env ROOST_SESSION_ID = %q", spawn.Env["ROOST_SESSION_ID"])
+	}
+	if spawn.Env["ROOST_FRAME_ID"] != string(newFrame.ID) {
+		t.Errorf("env ROOST_FRAME_ID = %q", spawn.Env["ROOST_FRAME_ID"])
+	}
+}
+
+func TestPushDriverUnknownSessionErrors(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "push-driver",
+		Payload: mustPayload(map[string]string{"session_id": "ghost", "command": "stub"}),
+	})
+	if _, ok := findEff[EffSendError](effs); !ok {
+		t.Error("expected EffSendError for unknown session")
+	}
+}
+
+// === pushDriverInternal: StartDir inheritance ===
+
+func TestPushDriverInheritsRootStartDir(t *testing.T) {
+	s := New()
+	s.Now = time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
+	// Set up a session with root frame using sdstub (StartDirAware driver)
+	// and pre-set StartDir to /root/dir.
+	rootDS := sdState{startDir: "/root/dir"}
+	sid := SessionID("sess-1")
+	rootFrame := SessionFrame{
+		ID:      FrameID("frame-root"),
+		Project: "/project",
+		Command: "sdstub",
+		Driver:  rootDS,
+	}
+	s.Sessions = map[SessionID]Session{
+		sid: {
+			ID:      sid,
+			Project: "/project",
+			Command: "sdstub",
+			Driver:  rootDS,
+			Frames:  []SessionFrame{rootFrame},
+		},
+	}
+
+	// Push a new sdstub frame (also StartDirAware) — should inherit /root/dir.
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: EventPushDriver,
+		Payload: mustPayload(map[string]string{"session_id": string(sid), "command": "sdstub"}),
+	})
+	mustOK(t, effs)
+	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	if !ok {
+		t.Fatal("expected EffSpawnTmuxWindow")
+	}
+	if spawn.StartDir != "/root/dir" {
+		t.Errorf("spawn.StartDir = %q, want /root/dir", spawn.StartDir)
+	}
+
+	// New frame in state should also have StartDir = /root/dir.
+	sess := next.Sessions[sid]
+	if len(sess.Frames) != 2 {
+		t.Fatalf("frame count = %d, want 2", len(sess.Frames))
+	}
+	newFrame := sess.Frames[1]
+	newDS := newFrame.Driver.(sdState)
+	if newDS.startDir != "/root/dir" {
+		t.Errorf("new frame startDir = %q, want /root/dir", newDS.startDir)
+	}
+}
+
+func TestPushDriverEmptySessionIDErrors(t *testing.T) {
+	s := New()
+	s.Now = time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
+	sid := SessionID("active-sess")
+	s.ActiveSession = sid
+	s.Sessions = map[SessionID]Session{
+		sid: {
+			ID:      sid,
+			Project: "/project",
+			Command: "stub",
+			Driver:  stubDriverState{},
+			Frames: []SessionFrame{{
+				ID:      FrameID("frame-1"),
+				Project: "/project",
+				Command: "stub",
+				Driver:  stubDriverState{},
+			}},
+		},
+	}
+
+	// SessionID empty — must return ErrCodeInvalidArgument regardless of ActiveSession.
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: EventPushDriver,
+		Payload: mustPayload(map[string]string{"command": "stub"}),
+	})
+	errEff, ok := findEff[EffSendError](effs)
+	if !ok {
+		t.Fatal("expected EffSendError for empty session_id")
+	}
+	if errEff.Code != ErrCodeInvalidArgument {
+		t.Errorf("error code = %q, want %q", errEff.Code, ErrCodeInvalidArgument)
+	}
+}
+
+func TestPushDriverMissingSessionIDErrors(t *testing.T) {
+	s := New()
+	// No sessions, no active session, empty SessionID.
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: EventPushDriver,
+		Payload: mustPayload(map[string]string{"command": "stub"}),
+	})
+	errEff, ok := findEff[EffSendError](effs)
+	if !ok {
+		t.Fatal("expected EffSendError for missing session_id")
+	}
+	if errEff.Code != ErrCodeInvalidArgument {
+		t.Errorf("error code = %q, want %q", errEff.Code, ErrCodeInvalidArgument)
+	}
+}
+
+// === PushDriver: stdin propagation ===
+
+// stdinDriver propagates InitialInput to LaunchPlan.Stdin so the runtime
+// can pipe it into the spawned process.
+type stdinDriver struct{ stubDriver }
+
+func (stdinDriver) Name() string { return "stdinstub" }
+func (stdinDriver) PrepareLaunch(s DriverState, mode LaunchMode, project, baseCommand string, options LaunchOptions, _ bool) (LaunchPlan, error) {
+	return LaunchPlan{Command: baseCommand, StartDir: project, Stdin: options.InitialInput}, nil
+}
+
+func init() {
+	if _, exists := driverRegistry["stdinstub"]; !exists {
+		Register(stdinDriver{})
+	}
+}
+
+func TestPushDriverInputPropagatesAsStdin(t *testing.T) {
+	s := New()
+	s.Now = time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
+	sid := SessionID("sess-stdin")
+	s.Sessions = map[SessionID]Session{
+		sid: {
+			ID:      sid,
+			Project: "/project",
+			Command: "stdinstub",
+			Driver:  stubDriverState{},
+			Frames: []SessionFrame{{
+				ID:      FrameID("frame-1"),
+				Project: "/project",
+				Command: "stdinstub",
+				Driver:  stubDriverState{},
+			}},
+		},
+	}
+
+	input := []byte("initial prompt text")
+	params := PushDriverParams{
+		SessionID: string(sid),
+		Command:   "stdinstub",
+		Input:     input,
+	}
+	payload, _ := json.Marshal(params)
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: EventPushDriver,
+		Payload: json.RawMessage(payload),
+	})
+	mustOK(t, effs)
+
+	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	if !ok {
+		t.Fatal("expected EffSpawnTmuxWindow")
+	}
+	if string(spawn.Stdin) != string(input) {
+		t.Errorf("spawn.Stdin = %q, want %q", spawn.Stdin, input)
+	}
+}
+
+func TestPushDriverNilInputProducesNilStdin(t *testing.T) {
+	s := New()
+	s.Now = time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
+	sid := SessionID("sess-no-stdin")
+	s.Sessions = map[SessionID]Session{
+		sid: {
+			ID:      sid,
+			Project: "/project",
+			Command: "stdinstub",
+			Driver:  stubDriverState{},
+			Frames: []SessionFrame{{
+				ID:      FrameID("frame-1"),
+				Project: "/project",
+				Command: "stdinstub",
+				Driver:  stubDriverState{},
+			}},
+		},
+	}
+
+	params := PushDriverParams{SessionID: string(sid), Command: "stdinstub"}
+	payload, _ := json.Marshal(params)
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: EventPushDriver,
+		Payload: json.RawMessage(payload),
+	})
+	mustOK(t, effs)
+
+	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	if !ok {
+		t.Fatal("expected EffSpawnTmuxWindow")
+	}
+	if spawn.Stdin != nil {
+		t.Errorf("spawn.Stdin = %q, want nil", spawn.Stdin)
+	}
+}
+
+// === ActiveOccupant / ensureMainAtVisibleSlot integration ===
+
+// TestSwitchSessionSwapsHiddenWhenLog verifies that switching to a session
+// while the log TUI is visible emits EffSwapHidden before EffActivateSession.
+func TestSwitchSessionSwapsHiddenWhenLog(t *testing.T) {
+	s := New()
+	s.ActiveOccupant = OccupantLog
+	s.Sessions["s1"] = stubSession("s1")
+
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "switch-session",
+		Payload: mustPayload(map[string]string{"session_id": "s1"}),
+	})
+	if next.ActiveOccupant != OccupantFrame {
+		t.Errorf("ActiveOccupant = %q, want frame (set by switch-session)", next.ActiveOccupant)
+	}
+	assertEffectOrder[EffSwapHidden, EffActivateSession](t, effs)
+	mustOK(t, effs)
+}
+
+// TestPreviewSessionSwapsHiddenWhenLog verifies that preview-session while log
+// is visible emits EffSwapHidden before EffActivateSession.
+func TestPreviewSessionSwapsHiddenWhenLog(t *testing.T) {
+	s := New()
+	s.ActiveOccupant = OccupantLog
+	s.Sessions["s1"] = stubSession("s1")
+
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "preview-session",
+		Payload: mustPayload(map[string]string{"session_id": "s1"}),
+	})
+	if next.ActiveOccupant != OccupantFrame {
+		t.Errorf("ActiveOccupant = %q, want frame (set by preview-session)", next.ActiveOccupant)
+	}
+	assertEffectOrder[EffSwapHidden, EffActivateSession](t, effs)
+	mustOK(t, effs)
+}
+
+// TestTmuxPaneSpawnedSwapsHiddenWhenLog verifies that a pane spawn while
+// log is visible emits EffSwapHidden before EffActivateSession.
+func TestTmuxPaneSpawnedSwapsHiddenWhenLog(t *testing.T) {
+	s := New()
+	s.ActiveOccupant = OccupantLog
+	s.Sessions["s1"] = stubSession("s1")
+	frameID := s.Sessions["s1"].Frames[0].ID
+
+	next, effs := Reduce(s, EvTmuxPaneSpawned{
+		SessionID:  "s1",
+		FrameID:    frameID,
+		PaneTarget: "roost:0.1",
+	})
+	if next.ActiveOccupant != OccupantFrame {
+		t.Errorf("ActiveOccupant = %q, want frame (set by pane spawn)", next.ActiveOccupant)
+	}
+	assertEffectOrder[EffSwapHidden, EffActivateSession](t, effs)
+	mustOK(t, effs)
+}
+
+// TestSwitchSessionNoSwapWhenMain verifies that no EffSwapHidden is emitted
+// when main is already at the visible slot.
+func TestSwitchSessionNoSwapWhenMain(t *testing.T) {
+	s := New()
+	s.Sessions["s1"] = stubSession("s1")
+
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "switch-session",
+		Payload: mustPayload(map[string]string{"session_id": "s1"}),
+	})
+	if n := countEff[EffSwapHidden](effs); n != 0 {
+		t.Errorf("EffSwapHidden count = %d, want 0 (main already visible)", n)
+	}
+	mustOK(t, effs)
+}
+
+// TestCreateSession_SandboxOverrideHost verifies that SandboxOverrideHost is
+// preserved in Session.Sandbox so the dispatcher can route to host.
+func TestCreateSession_SandboxOverrideHost(t *testing.T) {
+	s := New()
+	s.SandboxedProject = func(string) bool { return true } // project is sandboxed by config
+	payload, _ := json.Marshal(map[string]any{
+		"project": "/foo",
+		"command": "stub",
+		"sandbox": int(SandboxOverrideHost),
+	})
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: "create-session",
+		Payload: json.RawMessage(payload),
+	})
+	mustOK(t, effs)
+	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	if !ok {
+		t.Fatal("expected EffSpawnTmuxWindow")
+	}
+	if spawn.Sandbox != SandboxOverrideHost {
+		t.Errorf("spawn.Sandbox = %v, want SandboxOverrideHost", spawn.Sandbox)
+	}
+	for _, sess := range next.Sessions {
+		if sess.Sandbox != SandboxOverrideHost {
+			t.Errorf("sess.Sandbox = %v, want SandboxOverrideHost", sess.Sandbox)
+		}
+		return
+	}
+	t.Fatal("no session found")
+}
+
+// TestPushDriver_InheritsSandboxFromSession verifies that a pushed frame inherits
+// the session-level Sandbox and propagates it through EffSpawnTmuxWindow.Sandbox.
+func TestPushDriver_InheritsSandboxFromSession(t *testing.T) {
+	s := New()
+	s.SandboxedProject = func(string) bool { return true }
+
+	// Create session with SandboxOverrideHost.
+	createPayload, _ := json.Marshal(map[string]any{
+		"project": "/foo",
+		"command": "stub",
+		"sandbox": int(SandboxOverrideHost),
+	})
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r1", Event: "create-session",
+		Payload: json.RawMessage(createPayload),
+	})
+	mustOK(t, effs)
+
+	var sessID SessionID
+	for id, sess := range next.Sessions {
+		if sess.Sandbox != SandboxOverrideHost {
+			t.Fatalf("sess.Sandbox = %v, want SandboxOverrideHost", sess.Sandbox)
+		}
+		sessID = id
+		break
+	}
+	if sessID == "" {
+		t.Fatal("no session created")
+	}
+
+	// Push a second driver frame (no sandbox field — auto).
+	pushPayload, _ := json.Marshal(map[string]any{
+		"session_id": string(sessID),
+		"command":    "stub",
+	})
+	_, pushEffs := Reduce(next, EvEvent{
+		ConnID: 2, ReqID: "r2", Event: "push-driver",
+		Payload: json.RawMessage(pushPayload),
+	})
+	mustOK(t, pushEffs)
+	spawn, ok := findEff[EffSpawnTmuxWindow](pushEffs)
+	if !ok {
+		t.Fatal("expected EffSpawnTmuxWindow from push-driver")
+	}
+	if spawn.Sandbox != SandboxOverrideHost {
+		t.Errorf("pushed frame spawn.Sandbox = %v, want SandboxOverrideHost", spawn.Sandbox)
+	}
+}
+
+// === reduceForkSession ===
+
+// forkableState carries the session ID needed by forkableDriver.
+type forkableState struct {
+	DriverStateBase
+	sessionID string
+	startDir  string
+}
+
+// forkableDriver is a minimal StartDirAware + Forkable driver for fork tests.
+type forkableDriver struct{ stubDriver }
+
+func (forkableDriver) Name() string { return "forkable" }
+func (forkableDriver) NewState(now time.Time) DriverState {
+	return forkableState{}
+}
+func (forkableDriver) PrepareLaunch(s DriverState, mode LaunchMode, project, baseCommand string, options LaunchOptions, _ bool) (LaunchPlan, error) {
+	fs, ok := s.(forkableState)
+	dir := project
+	if ok && fs.startDir != "" {
+		dir = fs.startDir
+	}
+	return LaunchPlan{Command: baseCommand, StartDir: dir}, nil
+}
+func (forkableDriver) Persist(s DriverState) map[string]string { return nil }
+func (forkableDriver) Restore(bag map[string]string, now time.Time) DriverState {
+	return forkableState{}
+}
+func (forkableDriver) View(s DriverState) View     { return View{} }
+func (forkableDriver) Status(s DriverState) Status { return StatusIdle }
+func (forkableDriver) Step(prev DriverState, ctx FrameContext, ev DriverEvent) (DriverState, []Effect, View) {
+	return prev, nil, View{}
+}
+func (forkableDriver) StartDir(s DriverState) string {
+	if fs, ok := s.(forkableState); ok {
+		return fs.startDir
+	}
+	return ""
+}
+func (forkableDriver) WithStartDir(s DriverState, dir string) DriverState {
+	fs, ok := s.(forkableState)
+	if !ok {
+		return s
+	}
+	fs.startDir = dir
+	return fs
+}
+func (forkableDriver) ForkCommand(s DriverState, baseCommand string) (string, bool) {
+	fs, ok := s.(forkableState)
+	if !ok || fs.sessionID == "" {
+		return "", false
+	}
+	return baseCommand + " --fork " + fs.sessionID, true
+}
+
+func init() {
+	if _, exists := driverRegistry["forkable"]; !exists {
+		Register(forkableDriver{})
+	}
+}
+
+func forkableSession(id SessionID) Session {
+	ds := forkableState{sessionID: "ext-id-001"}
+	return Session{
+		ID:      id,
+		Project: "/repo",
+		Command: "forkable",
+		Driver:  ds,
+		Frames: []SessionFrame{{
+			ID:      FrameID(id),
+			Project: "/repo",
+			Command: "forkable",
+			Driver:  ds,
+		}},
+	}
+}
+
+func TestForkSessionCreatesNewSession(t *testing.T) {
+	s := New()
+	s.Now = time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
+	id := SessionID("origin")
+	s.Sessions[id] = forkableSession(id)
+
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: EventForkSession,
+		Payload: mustPayload(map[string]string{"session_id": string(id)}),
+	})
+	mustOK(t, effs)
+
+	if len(next.Sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2 (orig + fork)", len(next.Sessions))
+	}
+	// Find the new session (not "origin").
+	var newSess Session
+	for sid, sess := range next.Sessions {
+		if sid != id {
+			newSess = sess
+		}
+	}
+	if newSess.ID == id {
+		t.Fatal("fork session should have a different ID")
+	}
+	if newSess.Project != "/repo" {
+		t.Errorf("fork session Project = %q, want /repo", newSess.Project)
+	}
+	if len(newSess.Frames) != 1 {
+		t.Fatalf("fork session frames = %d, want 1", len(newSess.Frames))
+	}
+	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	if !ok {
+		t.Fatal("expected EffSpawnTmuxWindow")
+	}
+	if spawn.SessionID != newSess.ID {
+		t.Errorf("spawn.SessionID = %q, want %q", spawn.SessionID, newSess.ID)
+	}
+}
+
+func TestForkSessionInheritsStartDir(t *testing.T) {
+	s := New()
+	s.Now = time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
+	id := SessionID("origin")
+	sess := forkableSession(id)
+	// set startDir on root frame state
+	ds := sess.Frames[0].Driver.(forkableState)
+	ds.startDir = "/repo/worktrees/feature"
+	sess.Frames[0].Driver = ds
+	sess.Driver = ds
+	s.Sessions[id] = sess
+
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: EventForkSession,
+		Payload: mustPayload(map[string]string{"session_id": string(id)}),
+	})
+	mustOK(t, effs)
+
+	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	if !ok {
+		t.Fatal("expected EffSpawnTmuxWindow")
+	}
+	if spawn.StartDir != "/repo/worktrees/feature" {
+		t.Errorf("spawn.StartDir = %q, want /repo/worktrees/feature", spawn.StartDir)
+	}
+}
+
+func TestForkSessionUnknownErrors(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: EventForkSession,
+		Payload: mustPayload(map[string]string{"session_id": "ghost"}),
+	})
+	if _, ok := findEff[EffSendError](effs); !ok {
+		t.Error("expected EffSendError for unknown session")
+	}
+}
+
+func TestForkSessionEmptyIDErrors(t *testing.T) {
+	s := New()
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: EventForkSession,
+	})
+	if _, ok := findEff[EffSendError](effs); !ok {
+		t.Error("expected EffSendError for empty session_id")
+	}
+}
+
+func TestForkSessionNonForkableErrors(t *testing.T) {
+	s := New()
+	id := SessionID("nostub")
+	s.Sessions[id] = stubSession(id)
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: EventForkSession,
+		Payload: mustPayload(map[string]string{"session_id": string(id)}),
+	})
+	errEff, ok := findEff[EffSendError](effs)
+	if !ok {
+		t.Fatal("expected EffSendError for non-forkable driver")
+	}
+	if errEff.Code != ErrCodeUnsupported {
+		t.Errorf("code = %q, want %q", errEff.Code, ErrCodeUnsupported)
+	}
+}
+
+func TestForkSessionNoSessionIDErrors(t *testing.T) {
+	s := New()
+	id := SessionID("noextid")
+	// forkableState with empty sessionID → ForkCommand returns false.
+	ds := forkableState{sessionID: ""}
+	s.Sessions[id] = Session{
+		ID: id, Project: "/p", Command: "forkable", Driver: ds,
+		Frames: []SessionFrame{{ID: FrameID(id), Project: "/p", Command: "forkable", Driver: ds}},
+	}
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: EventForkSession,
+		Payload: mustPayload(map[string]string{"session_id": string(id)}),
+	})
+	errEff, ok := findEff[EffSendError](effs)
+	if !ok {
+		t.Fatal("expected EffSendError when ForkCommand returns ok=false")
+	}
+	if errEff.Code != ErrCodeUnsupported {
+		t.Errorf("code = %q, want %q", errEff.Code, ErrCodeUnsupported)
+	}
+}
+
+// TestPushDriver_AutoSandboxSession verifies that Auto sandbox session produces
+// Auto sandbox on pushed frames (project config decides at dispatch time).
+func TestPushDriver_AutoSandboxSession(t *testing.T) {
+	s := New()
+	s.SandboxedProject = func(string) bool { return true }
+
+	createPayload, _ := json.Marshal(map[string]any{
+		"project": "/foo",
+		"command": "stub",
+	})
+	next, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r1", Event: "create-session",
+		Payload: json.RawMessage(createPayload),
+	})
+	mustOK(t, effs)
+
+	var sessID SessionID
+	for id := range next.Sessions {
+		sessID = id
+		break
+	}
+
+	pushPayload, _ := json.Marshal(map[string]any{
+		"session_id": string(sessID),
+		"command":    "stub",
+	})
+	_, pushEffs := Reduce(next, EvEvent{
+		ConnID: 2, ReqID: "r2", Event: "push-driver",
+		Payload: json.RawMessage(pushPayload),
+	})
+	mustOK(t, pushEffs)
+	spawn, ok := findEff[EffSpawnTmuxWindow](pushEffs)
+	if !ok {
+		t.Fatal("expected EffSpawnTmuxWindow from push-driver")
+	}
+	if spawn.Sandbox != SandboxOverrideAuto {
+		t.Errorf("pushed frame spawn.Sandbox = %v, want SandboxOverrideAuto", spawn.Sandbox)
+	}
+}
+
+// TestPushDriverNonRootNoImplicitWorktree verifies that pushing a non-root frame
+// never requests worktree creation unless explicitly asked. The root frame's
+// StartDir must be reused without launching a new git worktree.
+func TestPushDriverNonRootNoImplicitWorktree(t *testing.T) {
+	s := New()
+	s.Now = time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
+	// Root frame with an inherited StartDir (simulates a plain project root
+	// after the first tick backfills StartDir).
+	rootDS := sdState{startDir: "/repo"}
+	sid := SessionID("sess-1")
+	s.Sessions = map[SessionID]Session{
+		sid: {
+			ID:      sid,
+			Project: "/repo",
+			Command: "sdstub",
+			Driver:  rootDS,
+			Frames: []SessionFrame{{
+				ID:      FrameID("frame-root"),
+				Project: "/repo",
+				Command: "sdstub",
+				Driver:  rootDS,
+			}},
+		},
+	}
+
+	// Push a non-root sdstub frame with no worktree request.
+	_, effs := Reduce(s, EvEvent{
+		ConnID: 1, ReqID: "r", Event: EventPushDriver,
+		Payload: mustPayload(map[string]string{"session_id": string(sid), "command": "sdstub"}),
+	})
+	mustOK(t, effs)
+	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	if !ok {
+		t.Fatal("expected EffSpawnTmuxWindow")
+	}
+	if spawn.StartDir != "/repo" {
+		t.Errorf("StartDir = %q, want /repo (inherited from root)", spawn.StartDir)
+	}
+	if spawn.Options.Worktree.Enabled {
+		t.Error("Worktree.Enabled should be false; non-root frame must reuse root's directory, not create a new worktree")
+	}
+}

@@ -1,0 +1,275 @@
+package runtime
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/takezoh/agent-roost/platform/lib/tmux"
+)
+
+// RealTmuxBackend wraps a *tmux.Client into the runtime's TmuxBackend
+// interface. The wrapper is intentionally thin — most methods are
+// one-line passthroughs.
+type RealTmuxBackend struct {
+	client      *tmux.Client
+	sessionName string
+}
+
+// NewRealTmuxBackend constructs a backend bound to the given tmux
+// client + session name. The session name is needed for the few
+// operations that take a session-scoped target string.
+func NewRealTmuxBackend(client *tmux.Client) *RealTmuxBackend {
+	return &RealTmuxBackend{
+		client:      client,
+		sessionName: client.SessionName,
+	}
+}
+
+// SpawnWindow creates a new tmux window for a session and returns
+// the freshly assigned window index (e.g. "1", "2") and pane id.
+func (b *RealTmuxBackend) SpawnWindow(name, command, startDir string, env map[string]string) (string, string, error) {
+	args := []string{"new-window", "-d", "-t", b.sessionName + ":", "-n", name, "-P", "-F", "#{window_index}\t#{pane_id}"}
+	if startDir != "" {
+		args = append(args, "-c", startDir)
+	}
+	for k, v := range env {
+		args = append(args, "-e", k+"="+v)
+	}
+	if command != "" {
+		args = append(args, command)
+	}
+	out, err := b.client.Run(args...)
+	if err != nil {
+		return "", "", err
+	}
+	parts := strings.SplitN(out, "\t", 2)
+	idx := parts[0]
+	paneID := ""
+	if len(parts) == 2 {
+		paneID = parts[1]
+	}
+	// Keep the dead pane so #{pane_dead_status} stays readable after the
+	// command exits. The runtime decides whether to evict (exit 0) or
+	// keep the frame as stopped (exit != 0) and closes the window via
+	// KillPaneWindow when eviction wins.
+	if err := b.client.SetOption(b.sessionName+":"+idx, "remain-on-exit", "on"); err != nil {
+		return idx, paneID, err
+	}
+	return idx, paneID, nil
+}
+
+func (b *RealTmuxBackend) KillPaneWindow(target string) error {
+	if err := guardNotMainWindow(target, b.client.DisplayMessage); err != nil {
+		return err
+	}
+	windowID, err := b.client.DisplayMessage(target, "#{window_id}")
+	if err != nil {
+		return err
+	}
+	_, err = b.client.Run("kill-window", "-t", windowID)
+	return err
+}
+
+// guardNotMainWindow returns an error if target is in tmux window index 0.
+// roost invariant: window index 0 is the main layout (0.0/0.1/0.2) and must
+// never be destroyed except during daemon shutdown.
+func guardNotMainWindow(target string, displayFn func(string, string) (string, error)) error {
+	windowIdx, err := displayFn(target, "#{window_index}")
+	if err != nil {
+		return err
+	}
+	if windowIdx == "0" {
+		slog.Error("runtime: refusing to kill main window (index 0)", "target", target)
+		return fmt.Errorf("kill-pane-window: refusing to destroy main window (index 0)")
+	}
+	return nil
+}
+
+func (b *RealTmuxBackend) RunChain(ops ...[]string) error {
+	return b.client.RunChain(ops...)
+}
+
+func (b *RealTmuxBackend) SwapPane(srcPane, dstPane string) error {
+	return b.client.SwapPane(srcPane, dstPane)
+}
+
+func (b *RealTmuxBackend) BreakPane(srcPane, dstWindow string) error {
+	target := ""
+	if dstWindow != "" {
+		target = b.sessionName + ":" + dstWindow
+	}
+	return b.client.BreakPane(srcPane, target)
+}
+
+func (b *RealTmuxBackend) BreakPaneToNewWindow(srcPane, name string) (string, error) {
+	return b.client.BreakPaneToNewWindow(srcPane, name)
+}
+
+func (b *RealTmuxBackend) JoinPane(srcPane, dstPane string, before bool, sizePct int) error {
+	return b.client.JoinPane(srcPane, dstPane, before, sizePct)
+}
+
+func (b *RealTmuxBackend) PaneID(target string) (string, error) {
+	return b.client.DisplayMessage(target, "#{pane_id}")
+}
+
+func (b *RealTmuxBackend) PaneSize(target string) (int, int, error) {
+	out, err := b.client.DisplayMessage(target, "#{pane_width}\t#{pane_height}")
+	if err != nil {
+		return 0, 0, err
+	}
+	parts := strings.SplitN(out, "\t", 2)
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("unexpected pane size output: %q", out)
+	}
+	width, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	height, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	return width, height, nil
+}
+
+func (b *RealTmuxBackend) SelectPane(target string) error {
+	_, err := b.client.Run("select-pane", "-t", target)
+	return err
+}
+
+func (b *RealTmuxBackend) ResizeWindow(target string, width, height int) error {
+	args := []string{"resize-window", "-t", target}
+	if width > 0 {
+		args = append(args, "-x", strconv.Itoa(width))
+	}
+	if height > 0 {
+		args = append(args, "-y", strconv.Itoa(height))
+	}
+	_, err := b.client.Run(args...)
+	return err
+}
+
+func (b *RealTmuxBackend) SetStatusLine(line string) error {
+	left := " "
+	if line != "" {
+		left += line + " "
+	}
+	return b.client.SetOption(b.sessionName, "status-left", left)
+}
+
+func (b *RealTmuxBackend) SetEnv(key, value string) error {
+	return b.client.SetEnv(key, value)
+}
+
+func (b *RealTmuxBackend) UnsetEnv(key string) error {
+	_, err := b.client.Run("set-environment", "-t", b.sessionName, "-u", key)
+	return err
+}
+
+func (b *RealTmuxBackend) PaneAlive(target string) (bool, error) {
+	out, err := b.client.Run("display-message", "-t", target, "-p", "#{pane_dead}")
+	if err != nil {
+		return false, err
+	}
+	return out != "1", nil
+}
+
+func (b *RealTmuxBackend) PaneExitStatus(target string) (bool, int, error) {
+	out, err := b.client.Run("display-message", "-t", target, "-p", "#{pane_dead}|#{pane_dead_status}")
+	if err != nil {
+		return false, -1, err
+	}
+	parts := strings.SplitN(strings.TrimSpace(out), "|", 2)
+	if len(parts) < 1 || parts[0] != "1" {
+		return false, -1, nil
+	}
+	if len(parts) < 2 || parts[1] == "" {
+		return true, -1, nil
+	}
+	code, convErr := strconv.Atoi(parts[1])
+	if convErr != nil {
+		return true, -1, nil
+	}
+	return true, code, nil
+}
+
+func (b *RealTmuxBackend) RespawnPane(target, command string) error {
+	_, err := b.client.Run("respawn-pane", "-k", "-t", target, command)
+	return err
+}
+
+func (b *RealTmuxBackend) CapturePane(paneTarget string, nLines int) (string, error) {
+	return b.client.Run("capture-pane", "-p", "-t", paneTarget, "-S", fmt.Sprintf("-%d", nLines))
+}
+
+// ShowEnvironment returns the raw tmux show-environment output for the
+// session, used by LoadSessionPanes to reconstruct the ROOST_SESSION_* entries.
+func (b *RealTmuxBackend) ShowEnvironment() (string, error) {
+	return b.client.Run("show-environment", "-t", b.sessionName)
+}
+
+func (b *RealTmuxBackend) DetachClient() error {
+	return b.client.DetachClient()
+}
+
+func (b *RealTmuxBackend) KillSession() error {
+	return b.client.KillSession()
+}
+
+func (b *RealTmuxBackend) DisplayPopup(width, height, cmd string) error {
+	if width == "" {
+		width = "60%"
+	}
+	if height == "" {
+		height = "50%"
+	}
+	c := exec.Command("tmux", "display-popup", "-E", "-w", width, "-h", height, cmd)
+	return c.Start() // fire-and-forget — popup runs independently
+}
+
+func (b *RealTmuxBackend) PipePane(paneTarget, command string) error {
+	return b.client.PipePane(paneTarget, command)
+}
+
+func (b *RealTmuxBackend) SendKeys(paneTarget, text string) error {
+	return b.client.SendKeys(paneTarget, text)
+}
+
+func (b *RealTmuxBackend) SendKey(paneTarget, key string) error {
+	_, err := b.client.Run("send-keys", "-t", paneTarget, key)
+	return err
+}
+
+func (b *RealTmuxBackend) LoadBuffer(name, text string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "load-buffer", "-b", name, "-")
+	cmd.Stdin = strings.NewReader(text)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("tmux load-buffer: %w: %s", err, stderr.String())
+	}
+	return nil
+}
+
+func (b *RealTmuxBackend) PasteBuffer(name, target string) error {
+	_, err := b.client.Run("paste-buffer", "-d", "-b", name, "-t", target)
+	return err
+}
+
+func (b *RealTmuxBackend) SendEnter(target string) error {
+	_, err := b.client.Run("send-keys", "-t", target, "Enter")
+	return err
+}
+
+// Underlying returns the wrapped *tmux.Client. Used by main during
+// startup for the operations that aren't part of TmuxBackend
+// (Attach, CreateSession, SetOption on session-scoped keys).
+func (b *RealTmuxBackend) Underlying() *tmux.Client { return b.client }

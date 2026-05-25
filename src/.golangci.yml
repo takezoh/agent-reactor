@@ -36,99 +36,127 @@ linters:
       forbid-default-patterns: false
       patterns:
         - pattern: 'sync\.Mutex'
-          msg: "prefer lock-free ownership model; if this is a leaf I/O component, add nolint:forbidigo with a reason"
+          pkg: github\.com/takezoh/agent-roost/client/state
+          msg: "state/ is a pure functional core — no mutexes allowed"
         - pattern: 'sync\.RWMutex'
-          msg: "prefer lock-free ownership model; if this is a single-writer registry, put it in a sub-package (e.g. framereg)"
-        - pattern: 'sync\.Map'
-          msg: "sync.Map is banned; use plain maps owned by one goroutine or a dedicated registry sub-package"
-      # NOTE: forbidigo matches CallExpr nodes only — it cannot catch type declarations
-      # or struct field types (var mu sync.Mutex / struct{ mu sync.Mutex }). These are
-      # caught at code review time. The patterns above fire on incorrect *uses* such as
-      # mu.Lock() / mu.Unlock() calls (still useful as a secondary signal), not on
-      # declarations. The structural enforcement (off-loop goroutines hold spawnDeps not
-      # *Runtime) is the primary guard — see ARCHITECTURE.md "Single event loop" principle.
+          pkg: github\.com/takezoh/agent-roost/client/state
+          msg: "state/ is a pure functional core — no mutexes allowed"
+        - pattern: 'sync\.Mutex'
+          pkg: github\.com/takezoh/agent-roost/orchestrator/scheduler
+          msg: "scheduler/ is a pure functional core — no mutexes allowed (concurrency lives in the shell loop)"
+        - pattern: 'sync\.RWMutex'
+          pkg: github\.com/takezoh/agent-roost/orchestrator/scheduler
+          msg: "scheduler/ is a pure functional core — no mutexes allowed (concurrency lives in the shell loop)"
+      # NOTE: "go" keyword (goroutines) cannot be detected by forbidigo because it matches
+      # CallExpr nodes only; GoStmt is invisible to it. The "no goroutines in state/" rule
+      # is enforced by code review. A custom staticcheck analyzer would be needed to automate it.
 
     depguard:
       rules:
+        platform-no-client-or-orchestrator:
+          files:
+            - "**/platform/**"
+          deny:
+            - pkg: github.com/takezoh/agent-roost/client
+              desc: "platform/ must not import client/ (platform is shared base — see plans/02-layout.md)"
+            - pkg: github.com/takezoh/agent-roost/orchestrator
+              desc: "platform/ must not import orchestrator/ (platform is shared base — see plans/02-layout.md)"
+        client-no-orchestrator:
+          files:
+            - "**/client/**"
+          deny:
+            - pkg: github.com/takezoh/agent-roost/orchestrator
+              desc: "client/ must not import orchestrator/ (see plans/02-layout.md)"
         state-pure-core:
           files:
-            - "**/state/**"
+            - "**/client/state/**"
           deny:
-            - pkg: github.com/takezoh/agent-roost/driver
+            - pkg: github.com/takezoh/agent-roost/client/driver
               desc: "state/ must not import driver (pure functional core)"
-            - pkg: github.com/takezoh/agent-roost/connector
+            - pkg: github.com/takezoh/agent-roost/client/connector
               desc: "state/ must not import connector (pure functional core)"
-            - pkg: github.com/takezoh/agent-roost/lib
+            - pkg: github.com/takezoh/agent-roost/platform/lib
               desc: "state/ must not import lib (pure functional core)"
-            - pkg: github.com/takezoh/agent-roost/runtime
+            - pkg: github.com/takezoh/agent-roost/client/runtime
               desc: "state/ must not import runtime (pure functional core)"
-            - pkg: github.com/takezoh/agent-roost/tui
+            - pkg: github.com/takezoh/agent-roost/client/tui
               desc: "state/ must not import tui (pure functional core)"
-            - pkg: github.com/takezoh/agent-roost/proto
+            - pkg: github.com/takezoh/agent-roost/client/proto
               desc: "state/ must not import proto (pure functional core)"
         tui-no-driver-connector-lib:
           files:
-            - "**/tui/**"
+            - "**/client/tui/**"
           deny:
-            - pkg: github.com/takezoh/agent-roost/driver
+            - pkg: github.com/takezoh/agent-roost/client/driver
               desc: "tui/ must not import driver (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-roost/connector
+            - pkg: github.com/takezoh/agent-roost/client/connector
               desc: "tui/ must not import connector (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-roost/lib
+            - pkg: github.com/takezoh/agent-roost/platform/lib
               desc: "tui/ must not import lib (see ARCHITECTURE.md)"
         worker-no-driver-connector-lib:
           files:
-            - "**/runtime/worker/**"
+            - "**/client/runtime/worker/**"
           deny:
-            - pkg: github.com/takezoh/agent-roost/driver
+            - pkg: github.com/takezoh/agent-roost/client/driver
               desc: "runtime/worker must not import driver (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-roost/connector
+            - pkg: github.com/takezoh/agent-roost/client/connector
               desc: "runtime/worker must not import connector (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-roost/lib
+            - pkg: github.com/takezoh/agent-roost/platform/lib
               desc: "runtime/worker must not import lib (see ARCHITECTURE.md)"
         sandbox-tool-agnostic:
           files:
-            - "**/sandbox/**"
+            - "**/platform/sandbox/**"
           deny:
-            - pkg: github.com/takezoh/agent-roost/driver
+            - pkg: github.com/takezoh/agent-roost/client/driver
               desc: "sandbox/ must be tool-agnostic — no driver/ imports (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-roost/connector
+            - pkg: github.com/takezoh/agent-roost/client/connector
               desc: "sandbox/ must be tool-agnostic — no connector/ imports (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-roost/lib
+            - pkg: github.com/takezoh/agent-roost/platform/lib
               desc: "sandbox/ must be tool-agnostic — no lib/ imports (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-roost/runtime
+            - pkg: github.com/takezoh/agent-roost/client/runtime
               desc: "sandbox/ must be tool-agnostic — no runtime/ imports (see ARCHITECTURE.md)"
         proto-isolation:
           files:
-            - "**/proto/**"
+            - "**/client/proto/**"
           deny:
-            - pkg: github.com/takezoh/agent-roost/driver
+            - pkg: github.com/takezoh/agent-roost/client/driver
               desc: "proto/ must not import driver (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-roost/connector
+            - pkg: github.com/takezoh/agent-roost/client/connector
               desc: "proto/ must not import connector (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-roost/lib
+            - pkg: github.com/takezoh/agent-roost/platform/lib
               desc: "proto/ must not import lib (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-roost/runtime
+            - pkg: github.com/takezoh/agent-roost/client/runtime
               desc: "proto/ must not import runtime (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-roost/tui
+            - pkg: github.com/takezoh/agent-roost/client/tui
               desc: "proto/ must not import tui (see ARCHITECTURE.md)"
         runtime-no-driver:
           # runtime/ root must not import driver/ (tool-specific) — subsystem-specific code lives in runtime/subsystem/<kind>/
           # Exceptions handled in exclusions.rules: driver/vt (VT emulator) is generic; test files are exempt.
           files:
-            - "**/runtime/*.go"
+            - "**/client/runtime/*.go"
             - "!**/*_test.go"
           deny:
-            - pkg: github.com/takezoh/agent-roost/driver
+            - pkg: github.com/takezoh/agent-roost/client/driver
               desc: "runtime/ root must not import driver/. Move tool-specific backend code to runtime/subsystem/<kind>/ (see ARCHITECTURE.md Driver/Connector/Subsystem isolation)"
         subsystem-isolation:
           files:
-            - "**/runtime/subsystem/**"
+            - "**/client/runtime/subsystem/**"
           deny:
-            - pkg: github.com/takezoh/agent-roost/tui
+            - pkg: github.com/takezoh/agent-roost/client/tui
               desc: "runtime/subsystem/ must not import tui (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-roost/connector
+            - pkg: github.com/takezoh/agent-roost/client/connector
               desc: "runtime/subsystem/ must not import connector (see ARCHITECTURE.md)"
+        codexclient-isolation:
+          # codexclient is a reusable platform transport — it must not reach into
+          # client/ or orchestrator/.  codexschema and logger are the only
+          # agent-roost packages it may import.
+          files:
+            - "**/platform/agent/codexclient/**"
+          deny:
+            - pkg: github.com/takezoh/agent-roost/client
+              desc: "codexclient/ must not import client/ (reusable platform layer — see plans/02-layout.md)"
+            - pkg: github.com/takezoh/agent-roost/orchestrator
+              desc: "codexclient/ must not import orchestrator/ (reusable platform layer — see plans/02-layout.md)"
 
     revive:
       rules:
@@ -148,7 +176,7 @@ linters:
       # Forced extraction of dispatch arms produces single-use helpers that fragment the
       # state machine without adding clarity.
       - linters: [funlen]
-        path: "state/reduce_.*\\.go$"
+        path: "client/state/reduce_.*\\.go$"
       - linters: [errcheck]
         path: "_test\\.go$"
       # Deferred close is idiomatic — errors are unrecoverable at that point
@@ -160,13 +188,12 @@ linters:
       # hugeParam false positives on value-type receiver structs (by design)
       - linters: [gocritic]
         text: "hugeParam:"
-      # CLI command handlers in lib/*/command.go intentionally print to stdout
+      # CLI command handlers in platform/lib/*/command.go intentionally print to stdout
       - linters: [forbidigo]
-        path: "lib/.+/command\\.go$"
-      # driver/vt is a generic VT terminal emulator sub-package, not a tool-specific driver
+        path: "platform/lib/.+/command\\.go$"
+      # client/driver/vt is a generic VT terminal emulator sub-package, not a tool-specific driver
       - linters: [depguard]
-        text: "driver/vt.*is not allowed from list 'runtime-no-driver'"
-
+        text: "client/driver/vt.*is not allowed from list 'runtime-no-driver'"
 formatters:
   enable:
     - gofmt
