@@ -43,8 +43,9 @@ roost client runtime（session manager）の issue。Symphony SPEC 範囲外で 
 | ID | タイトル | Status | 概要 |
 |---|---|---|---|
 | [027](027-client-spawn-complete-resurrection.md) | spawn-complete が kill 済み frame を resurrect | Open | spawn 実行中に session 削除 → kill 先行（空 map）→ 後着 handleSpawnComplete が死んだ frame を登録し subsystem/container/endpoint/warm を leak |
-| [028](028-client-container-endpoint-registration-ordering.md) | container endpoint/token が agent spawn 後に登録 | Resolved | 早期 hook 取りこぼしで container frame の status/要約/タグが出ない実害。`event.DeliverHookEvent` の bounded retry で解決 |
 | [029](029-client-warm-restart-registry-correctness.md) | warm-restart の registry 整合性 | Open | warm 復元で token 先行登録・mounts 後追いの窓（path 変換漏れ）。warm Save/Delete 競合・token 衝突非検出も併記 |
+
+028（container endpoint/token が agent spawn 後に登録 → 早期 hook 取りこぼし）は解決済みで archive へ移動（下記）。
 
 ## 完了済み (archive)
 
@@ -58,6 +59,7 @@ roost client runtime（session manager）の issue。Symphony SPEC 範囲外で 
 - **M2 / P5 batch** (claude-app-server shim): [017](.archive/017-p5a-claude-streamjson.md) stream-json reader / [018](.archive/018-p5b-claude-app-server.md) shim 本体 / [019](.archive/019-p5c-agent-switch-conformance.md) usage+posture+agent 切替
 - **M3 / P6–P8a batch** (機能完成): [020](.archive/020-p6a-continuation-loop.md) continuation loop / [021](.archive/021-p6b-metrics.md) metrics+stall / [022](.archive/022-p7-http-server.md) HTTP server / [023](.archive/023-p8a-hot-reload.md) hot reload
 - **M4 / P9 batch** (conformance + docs): [025](.archive/025-p9a-conformance-suite.md) SPEC §17 conformance 群 + 対応表 / [026](.archive/026-p9b-positioning-docs.md) orchestrator 位置付け doc
+- **client-runtime follow-up** (single-writer port 由来): [028](.archive/028-client-container-endpoint-registration-ordering.md) container hook 配送の bounded retry — container frame の status/要約/タグ + claude resume を復旧（fix aa1da86）
 
 詳細は [plans/04-phases.md](../plans/04-phases.md) / [plans/roadmap.md](../plans/roadmap.md) を参照。
 

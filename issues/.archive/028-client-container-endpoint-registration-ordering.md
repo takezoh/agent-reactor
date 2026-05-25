@@ -1,7 +1,7 @@
 # 028: client/runtime — container endpoint/token registered after agent spawn (early-hook loss window)
 
 - **Phase**: client-runtime follow-up（single-writer port 由来。Symphony SPEC 範囲外）
-- **Status**: Resolved — container 側 hook 送信に bounded retry を実装（`event.DeliverHookEvent`）。daemon 側の register-after-spawn 順序は据え置きだが、retry が窓を吸収するため correctness 影響は解消。daemon 側順序の tightening は任意の follow-up
+- **Status**: Done（fix `aa1da86`、archived）— container 側 hook 送信に bounded retry を実装（`event.DeliverHookEvent`）。daemon 側の register-after-spawn 順序は据え置きだが、retry が窓を吸収するため correctness 影響は解消。daemon 側順序の tightening は任意の follow-up
 - **Depends on**: orchestrator-migration → main マージ（single-writer port）
 - **Blocks**: なし
 
