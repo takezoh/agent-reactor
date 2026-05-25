@@ -14,10 +14,23 @@ src/claude-app-server
 !src/orchestrator/
 notify.ps1
 roost.log
-.codex
-.claude/worktrees/
-.claude/settings.local.json
 .roost/worktrees/
 .roost/settings.toml
 go.work
 go.work.sum
+
+# Local tooling / editor / shell / agent configuration — not project-shared.
+.claude/
+.codex
+.playwright-mcp/
+.mcp.json
+mise.toml
+.idea
+.vscode
+.bash_profile
+.bashrc
+.profile
+.zprofile
+.zshrc
+.gitconfig
+.ripgreprc
