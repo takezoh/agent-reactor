@@ -23,7 +23,7 @@ func TestSPEC_17_1_LastKnownGoodOnInvalidReload(t *testing.T) {
 	defer cancel()
 
 	// Write invalid config (missing project_slug fails Preflight).
-	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slug: test-proj\n", ""))
+	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slugs: [test-proj]\n", ""))
 	s.tick(ctx)
 
 	if spawn.callCount() != 0 {

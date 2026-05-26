@@ -37,17 +37,17 @@ func (f *fakeAdapter) FetchIssueStatesByIDs(_ context.Context, issueIDs []string
 type fakeFactoryResult struct {
 	endpoint     string
 	apiKey       string
-	projectSlug  string
+	projectSlugs []string
 	activeStates []string
 	adapter      *fakeAdapter
 }
 
 func newFakeFactory(stub *fakeAdapter) (adapterFactory, *fakeFactoryResult) {
 	result := &fakeFactoryResult{adapter: stub}
-	factory := func(ep, key, slug string, active []string) ptracker.Adapter {
+	factory := func(ep, key string, slugs []string, active []string) ptracker.Adapter {
 		result.endpoint = ep
 		result.apiKey = key
-		result.projectSlug = slug
+		result.projectSlugs = append([]string(nil), slugs...)
 		result.activeStates = append([]string(nil), active...)
 		return stub
 	}
@@ -60,7 +60,7 @@ func validCfg() wfconfig.Config {
 			Kind:           "linear",
 			Endpoint:       "https://api.linear.app/graphql",
 			APIKey:         "lin_api_key",
-			ProjectSlug:    "my-project",
+			ProjectSlugs:   []string{"my-project"},
 			ActiveStates:   []string{"Todo", "In Progress"},
 			TerminalStates: []string{"Done", "Cancelled"},
 		},
@@ -87,7 +87,7 @@ func TestNew_MissingAPIKey(t *testing.T) {
 
 func TestNew_MissingProjectSlug(t *testing.T) {
 	cfg := validCfg()
-	cfg.Tracker.ProjectSlug = ""
+	cfg.Tracker.ProjectSlugs = nil
 	_, err := New(cfg)
 	if !errors.Is(err, ptracker.ErrMissingTrackerProjectSlug) {
 		t.Fatalf("want ErrMissingTrackerProjectSlug, got %v", err)
@@ -110,8 +110,13 @@ func TestNew_PassesConstructionArgsToFactory(t *testing.T) {
 	if result.apiKey != cfg.Tracker.APIKey {
 		t.Errorf("apiKey: want %q, got %q", cfg.Tracker.APIKey, result.apiKey)
 	}
-	if result.projectSlug != cfg.Tracker.ProjectSlug {
-		t.Errorf("projectSlug: want %q, got %q", cfg.Tracker.ProjectSlug, result.projectSlug)
+	if len(result.projectSlugs) != len(cfg.Tracker.ProjectSlugs) {
+		t.Fatalf("projectSlugs len: want %d, got %d", len(cfg.Tracker.ProjectSlugs), len(result.projectSlugs))
+	}
+	for i, s := range cfg.Tracker.ProjectSlugs {
+		if result.projectSlugs[i] != s {
+			t.Errorf("projectSlugs[%d]: want %q, got %q", i, s, result.projectSlugs[i])
+		}
 	}
 	if len(result.activeStates) != len(cfg.Tracker.ActiveStates) {
 		t.Fatalf("activeStates len: want %d, got %d", len(cfg.Tracker.ActiveStates), len(result.activeStates))

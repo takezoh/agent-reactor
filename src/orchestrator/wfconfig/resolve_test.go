@@ -242,6 +242,28 @@ func TestResolve_CoerceFailure_ReturnsCoerceErr(t *testing.T) {
 	}
 }
 
+func TestResolve_ProjectSlugs_DecodedAsSlice(t *testing.T) {
+	raw := map[string]any{
+		"tracker": map[string]any{
+			"kind":          "linear",
+			"project_slugs": []any{"proj-a", "proj-b"},
+		},
+	}
+	cfg, err := Resolve(raw, t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"proj-a", "proj-b"}
+	if len(cfg.Tracker.ProjectSlugs) != len(want) {
+		t.Fatalf("ProjectSlugs = %v, want %v", cfg.Tracker.ProjectSlugs, want)
+	}
+	for i, s := range want {
+		if cfg.Tracker.ProjectSlugs[i] != s {
+			t.Errorf("ProjectSlugs[%d] = %q, want %q", i, cfg.Tracker.ProjectSlugs[i], s)
+		}
+	}
+}
+
 func TestResolve_UnknownKeysIgnored(t *testing.T) {
 	raw := map[string]any{
 		"extra":   1,

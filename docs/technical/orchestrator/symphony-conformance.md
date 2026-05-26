@@ -49,8 +49,9 @@ Naming convention: `TestSPEC_<section>_<short_name>` (see `plans/.archive/sympho
 
 | Check | Test |
 |---|---|
-| Candidate issue fetch uses active states and project slug | `TestSPEC_17_3_CandidateFetchUsesActiveStates` (`platform/tracker/linear`) |
-| Linear query uses slugId project filter field | `TestSPEC_17_3_LinearProjectFilterUsesSlugId` |
+| Candidate issue fetch uses active states and project slugs | `TestSPEC_17_3_CandidateFetchUsesActiveStates` (`platform/tracker/linear`) |
+| Linear query uses slugId project filter field (`in` over the slug array) | `TestSPEC_17_3_LinearProjectFilterUsesSlugId` |
+| Issue project name/content normalized for per-project config | `TestLinearProjectFieldNormalized` |
 | Empty `fetch_issues_by_states([])` returns empty without API call | `TestSPEC_17_3_FetchIssuesByStates_EmptyStates_NoAPICall` |
 | Pagination preserves order across multiple pages | `TestSPEC_17_3_PaginationPreservesOrder` |
 | Blockers normalized from inverse relations of type `blocks` | `TestSPEC_17_3_BlockedByFromBlocksInverseRelation` |
@@ -156,7 +157,7 @@ The complete list is in `plans/.archive/symphony-orchestrator/05-conformance.md`
 
 - **§4.2**: session_id = `<thread_id>-<turn_id>`; workspace key sanitize regex `[A-Za-z0-9._-]`
 - **§8.4**: continuation retry is fixed 1s; failure retry is `min(10000×2^(n-1), max)` ms
-- **§11.2**: Linear slugId filter, ID type `[ID!]`, pagination 50/page, timeout 30s
+- **§11.2**: Linear slugId filter (`in` over `tracker.project_slugs`), ID type `[ID!]`, pagination 50/page, timeout 30s
 - **§11.3**: labels lowercase; blockers from inverse of `blocks`; priority int-only; ISO-8601
 - **§13.5**: absolute thread totals preferred; delta fallback prohibited
 - **§15.3**: secrets such as `tracker.api_key` must never appear in logs (existence check only)
@@ -176,6 +177,8 @@ The complete list is in `plans/.archive/symphony-orchestrator/05-conformance.md`
 | §9.3 | workspace population is impl-defined | `after_create` hook strongly recommended to run `git worktree add` |
 | §15.5 | harness hardening is documentation-only | devcontainer + credproxy + mcpproxy are default |
 | §18.2 | persistence / tracker write / pluggable tracker | not implemented (maintaining SPEC §14.3 in-memory design) |
+| §11.2 | single project slugId (`eq`) | `tracker.project_slugs` is an array; filter uses `slugId: { in: [...] }` to span multiple projects |
+| §5.3.1 / §11.2 | tracker config is the only per-run config | per-project config read from each Linear project's `content` (front matter `branch` + additional prompt body), exposed as `{{ project.* }}` and `ROOST_PROJECT_BRANCH` |
 
 ---
 

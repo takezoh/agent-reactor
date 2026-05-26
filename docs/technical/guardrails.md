@@ -109,7 +109,7 @@ Reconcile (`scheduler`, SPEC §7/§16) bounds how long an agent may run and how 
 ## 6. Behavioral steering & pre-run validation
 
 - **Driving prompt**: what the agent is actually told to do comes from the `WORKFLOW.md` body, rendered per-issue by `orchestrator/prompt/`. Authoring guidance is in [WORKFLOW.md authoring](../agent/workflow-authoring.md). This is the first-order guardrail — it scopes the agent's task.
-- **Preflight**: before *any* agent is dispatched, `scheduler.Preflight` (`orchestrator/scheduler/preflight.go:21`) validates the run is operable (`tracker.kind` supported, `api_key` / `project_slug` present, `codex.command` set). Invalid config gates the whole run, so a misconfigured orchestrator never launches agents at all.
+- **Preflight**: before *any* agent is dispatched, `scheduler.Preflight` (`orchestrator/scheduler/preflight.go:21`) validates the run is operable (`tracker.kind` supported, `api_key` / `project_slugs` present, `codex.command` set). Invalid config gates the whole run, so a misconfigured orchestrator never launches agents at all.
 
 ## Config quick reference
 

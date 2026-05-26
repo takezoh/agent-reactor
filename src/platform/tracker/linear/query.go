@@ -6,16 +6,17 @@ const nodeFields = `
       id identifier title description priority url branchName
       state { name }
       labels { nodes { name } }
+      project { name content }
       inverseRelations { nodes { type issue { id identifier state { name } } } }
       createdAt updatedAt`
 
-// projectStateQuery fetches issues filtered by project slug and state names.
+// projectStateQuery fetches issues filtered by project slugs and state names.
 // Used for both FetchCandidateIssues (active states) and FetchIssuesByStates.
 const projectStateQuery = `
-query($slug: String!, $states: [String!]!, $after: String) {
+query($slugs: [String!]!, $states: [String!]!, $after: String) {
   issues(
     filter: {
-      project: { slugId: { eq: $slug } }
+      project: { slugId: { in: $slugs } }
       state: { name: { in: $states } }
     }
     first: 50
@@ -42,8 +43,8 @@ query($ids: [ID!], $after: String) {
   }
 }`
 
-func projectStateVars(slug string, states []string, after string) map[string]any {
-	m := map[string]any{"slug": slug, "states": states}
+func projectStateVars(slugs []string, states []string, after string) map[string]any {
+	m := map[string]any{"slugs": slugs, "states": states}
 	if after != "" {
 		m["after"] = after
 	}
@@ -77,6 +78,11 @@ type rawLabelConn struct {
 	Nodes []rawLabel `json:"nodes"`
 }
 
+type rawProject struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
 type rawIssueRef struct {
 	ID         string   `json:"id"`
 	Identifier string   `json:"identifier"`
@@ -102,6 +108,7 @@ type rawNode struct {
 	BranchName       string       `json:"branchName"`
 	State            rawState     `json:"state"`
 	Labels           rawLabelConn `json:"labels"`
+	Project          rawProject   `json:"project"`
 	InverseRelations rawRelConn   `json:"inverseRelations"`
 	CreatedAt        string       `json:"createdAt"`
 	UpdatedAt        string       `json:"updatedAt"`

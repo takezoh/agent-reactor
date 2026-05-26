@@ -28,8 +28,8 @@ func Preflight(cfg wfconfig.Config) error {
 	if cfg.Tracker.APIKey == "" {
 		return fmt.Errorf("%w: tracker.api_key is required", ErrPreflight)
 	}
-	if cfg.Tracker.Kind == "linear" && cfg.Tracker.ProjectSlug == "" {
-		return fmt.Errorf("%w: tracker.project_slug is required for kind=linear", ErrPreflight)
+	if cfg.Tracker.Kind == "linear" && len(cfg.Tracker.ProjectSlugs) == 0 {
+		return fmt.Errorf("%w: tracker.project_slugs is required for kind=linear", ErrPreflight)
 	}
 	if cfg.Codex.Command == "" {
 		return fmt.Errorf("%w: codex.command is required", ErrPreflight)

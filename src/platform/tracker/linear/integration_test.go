@@ -52,7 +52,7 @@ func TestSPEC_17_8_RealLinearFetchCandidates(t *testing.T) {
 		activeStates = []string{"Todo", "In Progress"}
 	}
 
-	c := linear.New(endpoint, apiKey, projectSlug, activeStates)
+	c := linear.New(endpoint, apiKey, []string{projectSlug}, activeStates)
 	ctx := context.Background()
 
 	// Operation 1: fetch_candidate_issues — reads issues in active states.

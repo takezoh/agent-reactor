@@ -31,21 +31,24 @@ type launchResult struct {
 
 // workerParams bundles the per-session state for the multi-turn loop goroutine.
 type workerParams struct {
-	issue        tracker.Issue
-	attempt      int
-	conn         *codexclient.Conn
-	startDir     string
-	ids          sessionIDs
-	sessionReady <-chan sessionIDs
-	turnDone     <-chan turnResult
-	doneCh       <-chan struct{}
-	cancel       context.CancelFunc
-	worker       *Worker
-	emit         func(Event)
+	issue         tracker.Issue
+	attempt       int
+	projectBranch string
+	conn          *codexclient.Conn
+	startDir      string
+	ids           sessionIDs
+	sessionReady  <-chan sessionIDs
+	turnDone      <-chan turnResult
+	doneCh        <-chan struct{}
+	cancel        context.CancelFunc
+	worker        *Worker
+	emit          func(Event)
 }
 
 func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int, emit func(Event)) (scheduler.SpawnResult, error) {
-	wsPath, err := r.ensureWorkspace(ctx, issue.Identifier)
+	meta := resolveProjectMeta(issue.Project)
+
+	wsPath, err := r.ensureWorkspace(ctx, issue.Identifier, meta.Branch)
 	if err != nil {
 		return scheduler.SpawnResult{}, err
 	}
@@ -54,15 +57,15 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 	committed := false
 	defer func() {
 		if !committed {
-			r.Workspace.AfterRun(ctx, issue.Identifier)
+			r.Workspace.AfterRun(ctx, issue.Identifier, meta.Branch)
 		}
 	}()
 
-	if err := r.Workspace.BeforeRun(ctx, issue.Identifier); err != nil {
+	if err := r.Workspace.BeforeRun(ctx, issue.Identifier, meta.Branch); err != nil {
 		return scheduler.SpawnResult{}, fmt.Errorf("agent: before run: %w", err)
 	}
 
-	rendered, err := r.renderPrompt(issue, attempt)
+	rendered, err := r.renderPrompt(issue, attempt, meta)
 	if err != nil {
 		return scheduler.SpawnResult{}, err
 	}
@@ -91,14 +94,14 @@ func (r *Runner) spawnWith(ctx context.Context, issue tracker.Issue, attempt int
 	}
 
 	committed = true
-	return r.startRunLoop(workerCtx, lr, issue, attempt, ids, cancel, emit), nil
+	return r.startRunLoop(workerCtx, lr, issue, attempt, meta.Branch, ids, cancel, emit), nil
 }
 
 // startRunLoop wires the Worker, launches the §16.5 multi-turn runLoop, emits
 // EventSessionStarted, and returns the spawn result: the pure session identity plus the live
 // Worker handle (which the scheduler shell stores in its id→handle map, never in State).
 // Callers must set committed=true (ownership of AfterRun transfers to runLoop) before calling.
-func (r *Runner) startRunLoop(workerCtx context.Context, lr *launchResult, issue tracker.Issue, attempt int, ids sessionIDs, cancel context.CancelFunc, emit func(Event)) scheduler.SpawnResult {
+func (r *Runner) startRunLoop(workerCtx context.Context, lr *launchResult, issue tracker.Issue, attempt int, projectBranch string, ids sessionIDs, cancel context.CancelFunc, emit func(Event)) scheduler.SpawnResult {
 	worker := &Worker{
 		cancel:          cancel,
 		done:            lr.doneCh,
@@ -108,17 +111,18 @@ func (r *Runner) startRunLoop(workerCtx context.Context, lr *launchResult, issue
 	}
 
 	wp := workerParams{
-		issue:        issue,
-		attempt:      attempt,
-		conn:         lr.conn,
-		startDir:     lr.startDir,
-		ids:          ids,
-		sessionReady: lr.sessionReady,
-		turnDone:     lr.turnDone,
-		doneCh:       lr.doneCh,
-		cancel:       cancel,
-		worker:       worker,
-		emit:         emit,
+		issue:         issue,
+		attempt:       attempt,
+		projectBranch: projectBranch,
+		conn:          lr.conn,
+		startDir:      lr.startDir,
+		ids:           ids,
+		sessionReady:  lr.sessionReady,
+		turnDone:      lr.turnDone,
+		doneCh:        lr.doneCh,
+		cancel:        cancel,
+		worker:        worker,
+		emit:          emit,
 	}
 	go r.runLoop(workerCtx, wp)
 
@@ -258,7 +262,7 @@ func (r *Runner) teardown(wp workerParams) {
 	wp.cancel()
 	<-wp.doneCh
 	wp.worker.runCleanup()
-	r.Workspace.AfterRun(context.Background(), wp.issue.Identifier)
+	r.Workspace.AfterRun(context.Background(), wp.issue.Identifier, wp.projectBranch)
 }
 
 // sendWorkerExit delivers the worker exit signal to the scheduler (§16.6).
@@ -279,8 +283,8 @@ func (r *Runner) sendWorkerExit(issueID string, attempt int, exitErr error) {
 }
 
 // Caller must arrange AfterRun on any subsequent failure once this succeeds (SPEC §9.4/§9.5).
-func (r *Runner) ensureWorkspace(ctx context.Context, identifier string) (string, error) {
-	wsPath, err := r.Workspace.Ensure(ctx, identifier)
+func (r *Runner) ensureWorkspace(ctx context.Context, identifier, branch string) (string, error) {
+	wsPath, err := r.Workspace.Ensure(ctx, identifier, branch)
 	if err != nil {
 		return "", fmt.Errorf("agent: workspace ensure: %w", err)
 	}
@@ -297,8 +301,12 @@ func (r *Runner) currentTemplate() string {
 	return r.PromptTemplate
 }
 
-func (r *Runner) renderPrompt(issue tracker.Issue, attempt int) (string, error) {
-	rendered, err := prompt.Render(r.currentTemplate(), prompt.Vars{Issue: issue, Attempt: attempt})
+func (r *Runner) renderPrompt(issue tracker.Issue, attempt int, meta projectMeta) (string, error) {
+	rendered, err := prompt.Render(r.currentTemplate(), prompt.Vars{
+		Issue:   issue,
+		Attempt: attempt,
+		Project: prompt.ProjectVars{Name: meta.Name, Branch: meta.Branch, Prompt: meta.Prompt},
+	})
 	if err != nil {
 		return "", fmt.Errorf("agent: render prompt: %w", err)
 	}

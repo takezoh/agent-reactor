@@ -28,10 +28,13 @@ func Load(path string) (Workflow, error) {
 	if err != nil {
 		return Workflow{}, fmt.Errorf("%w: %s: %v", ErrMissingWorkflowFile, path, err)
 	}
-	return parse(data)
+	return Parse(data)
 }
 
-func parse(data []byte) (Workflow, error) {
+// Parse splits data into front matter and Markdown body using the WORKFLOW.md
+// grammar (§5.1–§5.2). A leading "---" opens the front matter; without it the
+// whole input is the prompt template. Reused to parse Linear project content.
+func Parse(data []byte) (Workflow, error) {
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	lines := strings.Split(text, "\n")
 	if len(lines) == 0 || lines[0] != "---" {

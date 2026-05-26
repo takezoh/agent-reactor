@@ -10,9 +10,9 @@ import (
 func validCfg() wfconfig.Config {
 	return wfconfig.Config{
 		Tracker: wfconfig.TrackerConfig{
-			Kind:        "linear",
-			APIKey:      "lin_api_secret",
-			ProjectSlug: "my-project",
+			Kind:         "linear",
+			APIKey:       "lin_api_secret",
+			ProjectSlugs: []string{"my-project"},
 		},
 		Codex: wfconfig.CodexConfig{
 			Command: "codex app-server",
@@ -55,7 +55,7 @@ func TestPreflightMissingAPIKey(t *testing.T) {
 
 func TestPreflightMissingProjectSlug(t *testing.T) {
 	cfg := validCfg()
-	cfg.Tracker.ProjectSlug = ""
+	cfg.Tracker.ProjectSlugs = nil
 	err := Preflight(cfg)
 	if !errors.Is(err, ErrPreflight) {
 		t.Fatalf("expected ErrPreflight, got %v", err)

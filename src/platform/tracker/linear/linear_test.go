@@ -36,6 +36,7 @@ func fakeNode(id, identifier string) map[string]any {
 		"priority": nil, "url": "", "branchName": "",
 		"state":            map[string]any{"name": "Todo"},
 		"labels":           map[string]any{"nodes": []any{}},
+		"project":          map[string]any{"name": "", "content": ""},
 		"inverseRelations": map[string]any{"nodes": []any{}},
 		"createdAt":        "2024-01-01T00:00:00Z",
 		"updatedAt":        "2024-01-01T00:00:00Z",
@@ -75,7 +76,7 @@ func sequenceServer(t *testing.T, responses []string) (*httptest.Server, *int) {
 
 func TestSPEC_17_3_LinearProjectFilterUsesSlugId(t *testing.T) {
 	srv, body := captureServer(t, issuesResp(nil, false, ""))
-	c := linear.New(srv.URL, "key", "myproject", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"proj-a", "proj-b"}, []string{"Todo"})
 	_, err := c.FetchCandidateIssues(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -83,14 +84,48 @@ func TestSPEC_17_3_LinearProjectFilterUsesSlugId(t *testing.T) {
 	if !strings.Contains(*body, "slugId") {
 		t.Errorf("query missing slugId filter; body: %s", *body)
 	}
-	if !strings.Contains(*body, "myproject") {
-		t.Errorf("project slug 'myproject' missing from request body; body: %s", *body)
+	for _, slug := range []string{"proj-a", "proj-b"} {
+		if !strings.Contains(*body, slug) {
+			t.Errorf("project slug %q missing from request body; body: %s", slug, *body)
+		}
+	}
+}
+
+func TestLinearProjectFieldNormalized(t *testing.T) {
+	srv, body := captureServer(t, issuesResp([]map[string]any{
+		{
+			"id": "1", "identifier": "ENG-1", "title": "T", "description": "",
+			"priority": nil, "url": "", "branchName": "",
+			"state":            map[string]any{"name": "Todo"},
+			"labels":           map[string]any{"nodes": []any{}},
+			"project":          map[string]any{"name": "Roost", "content": "---\nbranch: develop\n---\nextra"},
+			"inverseRelations": map[string]any{"nodes": []any{}},
+			"createdAt":        "2024-01-01T00:00:00Z",
+			"updatedAt":        "2024-01-01T00:00:00Z",
+		},
+	}, false, ""))
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
+	issues, err := c.FetchCandidateIssues(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(*body, "project { name content }") {
+		t.Errorf("query missing project selection; body: %s", *body)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("want 1 issue, got %d", len(issues))
+	}
+	if issues[0].Project.Name != "Roost" {
+		t.Errorf("project name: want Roost, got %q", issues[0].Project.Name)
+	}
+	if !strings.Contains(issues[0].Project.Content, "branch: develop") {
+		t.Errorf("project content not normalized; got %q", issues[0].Project.Content)
 	}
 }
 
 func TestSPEC_17_3_CandidateFetchUsesActiveStates(t *testing.T) {
 	srv, body := captureServer(t, issuesResp(nil, false, ""))
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo", "In Progress"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo", "In Progress"})
 	_, err := c.FetchCandidateIssues(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -107,7 +142,7 @@ func TestSPEC_17_3_FetchIssuesByStates_EmptyStates_NoAPICall(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	issues, err := c.FetchIssuesByStates(context.Background(), []string{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -131,7 +166,7 @@ func TestSPEC_17_3_PaginationPreservesOrder(t *testing.T) {
 	)
 	srv, _ := sequenceServer(t, []string{page1, page2})
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	issues, err := c.FetchCandidateIssues(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -151,7 +186,7 @@ func TestSPEC_17_3_MissingEndCursorError(t *testing.T) {
 	resp := issuesResp([]map[string]any{fakeNode("id1", "PROJ-1")}, true, "")
 	srv, _ := captureServer(t, resp)
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	_, err := c.FetchCandidateIssues(context.Background())
 	if !errors.Is(err, linear.ErrMissingEndCursor) {
 		t.Errorf("want ErrMissingEndCursor, got %v", err)
@@ -180,7 +215,7 @@ func TestSPEC_17_3_BlockedByFromBlocksInverseRelation(t *testing.T) {
 	}
 	srv, _ := captureServer(t, issuesResp([]map[string]any{node}, false, ""))
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	issues, err := c.FetchCandidateIssues(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -208,7 +243,7 @@ func TestSPEC_17_3_LabelsLowercase(t *testing.T) {
 	}
 	srv, _ := captureServer(t, issuesResp([]map[string]any{node}, false, ""))
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	issues, err := c.FetchCandidateIssues(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -234,7 +269,7 @@ func TestSPEC_17_3_PriorityIntegerOnly(t *testing.T) {
 	}
 	srv, _ := captureServer(t, issuesResp(nodes, false, ""))
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	issues, err := c.FetchCandidateIssues(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -256,7 +291,7 @@ func TestSPEC_17_3_TimesParsed(t *testing.T) {
 	node["updatedAt"] = "2024-03-15T09:00:00Z"
 	srv, _ := captureServer(t, issuesResp([]map[string]any{node}, false, ""))
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	issues, err := c.FetchCandidateIssues(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -272,7 +307,7 @@ func TestSPEC_17_3_TimesParsed(t *testing.T) {
 
 func TestSPEC_17_3_FetchIssueStatesByIDsUsesIDType(t *testing.T) {
 	srv, body := captureServer(t, issuesResp(nil, false, ""))
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	_, err := c.FetchIssueStatesByIDs(context.Background(), []string{"id1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -293,7 +328,7 @@ func TestSPEC_17_3_FetchIssueStatesByIDs_EmptyIDs_NoAPICall(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	issues, err := c.FetchIssueStatesByIDs(context.Background(), []string{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -317,7 +352,7 @@ func TestErrorMapping_NonHTTP200(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	_, err := c.FetchCandidateIssues(context.Background())
 	if !errors.Is(err, linear.ErrAPIStatus) {
 		t.Errorf("want ErrAPIStatus, got %v", err)
@@ -328,7 +363,7 @@ func TestErrorMapping_GraphQLErrors(t *testing.T) {
 	resp := `{"errors":[{"message":"Unauthorized"}]}`
 	srv, _ := captureServer(t, resp)
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	_, err := c.FetchCandidateIssues(context.Background())
 	if !errors.Is(err, linear.ErrGraphQLErrors) {
 		t.Errorf("want ErrGraphQLErrors, got %v", err)
@@ -338,7 +373,7 @@ func TestErrorMapping_GraphQLErrors(t *testing.T) {
 func TestErrorMapping_MalformedPayload(t *testing.T) {
 	srv, _ := captureServer(t, `not-json`)
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	_, err := c.FetchCandidateIssues(context.Background())
 	if !errors.Is(err, linear.ErrUnknownPayload) {
 		t.Errorf("want ErrUnknownPayload, got %v", err)
@@ -348,7 +383,7 @@ func TestErrorMapping_MalformedPayload(t *testing.T) {
 func TestErrorMapping_MissingDataField(t *testing.T) {
 	srv, _ := captureServer(t, `{"data":null}`)
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	_, err := c.FetchCandidateIssues(context.Background())
 	if !errors.Is(err, linear.ErrUnknownPayload) {
 		t.Errorf("want ErrUnknownPayload, got %v", err)
@@ -361,7 +396,7 @@ func TestSPEC_11_3_BadTimestampPreservesIssue(t *testing.T) {
 	node["updatedAt"] = "also-bad"
 	srv, _ := captureServer(t, issuesResp([]map[string]any{node}, false, ""))
 
-	c := linear.New(srv.URL, "key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "key", []string{"slug"}, []string{"Todo"})
 	issues, err := c.FetchCandidateIssues(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v (bad timestamp must be non-fatal per §11.3)", err)
@@ -386,7 +421,7 @@ func TestAdapterInterface(t *testing.T) {
 	// Verifies *Client satisfies tracker.Adapter at compile time.
 	// The var _ check in linear.go already ensures this;
 	// this test documents the behaviour via a runtime assertion.
-	var _ tracker.Adapter = linear.New("", "", "", nil)
+	var _ tracker.Adapter = linear.New("", "", nil, nil)
 }
 
 // --- Authorization header ---
@@ -400,7 +435,7 @@ func TestAuthorizationHeader(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := linear.New(srv.URL, "my-api-key", "slug", []string{"Todo"})
+	c := linear.New(srv.URL, "my-api-key", []string{"slug"}, []string{"Todo"})
 	_, err := c.FetchCandidateIssues(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

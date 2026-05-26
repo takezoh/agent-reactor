@@ -19,7 +19,7 @@ var _ tracker.Adapter = (*Client)(nil)
 type Client struct {
 	endpoint     string
 	apiKey       string
-	projectSlug  string
+	projectSlugs []string
 	activeStates []string
 	http         *http.Client
 }
@@ -27,17 +27,17 @@ type Client struct {
 // New creates a Linear client with the SPEC §11.2 network timeout (30s).
 // activeStates is used by FetchCandidateIssues; terminal states are passed
 // per-call to FetchIssuesByStates by the caller.
-func New(endpoint, apiKey, projectSlug string, activeStates []string) *Client {
-	return newClient(endpoint, apiKey, projectSlug, activeStates, &http.Client{Timeout: 30 * time.Second})
+func New(endpoint, apiKey string, projectSlugs []string, activeStates []string) *Client {
+	return newClient(endpoint, apiKey, projectSlugs, activeStates, &http.Client{Timeout: 30 * time.Second})
 }
 
 // newClient is the injectable constructor; tests supply a custom *http.Client
 // (e.g. a stub transport or a short timeout) to avoid real network waits.
-func newClient(endpoint, apiKey, projectSlug string, activeStates []string, hc *http.Client) *Client {
+func newClient(endpoint, apiKey string, projectSlugs []string, activeStates []string, hc *http.Client) *Client {
 	return &Client{
 		endpoint:     endpoint,
 		apiKey:       apiKey,
-		projectSlug:  projectSlug,
+		projectSlugs: projectSlugs,
 		activeStates: activeStates,
 		http:         hc,
 	}
@@ -45,7 +45,7 @@ func newClient(endpoint, apiKey, projectSlug string, activeStates []string, hc *
 
 func (c *Client) FetchCandidateIssues(ctx context.Context) ([]tracker.Issue, error) {
 	return c.fetchPages(ctx, projectStateQuery, func(after string) map[string]any {
-		return projectStateVars(c.projectSlug, c.activeStates, after)
+		return projectStateVars(c.projectSlugs, c.activeStates, after)
 	})
 }
 
@@ -54,7 +54,7 @@ func (c *Client) FetchIssuesByStates(ctx context.Context, stateNames []string) (
 		return nil, nil
 	}
 	return c.fetchPages(ctx, projectStateQuery, func(after string) map[string]any {
-		return projectStateVars(c.projectSlug, stateNames, after)
+		return projectStateVars(c.projectSlugs, stateNames, after)
 	})
 }
 

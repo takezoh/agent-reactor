@@ -18,7 +18,7 @@ const validFrontMatter = `---
 tracker:
   kind: linear
   api_key: lin_api_test
-  project_slug: test-proj
+  project_slugs: [test-proj]
 codex:
   command: codex app-server
 ---
@@ -142,7 +142,7 @@ func schedCfg() wfconfig.Config {
 		Tracker: wfconfig.TrackerConfig{
 			Kind:           "linear",
 			APIKey:         "lin_api_test",
-			ProjectSlug:    "test-proj",
+			ProjectSlugs:   []string{"test-proj"},
 			ActiveStates:   []string{"In Progress", "Todo"},
 			TerminalStates: []string{"Done", "Cancelled"},
 		},
@@ -212,7 +212,7 @@ func TestRunContinuesAfterTickPreflightFailure(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
 
-	badContent := strings.ReplaceAll(validFrontMatter, "project_slug: test-proj\n", "")
+	badContent := strings.ReplaceAll(validFrontMatter, "project_slugs: [test-proj]\n", "")
 	if err := os.WriteFile(path, []byte(badContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func TestDispatchGatingOnBadReload(t *testing.T) {
 	s.seedRunning(testIssue("1", "P-1"), time.Now(), newFakeWorker())
 
 	// Write invalid config (missing project_slug fails Preflight).
-	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slug: test-proj\n", ""))
+	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slugs: [test-proj]\n", ""))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -372,7 +372,7 @@ func TestDispatchResumesAfterRecovery(t *testing.T) {
 	defer cancel()
 
 	// Degrade: write bad config.
-	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slug: test-proj\n", ""))
+	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slugs: [test-proj]\n", ""))
 	s.tick(ctx)
 	if spawn.callCount() != 0 {
 		t.Fatalf("want 0 spawn calls while degraded, got %d", spawn.callCount())
@@ -397,7 +397,7 @@ func TestDegradedWarnEmittedOnce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	badContent := strings.ReplaceAll(validFrontMatter, "project_slug: test-proj\n", "")
+	badContent := strings.ReplaceAll(validFrontMatter, "project_slugs: [test-proj]\n", "")
 	writeFrontMatter(t, path, badContent)
 
 	s.tick(ctx)
@@ -493,7 +493,7 @@ func TestLastGoodTemplate_notOverwrittenOnBadReload(t *testing.T) {
 	const initial = "stable template"
 	s := New(path, schedCfg(), initial, Deps{})
 
-	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slug: test-proj\n", ""))
+	writeFrontMatter(t, path, strings.ReplaceAll(validFrontMatter, "project_slugs: [test-proj]\n", ""))
 	_, ok := s.reloadConfig()
 	if ok {
 		t.Fatal("want reloadConfig to fail on invalid workflow")

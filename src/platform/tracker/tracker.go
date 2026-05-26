@@ -17,8 +17,16 @@ type Issue struct {
 	URL         string
 	Labels      []string
 	BlockedBy   []Blocker
+	Project     Project
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+// Project is the raw project metadata carried by an Issue. Content is the
+// project overview markdown; the orchestrator interprets its front matter.
+type Project struct {
+	Name    string
+	Content string
 }
 
 // Blocker represents an issue that blocks another issue (SPEC §4.1.1).

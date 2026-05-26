@@ -8,9 +8,10 @@ import (
 )
 
 // Ensure idempotently creates the workspace directory for identifier and runs
-// the after_create hook only when newly created per §9.2.
+// the after_create hook only when newly created per §9.2. branch is exposed to
+// the hook as ROOST_PROJECT_BRANCH (empty when the project specifies none).
 // Returns the absolute workspace path.
-func (m *Manager) Ensure(ctx context.Context, identifier string) (string, error) {
+func (m *Manager) Ensure(ctx context.Context, identifier, branch string) (string, error) {
 	p, err := m.Path(identifier)
 	if err != nil {
 		return "", err
@@ -22,7 +23,7 @@ func (m *Manager) Ensure(ctx context.Context, identifier string) (string, error)
 	}
 
 	if createdNow {
-		if hookErr := m.runHook(ctx, "after_create", m.hooks.AfterCreate, p); hookErr != nil {
+		if hookErr := m.runHook(ctx, "after_create", m.hooks.AfterCreate, p, branchEnv(branch)); hookErr != nil {
 			// §9.3: remove the partially-prepared new workspace so a retry
 			// re-creates it and re-runs after_create (otherwise the dir would
 			// persist and the next Ensure would skip the hook).
@@ -59,6 +60,6 @@ func (m *Manager) Remove(ctx context.Context, identifier string) error {
 	if err != nil {
 		return err
 	}
-	_ = m.runHook(ctx, "before_remove", m.hooks.BeforeRemove, p)
+	_ = m.runHook(ctx, "before_remove", m.hooks.BeforeRemove, p, nil)
 	return os.RemoveAll(p)
 }

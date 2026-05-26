@@ -64,7 +64,8 @@ func TestSPEC_17_7_SecretNeverLogged(t *testing.T) {
 tracker:
   kind: linear
   api_key: $CONF_TEST_SENTINEL_KEY
-  project_slug: test-proj
+  project_slugs:
+    - test-proj
 codex:
   command: codex app-server
 ---

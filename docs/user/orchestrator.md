@@ -26,7 +26,8 @@ On startup the orchestrator loads and validates the workflow, runs a **preflight
 tracker:
   kind: linear
   api_key: $LINEAR_API_KEY      # $VAR is expanded from the environment
-  project_slug: c01cdba6fe92    # Linear project slugId
+  project_slugs:                # one or more Linear project slugIds
+    - c01cdba6fe92
   active_states:                # states the agent works on
     - Todo
     - In Progress
@@ -65,6 +66,21 @@ server:
 - **active_states** — the agent is dispatched to work on issues in these states.
 - **terminal_states** — completion states; the agent stops and the issue is released.
 - States that are **neither** active nor terminal (e.g. `Human Review`) are a **handoff**: the orchestrator parks the issue and waits for a human to move it back into an active state. This is how the autonomous loop hands control back to people.
+
+### Per-project configuration
+
+`project_slugs` may list several projects. Each Linear project can carry its own configuration in its **content** (the project overview), reusing the WORKFLOW.md grammar: an optional YAML front matter followed by an optional additional prompt body. Both are optional.
+
+```
+---
+branch: develop
+---
+Extra instructions specific to this project.
+```
+
+- **branch** — the base branch for this project's work. It is exposed to the prompt template as `{{ project.branch }}` and to hooks as the `ROOST_PROJECT_BRANCH` environment variable. When `branch` (or the whole front matter) is absent, the value is empty and the hook/prompt should fall back to the repository default branch (e.g. `base=${ROOST_PROJECT_BRANCH:-$(git ... rev-parse --abbrev-ref HEAD)}`).
+- The body after the front matter is exposed as `{{ project.prompt }}` (substituted verbatim — its own Liquid tags are not re-rendered). Place it wherever the prompt body should include the per-project instructions.
+- `{{ project.name }}` is the Linear project name.
 
 ## Agent selection
 

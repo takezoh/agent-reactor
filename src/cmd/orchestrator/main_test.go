@@ -14,7 +14,8 @@ const validWorkflow = `---
 tracker:
   kind: linear
   api_key: lin_api_test
-  project_slug: test-proj
+  project_slugs:
+    - test-proj
 codex:
   command: codex app-server
 ---
@@ -75,7 +76,7 @@ func TestRunInvalidFlag(t *testing.T) {
 
 func TestRunPreflightFailure(t *testing.T) {
 	isolateHome(t)
-	// Missing project_slug triggers preflight error after config resolve.
+	// Missing project_slugs triggers preflight error after config resolve.
 	content := `---
 tracker:
   kind: linear
@@ -103,7 +104,8 @@ func TestRunConfigResolveFailure(t *testing.T) {
 tracker:
   kind: linear
   api_key: lin_api_test
-  project_slug: test-proj
+  project_slugs:
+    - test-proj
 polling:
   interval_ms: -1
 codex:
@@ -141,7 +143,8 @@ func TestRunWithServerPortFromWorkflow(t *testing.T) {
 tracker:
   kind: linear
   api_key: lin_api_test
-  project_slug: test-proj
+  project_slugs:
+    - test-proj
 server:
   port: %d
 codex:

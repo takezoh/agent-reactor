@@ -18,6 +18,11 @@ Available variables include:
 | `{{ issue.state }}` | Current tracker state — route on this |
 | `{{ issue.priority }}`, `{{ issue.url }}` | Metadata |
 | `{{ attempt }}` | Retry attempt count — the same issue can be re-dispatched |
+| `{{ project.name }}` | Linear project name of the issue |
+| `{{ project.branch }}` | Base branch from the project's content front matter (empty = repository default) |
+| `{{ project.prompt }}` | Additional prompt body from the project's content (substituted verbatim) |
+
+`{{ project.* }}` is derived from the issue's Linear project content (front matter + body); see [orchestrator configuration](../user/orchestrator.md#per-project-configuration). `branch` is also passed to hooks as `ROOST_PROJECT_BRANCH`.
 
 ## Invariants the prompt must enforce
 

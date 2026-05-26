@@ -24,6 +24,7 @@ func normalizeIssue(n rawNode) tracker.Issue {
 		URL:         n.URL,
 		Labels:      normalizeLabels(n.Labels.Nodes),
 		BlockedBy:   normalizeBlockers(n.InverseRelations.Nodes),
+		Project:     tracker.Project{Name: n.Project.Name, Content: n.Project.Content},
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
 	}

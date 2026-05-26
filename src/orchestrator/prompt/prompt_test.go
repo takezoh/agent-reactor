@@ -25,6 +25,24 @@ func TestRender_interpolatesAttempt(t *testing.T) {
 	assert.Equal(t, "Attempt 3", out)
 }
 
+func TestRender_interpolatesProject(t *testing.T) {
+	out, err := prompt.Render(
+		"{{ project.name }}@{{ project.branch }}: {{ project.prompt }}",
+		prompt.Vars{Project: prompt.ProjectVars{Name: "Roost", Branch: "develop", Prompt: "extra"}},
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, "Roost@develop: extra", out)
+}
+
+func TestRender_emptyProjectRendersEmpty(t *testing.T) {
+	out, err := prompt.Render(
+		"[{{ project.name }}|{{ project.branch }}|{{ project.prompt }}]",
+		prompt.Vars{},
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, "[||]", out)
+}
+
 func TestRender_unknownVariableErrors(t *testing.T) {
 	_, err := prompt.Render("{{ unknown_var }}", prompt.Vars{})
 	assert.True(t, errors.Is(err, prompt.ErrTemplateRender), "want ErrTemplateRender, got %v", err)

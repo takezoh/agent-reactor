@@ -19,6 +19,16 @@ var ErrTemplateRender = errors.New("prompt: template render error")
 type Vars struct {
 	Issue   tracker.Issue
 	Attempt int
+	Project ProjectVars
+}
+
+// ProjectVars holds per-project values derived from the Linear project's
+// content front matter. Prompt is the project's additional prompt body and is
+// substituted verbatim (its own Liquid tags are not re-rendered).
+type ProjectVars struct {
+	Name   string
+	Branch string
+	Prompt string
 }
 
 var (
@@ -48,6 +58,7 @@ func Render(tmpl string, vars Vars) (string, error) {
 	bindings := liquid.Bindings{
 		"issue":   toIssueMap(vars.Issue),
 		"attempt": attemptVal,
+		"project": toProjectMap(vars.Project),
 	}
 	out, err := engine().ParseAndRenderString(tmpl, bindings)
 	if err != nil {
@@ -79,6 +90,16 @@ func toIssueMap(iss tracker.Issue) map[string]any {
 		"blocked_by":  toBlockerList(iss.BlockedBy),
 		"created_at":  iss.CreatedAt,
 		"updated_at":  iss.UpdatedAt,
+	}
+}
+
+// toProjectMap always sets every key so referencing a defined-but-empty
+// project field renders empty rather than tripping StrictVariables (§5.4).
+func toProjectMap(p ProjectVars) map[string]any {
+	return map[string]any{
+		"name":   p.Name,
+		"branch": p.Branch,
+		"prompt": p.Prompt,
 	}
 }
 

@@ -56,7 +56,7 @@ func TestNormalizeBlockers_CaseInsensitiveAndTrim(t *testing.T) {
 // New binds activeStates onto the client (used by FetchCandidateIssues).
 func TestNew_BindsActiveStates(t *testing.T) {
 	active := []string{"Todo", "Doing"}
-	c := New("http://linear.test", "key", "slug", active)
+	c := New("http://linear.test", "key", []string{"slug"}, active)
 	if !reflect.DeepEqual(c.activeStates, active) {
 		t.Errorf("activeStates = %v, want %v", c.activeStates, active)
 	}
@@ -65,7 +65,7 @@ func TestNew_BindsActiveStates(t *testing.T) {
 // Transport failures map to ErrAPIRequest. Uses an injected failing transport
 // so the test is instant instead of waiting on a real dial/timeout.
 func TestErrorMapping_RequestError(t *testing.T) {
-	c := newClient("http://linear.test", "key", "slug", []string{"Todo"},
+	c := newClient("http://linear.test", "key", []string{"slug"}, []string{"Todo"},
 		&http.Client{Transport: errRoundTripper{}})
 	_, err := c.FetchCandidateIssues(context.Background())
 	if !errors.Is(err, ErrAPIRequest) {

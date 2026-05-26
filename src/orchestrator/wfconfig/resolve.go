@@ -85,9 +85,9 @@ func decodeTracker(raw map[string]any, c *Config) error {
 			return fmt.Errorf("tracker.api_key: %w", err)
 		}
 	}
-	if s, ok := m["project_slug"]; ok {
-		if c.Tracker.ProjectSlug, err = coerceString(s); err != nil {
-			return fmt.Errorf("tracker.project_slug: %w", err)
+	if s, ok := m["project_slugs"]; ok {
+		if c.Tracker.ProjectSlugs, err = coerceStringSlice(s); err != nil {
+			return fmt.Errorf("tracker.project_slugs: %w", err)
 		}
 	}
 	if s, ok := m["active_states"]; ok {

@@ -14,7 +14,7 @@ import (
 // §17.2: missing directory is created; path returned.
 func TestEnsure_CreatesDirectory(t *testing.T) {
 	m := newTestManager(t)
-	p, err := m.Ensure(context.Background(), "issue-1")
+	p, err := m.Ensure(context.Background(), "issue-1", "")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -27,11 +27,11 @@ func TestEnsure_CreatesDirectory(t *testing.T) {
 // §17.2: existing directory is reused without error.
 func TestEnsure_ReusesExistingDirectory(t *testing.T) {
 	m := newTestManager(t)
-	p1, err := m.Ensure(context.Background(), "issue-1")
+	p1, err := m.Ensure(context.Background(), "issue-1", "")
 	if err != nil {
 		t.Fatalf("first Ensure: %v", err)
 	}
-	p2, err := m.Ensure(context.Background(), "issue-1")
+	p2, err := m.Ensure(context.Background(), "issue-1", "")
 	if err != nil {
 		t.Fatalf("second Ensure: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestEnsure_NonDirectoryFails(t *testing.T) {
 	if err := os.WriteFile(p, []byte("not a dir"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := m.Ensure(context.Background(), "issue-file")
+	_, err := m.Ensure(context.Background(), "issue-file", "")
 	if !errors.Is(err, ErrNotDirectory) {
 		t.Errorf("Ensure on file err = %v, want ErrNotDirectory", err)
 	}
@@ -66,7 +66,7 @@ func TestEnsure_AfterCreate_NewOnly(t *testing.T) {
 	})
 
 	// First call: new workspace — after_create should fire.
-	if _, err := m.Ensure(context.Background(), "issue-1"); err != nil {
+	if _, err := m.Ensure(context.Background(), "issue-1", ""); err != nil {
 		t.Fatalf("first Ensure: %v", err)
 	}
 	if _, statErr := os.Stat(marker); statErr != nil {
@@ -75,11 +75,34 @@ func TestEnsure_AfterCreate_NewOnly(t *testing.T) {
 
 	// Remove marker, then reuse — after_create must not fire again.
 	os.Remove(marker)
-	if _, err := m.Ensure(context.Background(), "issue-1"); err != nil {
+	if _, err := m.Ensure(context.Background(), "issue-1", ""); err != nil {
 		t.Fatalf("second Ensure: %v", err)
 	}
 	if _, statErr := os.Stat(marker); statErr == nil {
 		t.Error("after_create fired on workspace reuse — must not happen")
+	}
+}
+
+// after_create receives the per-project branch via ROOST_PROJECT_BRANCH.
+func TestEnsure_AfterCreate_ReceivesProjectBranch(t *testing.T) {
+	root := t.TempDir()
+	out := filepath.Join(t.TempDir(), "branch.txt")
+	m := New(wfconfig.Config{
+		Workspace: wfconfig.WorkspaceConfig{Root: root},
+		Hooks: wfconfig.HooksConfig{
+			TimeoutMS:   5000,
+			AfterCreate: fmt.Sprintf("printf '%%s' \"$ROOST_PROJECT_BRANCH\" > %s", out),
+		},
+	})
+	if _, err := m.Ensure(context.Background(), "issue-1", "develop"); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read hook output: %v", err)
+	}
+	if string(got) != "develop" {
+		t.Errorf("ROOST_PROJECT_BRANCH = %q, want develop", string(got))
 	}
 }
 
@@ -93,7 +116,7 @@ func TestEnsure_AfterCreate_FailureFatal(t *testing.T) {
 			AfterCreate: "exit 1",
 		},
 	})
-	_, err := m.Ensure(context.Background(), "issue-fail")
+	_, err := m.Ensure(context.Background(), "issue-fail", "")
 	if !errors.Is(err, ErrHookFailed) {
 		t.Errorf("Ensure with failing after_create err = %v, want ErrHookFailed", err)
 	}
@@ -112,7 +135,7 @@ func TestEnsure_AfterCreate_FailureRemovesDir(t *testing.T) {
 	})
 
 	p, _ := m.Path("issue-1")
-	if _, err := m.Ensure(context.Background(), "issue-1"); !errors.Is(err, ErrHookFailed) {
+	if _, err := m.Ensure(context.Background(), "issue-1", ""); !errors.Is(err, ErrHookFailed) {
 		t.Fatalf("first Ensure err = %v, want ErrHookFailed", err)
 	}
 	if _, statErr := os.Stat(p); !errors.Is(statErr, os.ErrNotExist) {
@@ -120,7 +143,7 @@ func TestEnsure_AfterCreate_FailureRemovesDir(t *testing.T) {
 	}
 
 	// Retry: dir was removed, so createdNow=true again and after_create re-runs (now succeeds).
-	if _, err := m.Ensure(context.Background(), "issue-1"); err != nil {
+	if _, err := m.Ensure(context.Background(), "issue-1", ""); err != nil {
 		t.Fatalf("retry Ensure should succeed once after_create passes: %v", err)
 	}
 	if _, statErr := os.Stat(p); statErr != nil {
@@ -131,7 +154,7 @@ func TestEnsure_AfterCreate_FailureRemovesDir(t *testing.T) {
 // §17.2: Remove deletes the workspace directory.
 func TestRemove_DeletesDirectory(t *testing.T) {
 	m := newTestManager(t)
-	p, err := m.Ensure(context.Background(), "issue-1")
+	p, err := m.Ensure(context.Background(), "issue-1", "")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -153,7 +176,7 @@ func TestRemove_BeforeRemoveFailureIgnored(t *testing.T) {
 			BeforeRemove: "exit 1",
 		},
 	})
-	p, err := m.Ensure(context.Background(), "issue-1")
+	p, err := m.Ensure(context.Background(), "issue-1", "")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}

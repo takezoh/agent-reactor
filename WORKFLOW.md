@@ -2,8 +2,10 @@
 tracker:
   kind: linear
   api_key: $LINEAR_API_KEY
-  # Linear "roost" プロジェクトの slugId
-  project_slug: c01cdba6fe92
+  # 対象 Linear プロジェクトの slugId(複数可)。各プロジェクトの content 冒頭に
+  # frontmatter(branch など)+ 追加プロンプトを書ける。
+  project_slugs:
+    - c01cdba6fe92
   # Human Review フロー: agent が作業する状態を active に。Human Review / In Review は
   # active にも terminal にも入れない = handoff(orchestrator は park して人間を待つ)。
   active_states:
@@ -22,14 +24,15 @@ workspace:
   root: /workspace/agent-roost-orchestrator/.roost/worktrees
 hooks:
   timeout_ms: 120000
-  # GitHub から「orchestrator を起動しているブランチ」を clone し symphony ブランチを切る。
-  # base ブランチ名と origin URL は source repo から動的取得(ブランチ名をハードコードしない)。
+  # GitHub から base ブランチを clone し symphony ブランチを切る。
+  # base はプロジェクト frontmatter の branch($ROOST_PROJECT_BRANCH)を優先し、
+  # 未指定なら source repo の現在ブランチ(= default branch)を使う。
   # base は git config symphony.base に記録し、PR 作成時に参照する。
   # origin=GitHub なので agent はそのまま push / PR 作成できる(push は SSH ブローカー、gh は host_exec 経由)。
   after_create: |
     set -e
     src=/workspace/agent-roost-orchestrator
-    base=$(git -C "$src" rev-parse --abbrev-ref HEAD)
+    base=${ROOST_PROJECT_BRANCH:-$(git -C "$src" rev-parse --abbrev-ref HEAD)}
     url=$(git -C "$src" remote get-url origin)
     git clone --depth 1 --branch "$base" "$url" "$PWD"
     git -C "$PWD" checkout -b "symphony/$(basename "$PWD")"

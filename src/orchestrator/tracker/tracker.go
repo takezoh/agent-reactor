@@ -16,10 +16,10 @@ type Tracker struct {
 	terminalStates []string
 }
 
-type adapterFactory func(endpoint, apiKey, projectSlug string, activeStates []string) ptracker.Adapter
+type adapterFactory func(endpoint, apiKey string, projectSlugs []string, activeStates []string) ptracker.Adapter
 
-func defaultFactory(ep, key, slug string, active []string) ptracker.Adapter {
-	return linear.New(ep, key, slug, active)
+func defaultFactory(ep, key string, slugs []string, active []string) ptracker.Adapter {
+	return linear.New(ep, key, slugs, active)
 }
 
 // New constructs a Tracker from cfg. Returns typed sentinel errors for config failures (§11.4).
@@ -34,11 +34,11 @@ func newWithFactory(cfg wfconfig.Config, factory adapterFactory) (*Tracker, erro
 	if cfg.Tracker.APIKey == "" {
 		return nil, ptracker.ErrMissingTrackerAPIKey
 	}
-	if cfg.Tracker.ProjectSlug == "" {
+	if len(cfg.Tracker.ProjectSlugs) == 0 {
 		return nil, ptracker.ErrMissingTrackerProjectSlug
 	}
 	return &Tracker{
-		adapter:        factory(cfg.Tracker.Endpoint, cfg.Tracker.APIKey, cfg.Tracker.ProjectSlug, cfg.Tracker.ActiveStates),
+		adapter:        factory(cfg.Tracker.Endpoint, cfg.Tracker.APIKey, cfg.Tracker.ProjectSlugs, cfg.Tracker.ActiveStates),
 		terminalStates: cfg.Tracker.TerminalStates,
 	}, nil
 }

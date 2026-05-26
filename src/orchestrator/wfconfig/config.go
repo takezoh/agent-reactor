@@ -26,7 +26,7 @@ type TrackerConfig struct {
 	Kind           string
 	Endpoint       string
 	APIKey         string
-	ProjectSlug    string
+	ProjectSlugs   []string
 	ActiveStates   []string
 	TerminalStates []string
 }
