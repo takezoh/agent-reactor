@@ -20,6 +20,16 @@ func ResumeCommand(baseCommand, sessionID string) string {
 	return StripWorktreeFlag(baseCommand) + " --resume " + sessionID
 }
 
+// ForkCommand returns the CLI invocation that forks the session identified
+// by parentID into a new independent branch. Empty parentID returns
+// baseCommand unchanged.
+func ForkCommand(baseCommand, parentID string) string {
+	if parentID == "" {
+		return baseCommand
+	}
+	return ResumeCommand(baseCommand, parentID) + " --fork-session"
+}
+
 // StripWorktreeFlag removes the Claude --worktree flag (and its optional
 // name argument) from a command line. Recognized forms:
 //

@@ -6,6 +6,8 @@ import (
 	"github.com/takezoh/agent-roost/client/state"
 )
 
+const claudeKeyForkParentID = "fork_parent_id"
+
 // Persist writes the Claude driver state into the bag SessionService
 // round-trips through sessions.json. Status is persisted so warm /
 // cold restart restores the prior status without resetting to Idle,
@@ -20,6 +22,9 @@ func (ClaudeDriver) Persist(s state.DriverState) map[string]string {
 	cs.PersistCommon(out)
 	if cs.ClaudeSessionID != "" {
 		out[claudeKeyClaudeSessionID] = cs.ClaudeSessionID
+	}
+	if cs.ForkParentID != "" {
+		out[claudeKeyForkParentID] = cs.ForkParentID
 	}
 	return out
 }
@@ -38,5 +43,6 @@ func (d ClaudeDriver) Restore(bag map[string]string, now time.Time) state.Driver
 	}
 	cs.RestoreCommon(bag)
 	cs.ClaudeSessionID = bag[claudeKeyClaudeSessionID]
+	cs.ForkParentID = bag[claudeKeyForkParentID]
 	return cs
 }

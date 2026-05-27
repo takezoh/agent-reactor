@@ -343,7 +343,17 @@ func firstRune(s string) (rune, bool) {
 
 func absorbIdentityFromHP(cs ClaudeState, hp hookPayload) ClaudeState {
 	if hp.SessionID != "" {
-		cs.ClaudeSessionID = hp.SessionID
+		if cs.ForkParentID != "" && hp.SessionID == cs.ForkParentID {
+			// The hook carries the parent session id, which arrives first when
+			// `--fork-session` is launched via `--resume <parent>`. Skip the
+			// overwrite to avoid poisoning ClaudeSessionID with the parent id.
+			// Claude will emit the real fork id in a subsequent hook.
+			slog.Debug("claude: fork: dropping parent session_id, waiting for fork id",
+				"parent_id", hp.SessionID)
+		} else {
+			cs.ClaudeSessionID = hp.SessionID
+			cs.ForkParentID = "" // fork id confirmed; lineage no longer needed
+		}
 	}
 	if hp.TranscriptPath != "" {
 		cs.TranscriptPath = hp.TranscriptPath

@@ -397,8 +397,12 @@ type CreateSessionPlanner interface {
 // ForkCommand returns the full launch command for the forked session derived
 // from s and the root frame's baseCommand. Returns ok=false when the driver
 // state does not yet have enough identity to fork (e.g. no session ID).
+// ForkChildState creates the initial DriverState for the forked session,
+// seeding lineage information from the parent state so the child can
+// recognise and reject the parent's session id on first hook delivery.
 type Forkable interface {
 	ForkCommand(s DriverState, baseCommand string) (command string, ok bool)
+	ForkChildState(parent DriverState, now time.Time) DriverState
 }
 
 // WarmStartRecoverer is an optional driver extension for restoring

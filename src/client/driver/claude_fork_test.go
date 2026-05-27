@@ -3,6 +3,7 @@ package driver
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClaudeForkCommand(t *testing.T) {
@@ -68,4 +69,34 @@ func TestClaudeForkCommand(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClaudeForkChildState(t *testing.T) {
+	d, _, now := newClaude(t)
+
+	t.Run("seeds parent id", func(t *testing.T) {
+		parent := ClaudeState{ClaudeSessionID: "parent-id-abc"}
+		child := d.ForkChildState(parent, now).(ClaudeState)
+		if child.ClaudeSessionID != "" {
+			t.Errorf("ForkChildState should not copy ClaudeSessionID, got %q", child.ClaudeSessionID)
+		}
+		if child.ForkParentID != "parent-id-abc" {
+			t.Errorf("ForkParentID = %q, want %q", child.ForkParentID, "parent-id-abc")
+		}
+	})
+
+	t.Run("empty parent id yields no ForkParentID", func(t *testing.T) {
+		parent := ClaudeState{ClaudeSessionID: ""}
+		child := d.ForkChildState(parent, now).(ClaudeState)
+		if child.ForkParentID != "" {
+			t.Errorf("ForkParentID = %q, want empty", child.ForkParentID)
+		}
+	})
+
+	t.Run("wrong parent type yields empty state", func(t *testing.T) {
+		child := d.ForkChildState(nil, time.Time{}).(ClaudeState)
+		if child.ForkParentID != "" || child.ClaudeSessionID != "" {
+			t.Errorf("unexpected non-empty fields in child state from nil parent")
+		}
+	})
 }

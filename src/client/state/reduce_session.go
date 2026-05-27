@@ -255,12 +255,14 @@ func resolveForkDrv(s State, connID ConnID, reqID string, rootF SessionFrame) (D
 
 // buildForkSession constructs and spawns the forked session.
 // Worktree creation is deliberately skipped: the fork shares the original's working directory.
+// The durable Command stored in the session/frame is rootF.Command (the base driver command),
+// not forkCommand (the bootstrap invocation including --resume/--fork-session).
+// This ensures Cold Start calls PrepareLaunch with the base command and lets the driver
+// reconstruct the correct --resume <fork-id> command from persisted state.
 func buildForkSession(s State, connID ConnID, reqID string, sess Session, sid SessionID, rootF SessionFrame, rootDrv, forkDrv Driver, forkCommand string) (State, []Effect) {
 	opts := LaunchOptions{Worktree: WorktreeOption{Enabled: false}}
-	driverState, _, err := prepareSessionDriver(s, forkDrv, sid, sess.Project, forkCommand, opts)
-	if err != nil {
-		return s, []Effect{errResp(connID, reqID, ErrCodeInvalidArgument, err.Error())}
-	}
+	forkable := rootDrv.(Forkable) // already validated in resolveForkDrv
+	driverState := forkable.ForkChildState(rootF.Driver, s.Now)
 	if rp, ok := rootDrv.(StartDirAware); ok {
 		if dir := rp.StartDir(rootF.Driver); dir != "" {
 			if wp, ok := forkDrv.(StartDirAware); ok {
@@ -269,14 +271,14 @@ func buildForkSession(s State, connID ConnID, reqID string, sess Session, sid Se
 		}
 	}
 
-	return spawnForkSession(s, connID, reqID, sess, forkDrv, driverState, forkCommand, opts)
+	return spawnForkSession(s, connID, reqID, sess, forkDrv, driverState, rootF.Command, forkCommand, opts)
 }
 
-func spawnForkSession(s State, connID ConnID, reqID string, sess Session, forkDrv Driver, driverState DriverState, forkCommand string, opts LaunchOptions) (State, []Effect) {
+func spawnForkSession(s State, connID ConnID, reqID string, sess Session, forkDrv Driver, driverState DriverState, durableCommand, launchCommand string, opts LaunchOptions) (State, []Effect) {
 	newSessID := allocSessionID()
 	rootFrameID := allocFrameID()
-	newSess := makeForkSession(s, sess, newSessID, rootFrameID, forkCommand, opts, driverState)
-	launch, err := forkDrv.PrepareLaunch(driverState, LaunchModeCreate, sess.Project, forkCommand, opts, isSandboxed(s, sess.Project, sess.Sandbox))
+	newSess := makeForkSession(s, sess, newSessID, rootFrameID, durableCommand, opts, driverState)
+	launch, err := forkDrv.PrepareLaunch(driverState, LaunchModeCreate, sess.Project, launchCommand, opts, isSandboxed(s, sess.Project, sess.Sandbox))
 	if err != nil {
 		return s, []Effect{errResp(connID, reqID, ErrCodeInvalidArgument, err.Error())}
 	}
@@ -289,20 +291,20 @@ func spawnForkSession(s State, connID ConnID, reqID string, sess Session, forkDr
 }
 
 // makeForkSession initialises a new Session value for a fork operation.
-func makeForkSession(s State, src Session, newSessID SessionID, rootFrameID FrameID, forkCommand string, opts LaunchOptions, driverState DriverState) Session {
+func makeForkSession(s State, src Session, newSessID SessionID, rootFrameID FrameID, durableCommand string, opts LaunchOptions, driverState DriverState) Session {
 	return Session{
 		ID:            newSessID,
 		Project:       src.Project,
 		CreatedAt:     s.Now,
 		ActiveFrameID: rootFrameID,
-		Command:       forkCommand,
+		Command:       durableCommand,
 		Sandbox:       src.Sandbox,
 		LaunchOptions: opts,
 		Driver:        driverState,
 		Frames: []SessionFrame{{
 			ID:        rootFrameID,
 			Project:   src.Project,
-			Command:   forkCommand,
+			Command:   durableCommand,
 			CreatedAt: s.Now,
 			Driver:    driverState,
 		}},

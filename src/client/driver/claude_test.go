@@ -1792,3 +1792,61 @@ func TestShellQuote(t *testing.T) {
 		}
 	}
 }
+
+// === absorbIdentityFromHP fork guard ===
+
+func TestAbsorbIdentityForkGuard(t *testing.T) {
+	t.Run("parent id skipped when ForkParentID set and ClaudeSessionID empty", func(t *testing.T) {
+		cs := ClaudeState{ForkParentID: "parent-abc"}
+		hp := hookPayload{SessionID: "parent-abc"}
+		got := absorbIdentityFromHP(cs, hp)
+		if got.ClaudeSessionID != "" {
+			t.Errorf("ClaudeSessionID = %q, want empty (parent id must be dropped)", got.ClaudeSessionID)
+		}
+		if got.ForkParentID != "parent-abc" {
+			t.Errorf("ForkParentID cleared prematurely; got %q", got.ForkParentID)
+		}
+	})
+
+	t.Run("real fork id accepted and ForkParentID cleared", func(t *testing.T) {
+		cs := ClaudeState{ForkParentID: "parent-abc"}
+		hp := hookPayload{SessionID: "fork-xyz"}
+		got := absorbIdentityFromHP(cs, hp)
+		if got.ClaudeSessionID != "fork-xyz" {
+			t.Errorf("ClaudeSessionID = %q, want %q", got.ClaudeSessionID, "fork-xyz")
+		}
+		if got.ForkParentID != "" {
+			t.Errorf("ForkParentID = %q, want empty after fork id confirmed", got.ForkParentID)
+		}
+	})
+
+	t.Run("no ForkParentID: normal absorption", func(t *testing.T) {
+		cs := ClaudeState{}
+		hp := hookPayload{SessionID: "some-id"}
+		got := absorbIdentityFromHP(cs, hp)
+		if got.ClaudeSessionID != "some-id" {
+			t.Errorf("ClaudeSessionID = %q, want %q", got.ClaudeSessionID, "some-id")
+		}
+	})
+}
+
+// === PrepareLaunch re-fork path ===
+
+func TestClaudePrepareLaunchReForkOnColdStart(t *testing.T) {
+	d := NewClaudeDriver(testHome, testEventLogDir, ClaudeOptions{}, "less")
+	cs := ClaudeState{
+		CommonState:  CommonState{StartDir: "/repo"},
+		ForkParentID: "parent-id-abc",
+		// ClaudeSessionID empty: fork process never confirmed its id before restart
+	}
+	plan, err := d.PrepareLaunch(cs, state.LaunchModeColdStart, "/repo", "claude", state.LaunchOptions{}, true)
+	if err != nil {
+		t.Fatalf("PrepareLaunch error: %v", err)
+	}
+	if !strings.Contains(plan.Command, "--resume parent-id-abc") {
+		t.Errorf("re-fork command missing --resume parent-id-abc; got %q", plan.Command)
+	}
+	if !strings.Contains(plan.Command, "--fork-session") {
+		t.Errorf("re-fork command missing --fork-session; got %q", plan.Command)
+	}
+}

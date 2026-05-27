@@ -49,6 +49,11 @@ type ClaudeState struct {
 
 	// Identity (set via Restore or DEvHook session-start payload).
 	ClaudeSessionID string // distinct from roost session id; the *Claude* conversation id
+	// ForkParentID is the ClaudeSessionID of the session this was forked from.
+	// It is used to reject the parent id arriving in the first hook after
+	// `--fork-session` launch, so the parent id never poisons ClaudeSessionID.
+	// Cleared once the real fork id is confirmed.
+	ForkParentID string
 
 	// Hook ordering: stale events (Timestamp <= LastBridgeTS) are dropped.
 	LastBridgeTS time.Time
@@ -160,6 +165,17 @@ func (d ClaudeDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, 
 	command = claudecli.SandboxFlags(command, sandboxed)
 	if mode != state.LaunchModeColdStart || cs.ClaudeSessionID == "" {
 		if mode == state.LaunchModeColdStart {
+			if cs.ForkParentID != "" && isAlphanumHyphen(cs.ForkParentID) {
+				// Fork id was never confirmed (daemon restarted before first hook).
+				// Re-fork from the parent so the user gets a new branch rather
+				// than losing both the fork attempt and the parent conversation.
+				slog.Info("claude: coldstart re-fork", "project", project, "parent", cs.ForkParentID)
+				return state.LaunchPlan{
+					Command:  claudecli.ForkCommand(command, cs.ForkParentID),
+					StartDir: startDir,
+					Stdin:    options.InitialInput,
+				}, nil
+			}
 			slog.Debug("claude: coldstart without resume", "project", project, "reason", "no_session_id")
 		}
 		return state.LaunchPlan{

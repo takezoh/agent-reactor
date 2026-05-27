@@ -1623,6 +1623,7 @@ type forkableState struct {
 	DriverStateBase
 	sessionID string
 	startDir  string
+	parentID  string // set by ForkChildState to record lineage
 }
 
 // forkableDriver is a minimal StartDirAware + Forkable driver for fork tests.
@@ -1669,6 +1670,14 @@ func (forkableDriver) ForkCommand(s DriverState, baseCommand string) (string, bo
 		return "", false
 	}
 	return baseCommand + " --fork " + fs.sessionID, true
+}
+
+func (forkableDriver) ForkChildState(parent DriverState, now time.Time) DriverState {
+	fs, ok := parent.(forkableState)
+	if !ok {
+		return forkableState{}
+	}
+	return forkableState{parentID: fs.sessionID}
 }
 
 func init() {
@@ -1730,6 +1739,22 @@ func TestForkSessionCreatesNewSession(t *testing.T) {
 	}
 	if spawn.SessionID != newSess.ID {
 		t.Errorf("spawn.SessionID = %q, want %q", spawn.SessionID, newSess.ID)
+	}
+	// The durable Command in session/frame must be the base command, not the
+	// bootstrap fork command, so Cold Start can call PrepareLaunch correctly.
+	if newSess.Command != "forkable" {
+		t.Errorf("fork session Command = %q, want base command %q", newSess.Command, "forkable")
+	}
+	if newSess.Frames[0].Command != "forkable" {
+		t.Errorf("fork frame Command = %q, want base command %q", newSess.Frames[0].Command, "forkable")
+	}
+	// ForkChildState must have seeded the parent session id into the child state.
+	childState, ok := newSess.Frames[0].Driver.(forkableState)
+	if !ok {
+		t.Fatal("fork frame Driver is not forkableState")
+	}
+	if childState.parentID != "ext-id-001" {
+		t.Errorf("child parentID = %q, want %q", childState.parentID, "ext-id-001")
 	}
 }
 

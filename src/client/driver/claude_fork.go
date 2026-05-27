@@ -1,6 +1,8 @@
 package driver
 
 import (
+	"time"
+
 	"github.com/takezoh/agent-roost/client/state"
 	"github.com/takezoh/agent-roost/platform/lib/claude/cli"
 )
@@ -8,15 +10,22 @@ import (
 // ForkCommand returns the CLI invocation for forking the current Claude
 // conversation into a new independent branch. It requires a known
 // ClaudeSessionID; returns ok=false when one is not yet available.
-//
-// The command is built by resuming the existing conversation
-// (--resume <id>) and requesting a new conversation ID (--fork-session).
-// --worktree is stripped by cli.ResumeCommand since the forked session
-// inherits the original StartDir and must not create a new worktree.
 func (d ClaudeDriver) ForkCommand(s state.DriverState, baseCommand string) (string, bool) {
 	cs, ok := s.(ClaudeState)
 	if !ok || cs.ClaudeSessionID == "" || !isAlphanumHyphen(cs.ClaudeSessionID) {
 		return "", false
 	}
-	return cli.ResumeCommand(baseCommand, cs.ClaudeSessionID) + " --fork-session", true
+	return cli.ForkCommand(baseCommand, cs.ClaudeSessionID), true
+}
+
+// ForkChildState creates the initial driver state for a forked session.
+// It records the parent's ClaudeSessionID as ForkParentID so the child
+// can reject the parent id when it arrives in the first hook after
+// `--fork-session` launch, preventing identity poisoning.
+func (d ClaudeDriver) ForkChildState(parent state.DriverState, now time.Time) state.DriverState {
+	cs := d.NewState(now).(ClaudeState)
+	if parentCS, ok := parent.(ClaudeState); ok && parentCS.ClaudeSessionID != "" {
+		cs.ForkParentID = parentCS.ClaudeSessionID
+	}
+	return cs
 }
