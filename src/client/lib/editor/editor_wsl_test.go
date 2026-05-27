@@ -1,6 +1,8 @@
 package editor
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestWslDistro_set(t *testing.T) {
 	t.Setenv("WSL_DISTRO_NAME", "MyDistro")
@@ -16,21 +18,18 @@ func TestWslDistro_unset(t *testing.T) {
 	}
 }
 
-func TestToEditorTarget_nonWSL(t *testing.T) {
-	t.Setenv("WSL_DISTRO_NAME", "")
-	const want = "/workspace/my-project"
-	if got := toEditorTarget(want); got != want {
-		t.Errorf("toEditorTarget(%q) = %q, want unchanged path in non-WSL", want, got)
+func TestHasRemoteFlag(t *testing.T) {
+	cases := []struct {
+		parts []string
+		want  bool
+	}{
+		{[]string{"code"}, false},
+		{[]string{"code", "--reuse-window"}, false},
+		{[]string{"code", "--remote", "wsl+Ubuntu"}, true},
 	}
-}
-
-func TestToEditorTarget_wslpathUnavailable(t *testing.T) {
-	// When WSL_DISTRO_NAME is set but wslpath is unavailable (e.g. in CI),
-	// toEditorTarget must fall back to the original path rather than error.
-	t.Setenv("WSL_DISTRO_NAME", "TestDistro")
-	t.Setenv("PATH", "") // make wslpath unlookable
-	const want = "/workspace/fallback"
-	if got := toEditorTarget(want); got != want {
-		t.Errorf("toEditorTarget fallback = %q, want %q", got, want)
+	for _, c := range cases {
+		if got := hasRemoteFlag(c.parts); got != c.want {
+			t.Errorf("hasRemoteFlag(%v) = %v, want %v", c.parts, got, c.want)
+		}
 	}
 }
