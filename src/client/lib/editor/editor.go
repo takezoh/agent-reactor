@@ -6,6 +6,7 @@ package editor
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,12 +53,18 @@ func Launch(command, target string) error {
 	if len(parts) == 0 {
 		return fmt.Errorf("editor: empty command")
 	}
+	bin := parts[0]
+	resolved, err := exec.LookPath(bin)
+	if err != nil {
+		return fmt.Errorf("editor: %q not found in PATH: %w", bin, err)
+	}
 	args := make([]string, 0, len(parts[1:])+1)
 	args = append(args, parts[1:]...)
 	args = append(args, target)
-	cmd := exec.CommandContext(context.Background(), parts[0], args...)
+	slog.Info("editor: launching", "bin", resolved, "target", target)
+	cmd := exec.CommandContext(context.Background(), resolved, args...)
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("editor: start %s: %w", parts[0], err)
+		return fmt.Errorf("editor: start %s: %w", resolved, err)
 	}
 	go func() { _ = cmd.Wait() }()
 	return nil
