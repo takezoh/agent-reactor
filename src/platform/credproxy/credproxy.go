@@ -208,7 +208,14 @@ func buildToolProviders(
 		func(p string) config.MCPProxyConfig { return resolveSandbox(p).Proxy.MCPProxy },
 	)
 	se := secretenv.NewSpecBuilder(ctx,
-		secretenv.Config{RunBase: runBase, ContainerRunDir: paths.RunDir, ContainerBinPath: paths.BinPath},
+		secretenv.Config{
+			RunBase:          runBase,
+			ContainerRunDir:  paths.RunDir,
+			ContainerBinPath: paths.BinPath,
+			HostPathMountPrefixFor: func(p string) string {
+				return resolveSandbox(p).Devcontainer.HostPathMountPrefix
+			},
+		},
 		func(p string) config.SecretEnvConfig { return resolveSandbox(p).Proxy.SecretEnv },
 	)
 	return []container.Provider{he, mcp, se}

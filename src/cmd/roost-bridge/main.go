@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"syscall"
 
 	"github.com/takezoh/agent-roost/client/event"
@@ -175,7 +176,11 @@ func runSecretRun(args []string) error {
 	}
 	defer conn.Close()
 
-	req := secretenv.Request{EnvFilePath: *envFile}
+	absEnvFile, err := filepath.Abs(*envFile)
+	if err != nil {
+		return fmt.Errorf("secret-run: resolve env-file path: %w", err)
+	}
+	req := secretenv.Request{EnvFilePath: absEnvFile}
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return fmt.Errorf("secret-run: send request: %w", err)
 	}
@@ -187,7 +192,9 @@ func runSecretRun(args []string) error {
 	if resp.Error != "" {
 		return fmt.Errorf("secret-run: %s", resp.Error)
 	}
-	conn.Close()
+	// conn is not closed explicitly here: Go net sockets have FD_CLOEXEC set, so
+	// syscall.Exec closes it at the OS level. The defer conn.Close() handles all
+	// error-return paths above.
 
 	env := mergeSecretEnv(os.Environ(), resp.Env)
 	cmd, err := resolveExecPath(rest[0])

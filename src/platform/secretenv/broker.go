@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -25,19 +26,22 @@ type broker struct {
 	project string
 	onStop  func()
 
-	// mu guards gate and credproxyBin. These fields may be updated by ensureBroker
-	// (under SpecBuilder.mu) while resolve() runs concurrently in connection-handler
-	// goroutines, so a broker-level RWMutex is required.
-	mu           sync.RWMutex
-	gate         *Gate
-	credproxyBin string
+	// mu guards gate, credproxyBin, and hostPathMountPrefix. These fields may be
+	// updated by ensureBroker (under SpecBuilder.mu) while resolve() runs
+	// concurrently in connection-handler goroutines, so a broker-level RWMutex is
+	// required.
+	mu                  sync.RWMutex
+	gate                *Gate
+	credproxyBin        string
+	hostPathMountPrefix string
 }
 
-func (b *broker) setConfig(gate *Gate, credproxyBin string) {
+func (b *broker) setConfig(gate *Gate, credproxyBin, hostPathMountPrefix string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.gate = gate
 	b.credproxyBin = credproxyBin
+	b.hostPathMountPrefix = hostPathMountPrefix
 }
 
 func (b *broker) serve() {
@@ -80,17 +84,28 @@ func (b *broker) resolve(req Request) Response {
 	b.mu.RLock()
 	gate := b.gate
 	bin := b.credproxyBin
+	mountPrefix := b.hostPathMountPrefix
 	b.mu.RUnlock()
 
-	if err := gate.Check(req.EnvFilePath); err != nil {
-		slog.Warn("secretenv: gate denied", "project", b.project, "path", req.EnvFilePath, "err", err)
+	// Reject relative paths: only the container shim (which knows its CWD) can
+	// canonicalize relative paths via filepath.Abs. A relative path here means
+	// either a shim bug or a direct socket connection attempt.
+	if !filepath.IsAbs(req.EnvFilePath) {
+		slog.Warn("secretenv: rejected relative path", "project", b.project, "path", req.EnvFilePath)
+		return Response{Error: "secretenv: env-file path must be absolute"}
+	}
+
+	hostPath := containerToHost(filepath.Clean(req.EnvFilePath), mountPrefix)
+
+	if err := gate.Check(hostPath); err != nil {
+		slog.Warn("secretenv: gate denied", "project", b.project, "path", hostPath, "err", err)
 		return Response{Error: err.Error()}
 	}
 
 	ctx, cancel := context.WithTimeout(b.ctx, resolveTimeout)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, bin, "resolve", "--env-file", req.EnvFilePath).Output()
+	out, err := exec.CommandContext(ctx, bin, "resolve", "--env-file", hostPath).Output()
 	if err != nil {
 		// Output() populates ExitError.Stderr when cmd.Stderr is nil, giving
 		// diagnostic detail (hook misconfiguration, auth errors, etc.) that

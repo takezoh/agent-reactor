@@ -25,6 +25,10 @@ type Config struct {
 	RunBase          string
 	ContainerRunDir  string
 	ContainerBinPath string
+	// HostPathMountPrefixFor returns the HostPathMountPrefix for a given project
+	// path. Used to translate container-absolute env-file paths to host-absolute
+	// paths before gating. Nil means no translation (bare-host or no devcontainer).
+	HostPathMountPrefixFor func(projectPath string) string
 }
 
 // SpecBuilder implements container.Provider for secret env-file resolution.
@@ -80,7 +84,12 @@ func (b *SpecBuilder) ContainerSpec(_ context.Context, projectPath string) (cont
 		return container.Spec{}, fmt.Errorf("secretenv: mkdir run dir: %w", err)
 	}
 
-	if err := b.ensureBroker(projectPath, projRunDir, cfg.Allow, credproxyBin); err != nil {
+	hostPrefix := ""
+	if b.cfg.HostPathMountPrefixFor != nil {
+		hostPrefix = b.cfg.HostPathMountPrefixFor(projectPath)
+	}
+
+	if err := b.ensureBroker(projectPath, projRunDir, cfg.Allow, credproxyBin, hostPrefix); err != nil {
 		return container.Spec{}, err
 	}
 
@@ -98,13 +107,13 @@ func (b *SpecBuilder) ContainerSpec(_ context.Context, projectPath string) (cont
 	}, nil
 }
 
-func (b *SpecBuilder) ensureBroker(projectPath, projRunDir string, allow []string, credproxyBin string) error {
+func (b *SpecBuilder) ensureBroker(projectPath, projRunDir string, allow []string, credproxyBin, hostPathMountPrefix string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if br, ok := b.brokers[projectPath]; ok {
-		// Update gate and binary on config change. setConfig uses broker's own
-		// RWMutex so concurrent resolve() calls see a consistent update.
-		br.setConfig(NewGate(allow), credproxyBin)
+		// Update gate, binary, and mount prefix on config change. setConfig uses
+		// broker's own RWMutex so concurrent resolve() calls see a consistent update.
+		br.setConfig(NewGate(allow), credproxyBin, hostPathMountPrefix)
 		return nil
 	}
 
@@ -117,12 +126,13 @@ func (b *SpecBuilder) ensureBroker(projectPath, projRunDir string, allow []strin
 	}
 
 	br := &broker{
-		ctx:          b.ctx,
-		sock:         sockPath,
-		ln:           ln,
-		project:      projectPath,
-		gate:         NewGate(allow),
-		credproxyBin: credproxyBin,
+		ctx:                 b.ctx,
+		sock:                sockPath,
+		ln:                  ln,
+		project:             projectPath,
+		gate:                NewGate(allow),
+		credproxyBin:        credproxyBin,
+		hostPathMountPrefix: hostPathMountPrefix,
 		onStop: func() {
 			b.mu.Lock()
 			delete(b.brokers, projectPath)

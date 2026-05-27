@@ -229,13 +229,20 @@ Configure the **allowlist** in `~/.roost/settings.toml` (user scope) or `<projec
 # allow: env-file paths the container is permitted to request.
 # Uses filepath.Match — '*' matches within one path segment only, not recursively.
 # Default-deny when empty. Feature is inactive when no patterns are listed.
+# Patterns are matched against HOST paths (after HostPathMountPrefix is stripped).
 allow = [
-  "/workspace/myproject/*.env",
+  "/home/user/myproject/*.env",
   "/home/user/.secrets/*.env",
 ]
 ```
 
 `allow` lists are concatenated across user and project scope — project entries extend the user allowlist, never replace it.
+
+**Path forms for `--env-file`:**
+
+- **Relative paths** (`.secrets.env`, `../infra/prod.env`) are resolved against the container's working directory by the shim before the host gate sees them. Pass whatever form your shell uses — the broker receives a container-absolute path.
+- **`~` and `$VAR`** are expanded by the shell in normal (unquoted or double-quoted) usage before the binary receives the path. Single-quoting (`'~/.env'`) suppresses shell expansion; the broker then receives the literal string `~/.env`, which will not match an absolute allow pattern and is intentional.
+- **`allow` patterns use host paths.** With `host_path_mount_prefix = "/mnt"` the container path `/mnt/home/u/proj/prod.env` maps to host path `/home/u/proj/prod.env` — write the allow pattern as `/home/u/proj/*.env`, not `/mnt/home/u/proj/*.env`.
 
 **Hook configuration** (which backend resolves the references: op/mise/vault) lives in credproxy's own config, not roost's. Configure it in `~/.config/credproxy/config.toml`:
 

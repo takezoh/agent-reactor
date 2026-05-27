@@ -160,9 +160,16 @@ sequenceDiagram
 
 **Container shim** (`secretenv-shims/credproxy`): a shell script that calls `roost-bridge secret-run "$@"`. It is written to `<projRunDir>/secretenv-shims/` and prepended to container `PATH`, so existing scripts that call `credproxy run` work without modification.
 
-**Broker** (`platform/secretenv/broker.go`): per-project Unix socket server (`<projRunDir>/secretenv.sock`, bind-mounted at `/opt/roost/run/secretenv.sock`). Each connection is handled in its own goroutine. `gate` and `credproxyBin` are guarded by a `sync.RWMutex` so concurrent request handling during config reload is race-free. After the gate passes, the broker execs `credproxy resolve --env-file <path>` on the host and parses its JSON output.
+**Broker** (`platform/secretenv/broker.go`): per-project Unix socket server (`<projRunDir>/secretenv.sock`, bind-mounted at `/opt/roost/run/secretenv.sock`). Each connection is handled in its own goroutine. `gate`, `credproxyBin`, and `hostPathMountPrefix` are guarded by a `sync.RWMutex` so concurrent request handling during config reload is race-free.
 
-**Gate** (`platform/secretenv/gate.go`): `filepath.Match` allowlist, default-deny. `*` matches within a single path segment only — does not cross `/`. Patterns are evaluated against the raw container-supplied path.
+Before the gate is checked, the broker applies path canonicalization in order:
+1. Reject non-absolute paths — the container shim performs `filepath.Abs` (container CWD); a relative path arriving at the broker means a shim bug or a direct socket attempt.
+2. `filepath.Clean` — collapse any `.`/`..` sequences.
+3. `containerToHost` — strip `HostPathMountPrefix` (boundary-safe: `/mnt` does not strip `/mnternal`). When the prefix is empty (bare-host or no devcontainer) the path is unchanged.
+
+After canonicalization, `gate.Check(hostPath)` runs against the resulting **host absolute path**, and the same `hostPath` is forwarded to `credproxy resolve --env-file`. This is the **gate ≡ open invariant**: the path checked by the gate is byte-identical to the path credproxy opens. The broker must never expand `~`/`$VAR` (that would use the host daemon's env, not the container's, and break the invariant with any post-gate expansion).
+
+**Gate** (`platform/secretenv/gate.go`): `filepath.Match` allowlist, default-deny. `*` matches within a single path segment only — does not cross `/`. Patterns are matched against the **host absolute path** (after `HostPathMountPrefix` is stripped). `allow` values in `settings.toml` should use host paths.
 
 **Resolution**: entirely credproxy's concern. Hook backend (op/mise/vault) and its configuration (`~/.config/credproxy/config.toml`) are never known to roost. roost's role is gate + socket plumbing only. The `credproxy resolve` output contains only env-file-declared secrets; host environment variables are never included.
 
