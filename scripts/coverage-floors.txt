@@ -17,6 +17,7 @@ github.com/takezoh/agent-roost/client/driver/vt                    55
 github.com/takezoh/agent-roost/client/event                        20
 github.com/takezoh/agent-roost/client/lib/claude/transcript        75
 github.com/takezoh/agent-roost/client/lib/codex/transcript         60
+github.com/takezoh/agent-roost/client/lib/editor                   80
 github.com/takezoh/agent-roost/client/lib/peers                    50
 github.com/takezoh/agent-roost/client/procio                       95
 github.com/takezoh/agent-roost/client/proto                        85
