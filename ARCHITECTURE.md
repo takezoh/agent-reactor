@@ -1,12 +1,10 @@
 # Architecture
 
-This is the canonical overview of the system: its vision, design principles, the three-layer structure, and dependencies. **Per-layer deep dives** — terminology, package responsibilities, design decisions, and dependency graphs — live under [`docs/technical/`](docs/technical/README.md); coding conventions are in [`docs/agent/contributing.md`](docs/agent/contributing.md).
+This is the canonical overview of the system: its scope, design principles, and three-layer structure. **Per-layer deep dives** — terminology, package responsibilities, design decisions, and dependency graphs — live under [`docs/technical/`](docs/technical/README.md); coding conventions are in [`docs/agent/contributing.md`](docs/agent/contributing.md).
 
-## Vision
+## Scope
 
-When running AI agents across multiple projects, you lose track of which agents are working, which are waiting for input, and which need tool approval. Switching between them in raw tmux is slow and error-prone. roost solves this: launch sessions in seconds, see their status at a glance, and switch instantly.
-
-roost is a session lifecycle manager — not an agent orchestrator. It does not control what agents do; it gives you visibility and fast access to all of them from a single tmux-based TUI. The separate `orchestrator` binary *does* drive agents autonomously, against an issue tracker — a different concern in a different layer.
+roost is a **session lifecycle manager — not an agent orchestrator**. It does not control what agents do; it gives you visibility and fast access to every agent session from a single tmux-based TUI. The separate `orchestrator` binary *does* drive agents autonomously against an issue tracker — a different concern in a different layer. This split is the top-level boundary the layer structure below enforces.
 
 ## Design Principles
 
@@ -30,12 +28,7 @@ A layer's *role* decides how it realizes the core. The canonical detail lives in
 
 ## Documentation
 
-All documentation is organized by **audience × architecture layer** under [`docs/`](docs/README.md):
-
-- **Users** — [user guide](docs/user/README.md): [getting started](docs/user/getting-started.md), [roost TUI](docs/user/roost-tui.md), [orchestrator](docs/user/orchestrator.md), [sandbox](docs/user/sandbox.md)
-- **Agents / contributors** — [agent guide](docs/agent/README.md): [contributing](docs/agent/contributing.md), [WORKFLOW.md authoring](docs/agent/workflow-authoring.md), [testing](docs/agent/testing.md)
-- **Technical (per layer)** — [platform/](docs/technical/platform/README.md) · [client/](docs/technical/client/README.md) · [orchestrator/](docs/technical/orchestrator/README.md)
-- **Cross-cutting** — [agent guardrails](docs/technical/guardrails.md) (controlling autonomous agents: admission, concurrency, capability, autonomy, liveness) · [code & architecture enforcement](docs/technical/code-enforcement.md) (the enforcement side of this document: depguard rules, length limits, feature-flag mechanics)
+All documentation is organized by **audience × architecture layer** under [`docs/`](docs/README.md) — user guide, agent/contributor guide, per-layer technical deep dives, and cross-cutting topics (guardrails, code & architecture enforcement).
 
 ## Layer Structure
 
@@ -58,25 +51,10 @@ The full set of `depguard` rules (including the intra-`client/` isolation rules)
 
 ### The layers at a glance
 
-- **[`platform/`](docs/technical/platform/README.md)** — shared base: the agent-launch primitive (`agentlaunch`: argv-based `Spawn` + `SplitArgs`, host/container `Dispatcher`, on `procgroup`), sandbox backends, host-exec and MCP-proxy brokers, path translation, logger, feature flags, tool wrappers (`lib/<tool>`), trackers, metrics, credential providers. Tool-specific knowledge is allowed here so it stays out of the generic layers above. Agent-agnostic launch lives here; per-agent command construction stays in `lib/<tool>`, while transport, `codexclient.Conn`, and `Handler` remain per-layer.
+- **[`platform/`](docs/technical/platform/README.md)** — shared base: the agent-launch primitive (`agentlaunch`: argv-based `Spawn` + `SplitArgs`, host/container `Dispatcher`, on `procgroup`), sandbox backends, host-exec and MCP-proxy brokers, path translation, logger, tool wrappers (`lib/<tool>`), trackers, metrics, credential providers. Tool-specific knowledge is allowed here so it stays out of the generic layers above. Agent-agnostic launch lives here; per-agent command construction stays in `lib/<tool>`, while transport, `codexclient.Conn`, and `Handler` remain per-layer.
 - **[`client/`](docs/technical/client/README.md)** — all of roost: the pure `state/` domain core, `runtime/` imperative shell, value-type `driver/` and `connector/` plugins, `runtime/subsystem/` (`cli` and `stream`), the `proto/` IPC wire layer, and the Bubbletea `tui/`. Terminology, the design-decision log, and the full dependency graph are documented there.
 - **[`orchestrator/`](docs/technical/orchestrator/README.md)** — a TUI-less, single-authority service implementing the [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md): `workflowfile/`, `wfconfig/`, `scheduler/` (poll/dispatch/reconcile), `workspace/`, `agent/`, `prompt/`, `httpserver/`, `lineargql/`. It shares `platform/` with roost but does not import `client/`. SPEC ↔ package correspondence and deviation posture: [`docs/technical/orchestrator/symphony-conformance.md`](docs/technical/orchestrator/symphony-conformance.md) and [`plans/05-conformance.md`](plans/.archive/symphony-orchestrator/05-conformance.md).
 
 Files matching `client/state/reduce_*.go` host state-machine dispatch tables. They are exempt from the 80-line function limit (see [AGENTS.md](AGENTS.md)) because forced extraction of dispatch arms fragments the state machine without adding clarity. File-length (500 lines) and naming rules still apply.
 
 The daemon and TUI are separate processes communicating via typed IPC (`proto`) over a Unix socket, with two physical endpoints (host + container). Details, the per-package breakdown, terminology, and the design-decision log are in the [client deep dive](docs/technical/client/README.md).
-
-## Testing Strategy
-
-Testability is the first [core principle](#core-principles-all-layers), realized differently per layer: roost's Functional Core / Imperative Shell split makes the core testable without mocks, while the orchestrator injects fakes through `Deps`. Per-layer test patterns, the Coverage Tier scheme, and CI enforcement are documented in [docs/agent/testing.md](docs/agent/testing.md).
-
-## Dependencies
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `charm.land/bubbletea/v2` | v2.0.2 | TUI framework |
-| `charm.land/lipgloss/v2` | v2.0.2 | Styling |
-| `charm.land/bubbles/v2` | v2.1.0 | Key bindings |
-| `github.com/BurntSushi/toml` | v1.6.0 | Configuration file |
-| `github.com/fsnotify/fsnotify` | v1.9.0 | File watching |
-| `golang.org/x/term` | v0.41.0 | Terminal size detection |

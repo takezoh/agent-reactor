@@ -1,6 +1,6 @@
 # Technical Documentation
 
-Internals organized by the three architecture layers. The canonical overview — vision, design principles, the layer trees, import boundaries, and dependencies — is in [ARCHITECTURE.md](../../ARCHITECTURE.md). This directory holds the per-layer deep dives.
+Internals organized by the three architecture layers. The canonical overview — scope, design principles, the layer trees, and import boundaries — is in [ARCHITECTURE.md](../../ARCHITECTURE.md). This directory holds the per-layer deep dives.
 
 ## The three layers
 

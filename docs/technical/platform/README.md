@@ -23,7 +23,6 @@ Because it sits below both services, `platform/` is where tool-specific knowledg
 | `platform/mcpproxy/` | MCP proxy broker — runs MCP servers on the host with JSON-RPC stdio relayed into the container, with tool-level policy enforcement. Generates a `.mcp.json` overlay so Claude Code routes configured aliases through the broker. |
 | `platform/pathmap/` | Container↔host path translation using `WrappedLaunch.Mounts`. |
 | `platform/logger/` | `slog` initialization + log file management. |
-| `platform/features/` | Feature flags — `Flag`/`Set` types (runtime) and build-tag `const` (compile-time). No external deps, so the pure `state/` core can import it. |
 | `platform/lib/` | External tool integration — `git`, `github`, `gemini`, `wsl`, `openurl`, `notify`, …  Per-agent argv builders: `lib/codex/argv.go` (`AppServerListenArgs`, `RemoteAttachArgs`, `ParseCommand([]string)`, `ShellJoinArgv`, driver constants) and `lib/claude/cli/argv.go` (`SandboxFlags`, `AppServerArgs`). |
 | `platform/tracker/` | Issue tracker adapters (e.g. `linear/`). Shared by the orchestrator. |
 | `platform/metrics/` | Token / runtime metrics accumulation. |
@@ -38,11 +37,7 @@ Because it sits below both services, `platform/` is where tool-specific knowledg
 - **[brokers.md](brokers.md)** — implementation of `hostexec` + `mcpproxy` + `credproxy`: SCM_RIGHTS proxied execution, JSON-RPC tool gating, per-project tokens. The security model is in [sandbox.md](sandbox.md).
 - **[agent-protocol.md](agent-protocol.md)** — `agent/codexclient` + `codexschema` (v1/v2) + `lib/codex` + `lib/claude`. The Codex app-server stdio protocol, the turn sequence, and the claude-app-server shim's translation.
 - **[sandbox.md](sandbox.md)** — `sandbox/` backends: per-project devcontainer isolation, image resolution, credential proxy.
-- Agent-control guardrails (capability sandboxing, autonomy policy, concurrency, liveness) are in [guardrails.md](../guardrails.md); code-level enforcement (import boundaries, length limits, feature flags) is in [code-enforcement.md](../code-enforcement.md).
-
-## Feature flags
-
-The `features/` mechanism lives here because it must be importable by the pure `state/` core without pulling in third-party packages — `features/` imports nothing outside the standard library. `state.State.Features` is set once at startup and never mutated (preserving `Reduce`'s purity); `tui/` receives the active flag list over `proto` (`EvtSessionsChanged.Features` as `[]string`) and rebuilds its own `features.Set`. There are two independent flag mechanisms (runtime vs compile-time); how to add each is in [code-enforcement.md → feature flags](../code-enforcement.md#4-feature-flags).
+- Agent-control guardrails (capability sandboxing, autonomy policy, concurrency, liveness) are in [guardrails.md](../guardrails.md); code-level enforcement (import boundaries, length limits) is in [code-enforcement.md](../code-enforcement.md).
 
 ## Sandbox isolation and credential brokering
 

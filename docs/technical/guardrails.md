@@ -128,4 +128,4 @@ Reconcile (`scheduler`, SPEC §7/§16) bounds how long an agent may run and how 
 - Broker implementation (capability enforcement): [brokers.md](platform/brokers.md) · security model: [sandbox.md](platform/sandbox.md)
 - Agent protocol (approval/sandbox options, turn sequence): [agent-protocol.md](platform/agent-protocol.md)
 - Orchestrator pipeline & state machines: [orchestrator README](orchestrator/README.md)
-- Code/architecture enforcement (depguard, length limits, feature flags): [code-enforcement.md](code-enforcement.md)
+- Code/architecture enforcement (depguard, length limits): [code-enforcement.md](code-enforcement.md)
