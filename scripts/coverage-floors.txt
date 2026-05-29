@@ -22,11 +22,11 @@ github.com/takezoh/agent-roost/client/lib/peers                    50
 github.com/takezoh/agent-roost/client/procio                       95
 github.com/takezoh/agent-roost/client/proto                        85
 github.com/takezoh/agent-roost/client/proto/sessions               80
-github.com/takezoh/agent-roost/client/runtime                      55
+github.com/takezoh/agent-roost/client/runtime                      58
 github.com/takezoh/agent-roost/client/runtime/framereg             95
 github.com/takezoh/agent-roost/client/runtime/subsystem            15
 github.com/takezoh/agent-roost/client/runtime/subsystem/cli        70
-github.com/takezoh/agent-roost/client/runtime/subsystem/stream     50
+github.com/takezoh/agent-roost/client/runtime/subsystem/stream     72
 github.com/takezoh/agent-roost/client/runtime/worker               90
 github.com/takezoh/agent-roost/client/state                        80
 github.com/takezoh/agent-roost/client/state/view                   95
