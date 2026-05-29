@@ -1,6 +1,6 @@
 # Architecture
 
-This is the canonical overview of the system: its vision, design principles, the three-layer structure, and cross-cutting concerns (feature flags, dependencies). **Per-layer deep dives** — terminology, package responsibilities, design decisions, and dependency graphs — live under [`docs/technical/`](docs/technical/README.md); coding conventions are in [`docs/agent/contributing.md`](docs/agent/contributing.md).
+This is the canonical overview of the system: its vision, design principles, the three-layer structure, and dependencies. **Per-layer deep dives** — terminology, package responsibilities, design decisions, and dependency graphs — live under [`docs/technical/`](docs/technical/README.md); coding conventions are in [`docs/agent/contributing.md`](docs/agent/contributing.md).
 
 ## Vision
 
@@ -65,10 +65,6 @@ The full set of `depguard` rules (including the intra-`client/` isolation rules)
 Files matching `client/state/reduce_*.go` host state-machine dispatch tables. They are exempt from the 80-line function limit (see [AGENTS.md](AGENTS.md)) because forced extraction of dispatch arms fragments the state machine without adding clarity. File-length (500 lines) and naming rules still apply.
 
 The daemon and TUI are separate processes communicating via typed IPC (`proto`) over a Unix socket, with two physical endpoints (host + container). Details, the per-package breakdown, terminology, and the design-decision log are in the [client deep dive](docs/technical/client/README.md).
-
-## Feature Flags
-
-Experimental features are gated by one of **two independent mechanisms** with no shared key space: a **runtime flag** (`features.Flag` injected into `state.State`, toggled in `~/.roost/settings.toml`, both branches compiled) or a **compile-time flag** (a build-tag-guarded `const`, toggled with `go build -tags`, off-side removed by dead-code elimination). `features/` is stdlib-only so the self-contained `state/` core can depend on it. Mechanism details and the step-by-step add procedure: [code & architecture enforcement → feature flags](docs/technical/code-enforcement.md#4-feature-flags).
 
 ## Testing Strategy
 
