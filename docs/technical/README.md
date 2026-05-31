@@ -32,3 +32,4 @@ Import direction (enforced by `depguard`, `src/.golangci.yml`): `cmd/* → clien
 
 - **[Guardrails](guardrails.md)** — controlling the autonomous agents the orchestrator dispatches: admission (eligibility / blockers / claim), concurrency caps, capability sandboxing (devcontainer / hostexec / mcpproxy / credproxy), autonomy policy (approval & sandbox, requestUserInput hard-fail), and liveness bounds (timeouts, retry/backoff).
 - **[Code & architecture enforcement](code-enforcement.md)** — keeping the codebase true to its architecture: import boundaries (10 depguard rules), no mutexes in `state/`, function/file length, feature-flag mechanics, and the wire-format convention.
+- **[Harness engineering assessment](harness-engineering-assessment.md)** — a dated evaluation of how well agent-roost (the outer harness) drives Claude/Codex (the inner harness), graded across design, implementation, test, documentation, and CI, with prioritized recommendations.
