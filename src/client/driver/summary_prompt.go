@@ -42,10 +42,8 @@ func recentUserTurns(turns []SummaryTurn, userTurns int) []SummaryTurn {
 func formatSummaryPrompt(prev string, turns []SummaryTurn) string {
 	var b strings.Builder
 	b.WriteString("You are a session summarizer. From the conversation history and previous summary below, ")
-	b.WriteString("summarize what the user is currently trying to do in this AI coding session ")
-	b.WriteString("into a 2-3 line descriptive message. ")
-	b.WriteString("Each line covers a different perspective (goal / recent progress / next action) stated concisely, ")
-	b.WriteString("with ~30 characters per line. ")
+	b.WriteString("summarize the work or goal of this AI coding session ")
+	b.WriteString("into a single concise line (~30 characters). ")
 	b.WriteString("Return only the body text, no headings, decoration, preamble, or quotes.\n\n")
 	if prev != "" {
 		b.WriteString("<previous_summary>\n")
@@ -112,7 +110,7 @@ func tailClip(s string, max int) string {
 func formatGenericSummaryPrompt(prev, command, workingDir, content string) string {
 	var b strings.Builder
 	b.WriteString("You are a terminal session summarizer. ")
-	b.WriteString("Describe in 2-3 lines (roughly 30 characters each) what is being worked on ")
+	b.WriteString("Describe in a single concise line (roughly 30 characters) what is being worked on ")
 	b.WriteString("in this terminal session. ")
 	b.WriteString("Ground your description in all three signals: the <command> tag (what program is running), ")
 	b.WriteString("the <working_directory> tag (where it is running), ")

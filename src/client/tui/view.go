@@ -265,9 +265,9 @@ func sessionCardLines(s *proto.SessionInfo, textWidth int, notifLine string) []s
 	}
 
 	// Subtitle may carry an embedded newline-separated multi-line summary.
-	// Split and render each line independently so haiku-generated 2-3 line
-	// summaries get a row each instead of a literal "\n" rendered onto one
-	// line.
+	// Summaries are now single-line, but older persisted summaries can still
+	// be multi-line; split and render each line independently so they get a
+	// row each instead of a literal "\n" rendered onto one line.
 	if subtitle := s.View.Card.Subtitle; subtitle != "" {
 		n := 0
 		for _, sub := range strings.Split(subtitle, "\n") {
