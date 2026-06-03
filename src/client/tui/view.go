@@ -14,7 +14,7 @@ import (
 
 // maxSubtitleLines caps the number of non-empty subtitle lines rendered
 // in a session card.
-const maxSubtitleLines = 5
+const maxSubtitleLines = 1
 
 func (m Model) View() tea.View {
 	width := m.width

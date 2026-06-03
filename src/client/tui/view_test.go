@@ -335,11 +335,11 @@ func TestSessionCardLinesSubtitleClamp(t *testing.T) {
 		wantMaxLines  int // subtitle lines (excluding title row)
 		wantExactSubs int // exact count of subtitle lines expected
 	}{
-		{"under limit", "a\nb\nc", 5, 3},
-		{"at limit", "a\nb\nc\nd\ne", 5, 5},
-		{"over limit clamped", "a\nb\nc\nd\ne\nf\ng", 5, 5},
-		{"empty lines skipped", "a\n\nb\n\nc\n\nd\n\ne\n\nf\n\ng", 5, 5},
-		{"empty string", "", 5, 0},
+		{"single line", "a", 1, 1},
+		{"multi-line clamped to one", "a\nb\nc", 1, 1},
+		{"over limit clamped", "a\nb\nc\nd\ne\nf\ng", 1, 1},
+		{"empty leading lines skipped", "\n\na\nb\nc", 1, 1},
+		{"empty string", "", 1, 0},
 	}
 
 	for _, tt := range tests {
