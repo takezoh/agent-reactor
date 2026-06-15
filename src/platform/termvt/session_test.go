@@ -140,3 +140,31 @@ func TestNewSessionEmptyArgv(t *testing.T) {
 		t.Fatal("expected error for empty argv")
 	}
 }
+
+// TestSessionDisconnectsSlowSubscriber verifies that a subscriber which does not
+// drain its channel is disconnected (channel closed) once its buffer overflows,
+// rather than having events silently dropped. A 20MB output stream yields far
+// more than the buffer's worth of events; we deliberately do not read during the
+// flood, then drain and require the channel to be closed.
+func TestSessionDisconnectsSlowSubscriber(t *testing.T) {
+	s, err := NewSession(Spec{Argv: []string{"bash", "-c", "head -c 20000000 /dev/zero"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+
+	_, ch := s.Subscribe()
+	time.Sleep(500 * time.Millisecond) // let the flood overflow the buffer
+
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return // disconnected as expected
+			}
+		case <-deadline:
+			t.Fatal("slow subscriber was not disconnected on overflow")
+		}
+	}
+}

@@ -29,9 +29,9 @@ func AttachWS(ctx context.Context, sess Attacher, c *websocket.Conn) error {
 	id, ch := sess.Subscribe()
 	defer sess.Unsubscribe(id)
 
+	start := time.Now()
 	go func() { readInbound(ctx, sess, c); cancel() }()
 
-	start := time.Now()
 	for {
 		select {
 		case <-ctx.Done():

@@ -111,6 +111,7 @@ func (s *Session) readLoop() {
 			break
 		}
 	}
+	_ = s.cmd.Wait() // reap the process so it does not linger as a zombie
 	s.mu.Lock()
 	s.fanout(Event{Kind: EventExit})
 	for id, ch := range s.subs {
@@ -120,15 +121,18 @@ func (s *Session) readLoop() {
 	s.mu.Unlock()
 }
 
-// fanout delivers an event to every subscriber. Caller must hold mu. A full
-// buffer drops the event (PoC-grade backpressure; production must disconnect a
-// slow subscriber rather than corrupt its stream).
+// fanout delivers an event to every subscriber. Caller must hold mu. A
+// subscriber whose buffer is full is disconnected (channel closed) rather than
+// having events silently dropped — dropping mid-stream would corrupt its
+// terminal; the client reconnects and resyncs from a fresh snapshot.
 func (s *Session) fanout(ev Event) {
 	for id, ch := range s.subs {
 		select {
 		case ch <- ev:
 		default:
-			slog.Warn("termvt: subscriber slow, dropping event", "sub", id)
+			slog.Warn("termvt: subscriber too slow, disconnecting", "sub", id)
+			close(ch)
+			delete(s.subs, id)
 		}
 	}
 }

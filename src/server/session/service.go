@@ -119,11 +119,7 @@ func (s *Service) Stop(ctx context.Context, id string) error {
 	if !ok {
 		return fmt.Errorf("session: %q not found", id)
 	}
-	err := s.mgr.Remove(id)
-	if e.cleanup != nil {
-		_ = e.cleanup(ctx)
-	}
-	return err
+	return s.teardown(ctx, id, e)
 }
 
 // CloseAll stops every session.
@@ -133,11 +129,17 @@ func (s *Service) CloseAll(ctx context.Context) {
 	s.entries = map[string]entry{}
 	s.mu.Unlock()
 	for id, e := range ents {
-		_ = s.mgr.Remove(id)
-		if e.cleanup != nil {
-			_ = e.cleanup(ctx)
-		}
+		_ = s.teardown(ctx, id, e)
 	}
+}
+
+// teardown removes a session from the manager and runs its launch cleanup.
+func (s *Service) teardown(ctx context.Context, id string, e entry) error {
+	err := s.mgr.Remove(id)
+	if e.cleanup != nil {
+		_ = e.cleanup(ctx)
+	}
+	return err
 }
 
 func (s *Service) nextID() string {

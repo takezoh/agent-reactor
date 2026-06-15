@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -60,7 +61,7 @@ func TestServiceCreateRunsCommand(t *testing.T) {
 	for {
 		select {
 		case ev := <-ch:
-			if ev.Kind == termvt.EventOutput && contains(ev.Data, "echo-back") {
+			if ev.Kind == termvt.EventOutput && bytes.Contains(ev.Data, []byte("echo-back")) {
 				return
 			}
 		case <-deadline:
@@ -74,17 +75,4 @@ func TestServiceCreateEmptyCommand(t *testing.T) {
 	if _, err := svc.Create(context.Background(), Spec{Command: ""}); err == nil {
 		t.Fatal("expected error for empty command")
 	}
-}
-
-func contains(b []byte, sub string) bool {
-	return len(sub) == 0 || (len(b) >= len(sub) && indexOf(b, sub) >= 0)
-}
-
-func indexOf(b []byte, sub string) int {
-	for i := 0; i+len(sub) <= len(b); i++ {
-		if string(b[i:i+len(sub)]) == sub {
-			return i
-		}
-	}
-	return -1
 }
