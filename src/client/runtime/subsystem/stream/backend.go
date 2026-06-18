@@ -44,29 +44,28 @@ type RuntimeHook interface {
 // client Session. It manages the per-session app-server process, the
 // WebSocket-over-UDS connection, and per-frame thread bindings.
 type Backend struct {
-	runtime      RuntimeHook
-	dispatcher   agentlaunch.Dispatcher
-	subsystemID  state.SubsystemID
-	sessionID    state.SessionID
-	project      string
-	serverBin    string
-	serverArgs   []string
-	model        string
-	sandboxed    bool
-	autoApprove  bool
-	readTimeout  time.Duration
-	ctx          context.Context    // subsystem-scoped; child of the daemon ctx
-	cancel       context.CancelFunc // cancels ctx → reaps read loop + process group
-	done         chan struct{}      // closed when waitProcess returns (process reaped)
-	tracker      *procgroup.Tracker // records pgids for crash-path reaping; may be nil
-	spawnRes     agentlaunch.SpawnResult
-	conn         *codexclient.Conn
-	listenSock   string // UDS path the app-server binds (container-absolute under a devcontainer)
-	dialSock     string // host-side UDS path the daemon dials; resolved from listenSock + bind mounts in spawnServer
-	mu           sync.Mutex
-	frames       map[state.FrameID]*frameBinding
-	threads      map[string]state.FrameID
-	activeLookup func() state.FrameID
+	runtime     RuntimeHook
+	dispatcher  agentlaunch.Dispatcher
+	subsystemID state.SubsystemID
+	sessionID   state.SessionID
+	project     string
+	serverBin   string
+	serverArgs  []string
+	model       string
+	sandboxed   bool
+	autoApprove bool
+	readTimeout time.Duration
+	ctx         context.Context    // subsystem-scoped; child of the daemon ctx
+	cancel      context.CancelFunc // cancels ctx → reaps read loop + process group
+	done        chan struct{}      // closed when waitProcess returns (process reaped)
+	tracker     *procgroup.Tracker // records pgids for crash-path reaping; may be nil
+	spawnRes    agentlaunch.SpawnResult
+	conn        *codexclient.Conn
+	listenSock  string // UDS path the app-server binds (container-absolute under a devcontainer)
+	dialSock    string // host-side UDS path the daemon dials; resolved from listenSock + bind mounts in spawnServer
+	mu          sync.Mutex
+	frames      map[state.FrameID]*frameBinding
+	threads     map[string]state.FrameID
 }
 
 type frameBinding struct {
@@ -96,25 +95,23 @@ func New(
 	model string,
 	sandboxed, autoApprove bool,
 	listenSock string,
-	activeLookup func() state.FrameID,
 	readTimeout time.Duration,
 ) *Backend {
 	return &Backend{
-		runtime:      rt,
-		dispatcher:   dispatcher,
-		subsystemID:  subsystemID,
-		sessionID:    sessionID,
-		project:      project,
-		serverBin:    serverBin,
-		serverArgs:   serverArgs,
-		model:        model,
-		sandboxed:    sandboxed,
-		autoApprove:  autoApprove,
-		readTimeout:  readTimeout,
-		listenSock:   listenSock,
-		activeLookup: activeLookup,
-		frames:       map[state.FrameID]*frameBinding{},
-		threads:      map[string]state.FrameID{},
+		runtime:     rt,
+		dispatcher:  dispatcher,
+		subsystemID: subsystemID,
+		sessionID:   sessionID,
+		project:     project,
+		serverBin:   serverBin,
+		serverArgs:  serverArgs,
+		model:       model,
+		sandboxed:   sandboxed,
+		autoApprove: autoApprove,
+		readTimeout: readTimeout,
+		listenSock:  listenSock,
+		frames:      map[state.FrameID]*frameBinding{},
+		threads:     map[string]state.FrameID{},
 	}
 }
 
@@ -312,8 +309,9 @@ func (b *Backend) OnServerRequest(id int64, method string, params json.RawMessag
 	b.handleRequest(id, method, params)
 }
 
-// bindThread associates a new frame with a thread in the app-server and
-// returns the thread ID bound (either resumed or empty if a new thread).
+// bindThread associates a new frame with a thread in the app-server and returns
+// the bound thread ID — resumed for a warm start, or created synchronously via
+// thread/start for a cold start.
 func (b *Backend) bindThread(frameID state.FrameID, startDir, worktreePath string, opts state.StreamLaunchOptions, stdin []byte) (string, error) {
 	b.mu.Lock()
 	b.frames[frameID] = &frameBinding{
@@ -337,15 +335,43 @@ func (b *Backend) bindThread(frameID state.FrameID, startDir, worktreePath strin
 			binding.requestedID = opts.ResumeThreadID
 			binding.observedID = threadID
 			binding.resumePhase = resumePhasePending
+			b.threads[threadID] = frameID
 		}
-		b.threads[threadID] = frameID
 		b.mu.Unlock()
 		return threadID, nil
 	}
-	if err := codexclient.StartTurn(b.conn, "", startDir, stdin, codexclient.TurnOptions{}); err != nil {
+	// Cold start: create the thread synchronously (thread/start request) so its
+	// id is known here and the frame binds deterministically — no async
+	// thread.started guessing, no cwd/active-frame heuristic. The spawned pane
+	// then resumes this id (RemoteAttachArgs with a non-empty threadID).
+	threadID, err := codexclient.StartThread(b.conn, startDir, nil, codexclient.ThreadOptions{})
+	if err != nil {
 		return "", err
 	}
-	return "", nil
+	if threadID == "" {
+		return "", fmt.Errorf("stream backend: app-server returned an empty thread id on cold start")
+	}
+	b.mu.Lock()
+	if binding := b.frames[frameID]; binding != nil {
+		binding.threadID = threadID
+		binding.requestedID = threadID
+		binding.observedID = threadID
+		binding.resumePhase = resumePhaseAttached
+		b.threads[threadID] = frameID
+	}
+	b.mu.Unlock()
+	// The thread/start response is authoritative for the id (a thread.started
+	// notification may not follow), so surface readiness now; a later
+	// thread.started re-confirms idempotently.
+	b.emit(frameID, state.SubsystemSessionReady, b.payload(frameID))
+	// Inject an initial prompt only when one was supplied (orchestrator-style);
+	// interactive panes drive their own turns.
+	if len(stdin) > 0 {
+		if err := codexclient.StartTurn(b.conn, threadID, startDir, stdin, codexclient.TurnOptions{}); err != nil {
+			return "", err
+		}
+	}
+	return threadID, nil
 }
 
 func (b *Backend) waitProcess() {

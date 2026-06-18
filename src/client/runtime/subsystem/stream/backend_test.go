@@ -44,7 +44,7 @@ func TestStopCancelsAndWaitsForReap(t *testing.T) {
 }
 
 func TestBackendKind(t *testing.T) {
-	b := New(&fakeRuntime{}, nil, "sid", "sess1", "/p", "codex", nil, "", false, false, "/sock", nil, 0)
+	b := New(&fakeRuntime{}, nil, "sid", "sess1", "/p", "codex", nil, "", false, false, "/sock", 0)
 	if b.Kind() != state.LaunchSubsystemStream {
 		t.Errorf("Kind = %v", b.Kind())
 	}

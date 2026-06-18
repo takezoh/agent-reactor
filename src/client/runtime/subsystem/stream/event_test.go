@@ -9,40 +9,48 @@ import (
 
 func newTestBackend() (*Backend, *fakeRuntime) {
 	fr := &fakeRuntime{}
-	b := New(fr, nil, "sid", "sess1", "/p", "codex", nil, "", false, false, "/sock",
-		func() state.FrameID { return "" }, 0)
+	b := New(fr, nil, "sid", "sess1", "/p", "codex", nil, "", false, false, "/sock", 0)
 	return b, fr
 }
 
 func TestHandleThreadStarted(t *testing.T) {
+	// Threads are bound at creation (bindThread); thread.started only confirms.
+	b, fr := newTestBackend()
+	b.mu.Lock()
+	b.frames["f1"] = &frameBinding{frameID: "f1", startDir: "/work", threadID: "t1"}
+	b.threads["t1"] = "f1"
+	b.mu.Unlock()
+
+	b.handleThreadStarted(json.RawMessage(`{"thread":{"id":"t1","cwd":"/work"}}`))
+
+	b.mu.Lock()
+	bound := b.frames["f1"]
+	b.mu.Unlock()
+	if bound.resumePhase != resumePhaseAttached {
+		t.Errorf("binding not confirmed attached: %+v", bound)
+	}
+	if len(fr.events) == 0 {
+		t.Errorf("expected emitted SessionReady event")
+	}
+}
+
+func TestHandleThreadStartedUnknownThreadDrops(t *testing.T) {
+	// A waiting frame exists, but the thread is not bound to it. A thread.started
+	// for an unknown thread must NOT be adopted (no cwd/active-frame heuristic) —
+	// it is dropped. This pins the removal of the cross-talk fallback.
 	b, fr := newTestBackend()
 	b.mu.Lock()
 	b.frames["f1"] = &frameBinding{frameID: "f1", startDir: "/work"}
 	b.mu.Unlock()
-
-	raw := json.RawMessage(`{"threadId":"t1","cwd":"/work"}`)
-	b.handleThreadStarted(raw)
-
-	b.mu.Lock()
-	bound := b.frames["f1"]
-	threadFrame := b.threads["t1"]
-	b.mu.Unlock()
-	if bound.threadID != "t1" || bound.resumePhase != resumePhaseAttached {
-		t.Errorf("binding not updated: %+v", bound)
-	}
-	if threadFrame != "f1" {
-		t.Errorf("thread map: %q", threadFrame)
-	}
-	if len(fr.events) == 0 {
-		t.Errorf("expected emitted event")
-	}
-}
-
-func TestHandleThreadStartedNoMatch(t *testing.T) {
-	b, fr := newTestBackend()
-	b.handleThreadStarted([]byte(`{"threadId":"t1","cwd":"/none"}`))
+	b.handleThreadStarted([]byte(`{"thread":{"id":"t1","cwd":"/work"}}`))
 	if len(fr.events) != 0 {
-		t.Errorf("expected no events, got %d", len(fr.events))
+		t.Errorf("unknown thread must not emit, got %d events", len(fr.events))
+	}
+	b.mu.Lock()
+	_, bound := b.threads["t1"]
+	b.mu.Unlock()
+	if bound {
+		t.Error("unknown thread must not bind to the waiting frame")
 	}
 }
 
@@ -123,30 +131,6 @@ func TestHandleNotificationRoutesToHandlers(t *testing.T) {
 	}
 	if len(fr.events) != 3 {
 		t.Errorf("expected 3 events from known methods, got %d", len(fr.events))
-	}
-}
-
-func TestResolveFrameForStartedThreadCandidates(t *testing.T) {
-	b, _ := newTestBackend()
-	b.mu.Lock()
-	b.frames["f1"] = &frameBinding{frameID: "f1", startDir: "/work"}
-	b.mu.Unlock()
-	if got := b.resolveFrameForStartedThread("", "/work"); got != "" {
-		t.Errorf("empty threadID should return empty: %q", got)
-	}
-	if got := b.resolveFrameForStartedThread("t1", "/work"); got != "f1" {
-		t.Errorf("got %q, want f1", got)
-	}
-}
-
-func TestResolveFrameAlreadyBound(t *testing.T) {
-	b, _ := newTestBackend()
-	b.mu.Lock()
-	b.frames["f1"] = &frameBinding{frameID: "f1", threadID: "t1"}
-	b.threads["t1"] = "f1"
-	b.mu.Unlock()
-	if got := b.resolveFrameForStartedThread("t1", ""); got != "f1" {
-		t.Errorf("already bound: got %q", got)
 	}
 }
 

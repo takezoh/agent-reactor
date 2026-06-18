@@ -285,7 +285,6 @@ func (r *Runtime) registerSubsystemFactories() {
 			Dispatcher:      r.cfg.StreamDispatcher,
 			ResolveSockPath: r.resolveStreamListenPath,
 			IsContainer:     func(project string) bool { return launcher(r.cfg).IsContainer(project) },
-			ActiveFrameID:   func() state.FrameID { return r.activeFrameID },
 			ReadTimeout:     r.cfg.StreamReadTimeout,
 			Tracker:         r.pgidTracker,
 		}),

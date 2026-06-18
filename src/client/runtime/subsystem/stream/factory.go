@@ -32,9 +32,6 @@ type FactoryConfig struct {
 	ResolveSockPath func(sessionID state.SessionID, project string) (listen string, err error)
 	// IsContainer reports whether the given project runs in a devcontainer.
 	IsContainer func(project string) bool
-	// ActiveFrameID returns the currently active FrameID; used by Backends
-	// to route events to the foreground frame.
-	ActiveFrameID func() state.FrameID
 	// ReadTimeout overrides the per-request JSON-RPC timeout.  Zero uses the
 	// default (15 seconds).  Corresponds to the codex.read_timeout_ms config key.
 	ReadTimeout time.Duration
@@ -93,7 +90,6 @@ func (f *Factory) Ensure(ctx context.Context, sessionID state.SessionID, project
 		plan.Stream.SandboxPolicy == state.StreamSandboxPolicyExternal,
 		plan.Stream.ApprovalPolicy == state.StreamApprovalPolicyAutoApprove,
 		listen,
-		f.cfg.ActiveFrameID,
 		f.cfg.ReadTimeout,
 	)
 	b.tracker = f.cfg.Tracker

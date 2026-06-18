@@ -44,22 +44,6 @@ func extractTurnID(raw json.RawMessage) string {
 	return ""
 }
 
-func extractThreadCWD(raw json.RawMessage) string {
-	var data map[string]any
-	if json.Unmarshal(raw, &data) != nil {
-		return ""
-	}
-	if s, _ := data["cwd"].(string); s != "" {
-		return s
-	}
-	if thread, ok := data["thread"].(map[string]any); ok {
-		if s, _ := thread["cwd"].(string); s != "" {
-			return s
-		}
-	}
-	return ""
-}
-
 func extractText(raw json.RawMessage) string {
 	var data map[string]any
 	if json.Unmarshal(raw, &data) != nil {

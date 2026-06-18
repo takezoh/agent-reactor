@@ -72,18 +72,20 @@ func (b *Backend) handleRequest(id int64, method string, params json.RawMessage)
 
 func (b *Backend) handleThreadStarted(raw json.RawMessage) {
 	threadID := extractThreadID(raw)
-	frameID := b.resolveFrameForStartedThread(threadID, extractThreadCWD(raw))
+	// Threads are bound at creation/resume (see bindThread), so a thread.started
+	// only confirms an already-bound thread. An unknown thread id is dropped,
+	// never adopted via a cwd or active-frame heuristic (that was the cross-talk
+	// bug — see docs/adr/0001).
+	frameID := b.frameForThread(threadID)
 	if frameID == "" {
 		return
 	}
 	b.mu.Lock()
-	binding := b.frames[frameID]
-	if binding != nil {
+	if binding := b.frames[frameID]; binding != nil {
 		binding.threadID = threadID
 		binding.requestedID = threadID
 		binding.observedID = threadID
 		binding.resumePhase = resumePhaseAttached
-		b.threads[threadID] = frameID
 	}
 	b.mu.Unlock()
 	b.emit(frameID, state.SubsystemSessionReady, b.payload(frameID))
@@ -150,36 +152,6 @@ func (b *Backend) handleAgentMessageDelta(raw json.RawMessage) {
 		p.LastAssistantMessage = last
 		p.Message = &state.SubsystemMessage{RecentTurns: history}
 	}))
-}
-
-func (b *Backend) resolveFrameForStartedThread(threadID, cwd string) state.FrameID {
-	if threadID == "" {
-		return ""
-	}
-	if frameID := b.frameForThread(threadID); frameID != "" {
-		return frameID
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	var candidates []state.FrameID
-	for frameID, binding := range b.frames {
-		if binding.threadID != "" {
-			continue
-		}
-		if binding.startDir == cwd {
-			candidates = append(candidates, frameID)
-		}
-	}
-	if len(candidates) == 1 {
-		return candidates[0]
-	}
-	active := b.activeLookup()
-	if active != "" {
-		if _, ok := b.frames[active]; ok {
-			return active
-		}
-	}
-	return ""
 }
 
 func (b *Backend) handleThreadStatusChanged(raw json.RawMessage) {

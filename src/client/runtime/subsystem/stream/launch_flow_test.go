@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -112,30 +113,33 @@ func streamPipe() (codexclient.Transport, codexclient.Transport) {
 }
 
 // bindServer is the in-process fake app-server for BindFrame tests. It replies
-// to thread/resume (empty result → backend keeps the requested thread id) and
-// records turn/start notifications (cold-start path).
+// to thread/start with a fresh unique thread id (cold start creates the thread
+// synchronously) and to thread/resume with an empty result (backend keeps the
+// requested id).
 type bindServer struct {
-	conn  *codexclient.Conn
-	mu    sync.Mutex
-	turns int
+	conn      *codexclient.Conn
+	mu        sync.Mutex
+	threadSeq int
 }
 
-func (s *bindServer) OnNotification(method string, _ json.RawMessage) {
-	if method == codexschema.MethodTurnStart {
+func (s *bindServer) OnNotification(string, json.RawMessage) {}
+
+func (s *bindServer) OnServerRequest(id int64, method string, _ json.RawMessage) {
+	if method == codexschema.MethodThreadStart {
 		s.mu.Lock()
-		s.turns++
+		s.threadSeq++
+		tid := fmt.Sprintf("thread-%d", s.threadSeq)
 		s.mu.Unlock()
+		_ = s.conn.Reply(id, map[string]any{"thread": map[string]any{"id": tid}})
+		return
 	}
-}
-
-func (s *bindServer) OnServerRequest(id int64, _ string, _ json.RawMessage) {
 	_ = s.conn.Reply(id, map[string]any{})
 }
 
-func newBoundBackend(t *testing.T, listenSock string) (*Backend, *bindServer) {
+func newBoundBackend(t *testing.T, listenSock string) *Backend {
 	t.Helper()
 	b := New(&fakeRuntime{}, nil, "sid", "sess1", "/p", "codex", nil, "", false, false,
-		listenSock, func() state.FrameID { return "" }, time.Second)
+		listenSock, time.Second)
 	ta, tb := streamPipe()
 	b.conn = codexclient.NewConn(ta, time.Second)
 	srv := &bindServer{conn: codexclient.NewConn(tb, time.Second)}
@@ -144,12 +148,12 @@ func newBoundBackend(t *testing.T, listenSock string) (*Backend, *bindServer) {
 	t.Cleanup(cancel)
 	go b.conn.Run(ctx, b)     //nolint:errcheck
 	go srv.conn.Run(ctx, srv) //nolint:errcheck
-	return b, srv
+	return b
 }
 
 func TestBackendBindFrameColdStartRemoteCommand(t *testing.T) {
 	const listen = "/opt/agent-reactor/run/codex-sess1.sock"
-	b, srv := newBoundBackend(t, listen)
+	b := newBoundBackend(t, listen)
 
 	res, err := b.BindFrame(context.Background(), subsystem.BindRequest{
 		FrameID: "f1",
@@ -159,37 +163,34 @@ func TestBackendBindFrameColdStartRemoteCommand(t *testing.T) {
 		t.Fatalf("BindFrame: %v", err)
 	}
 
-	want := strings.Join(libcodex.RemoteAttachArgs(listen, "", "/repo"), " ")
+	// Cold start now creates the thread synchronously (thread/start) and binds
+	// it, so the pane resumes that id — same command shape as a warm start.
+	threadID := res.Plan.Stream.ResumeThreadID
+	if threadID == "" {
+		t.Fatal("cold start must bind a synchronously-created thread id")
+	}
+	want := strings.Join(libcodex.RemoteAttachArgs(listen, threadID, "/repo"), " ")
 	if res.Plan.Command != want {
 		t.Fatalf("Command = %q, want %q", res.Plan.Command, want)
+	}
+	if !strings.Contains(res.Plan.Command, "resume "+threadID) {
+		t.Errorf("command must resume the bound thread id: %q", res.Plan.Command)
 	}
 	if !strings.Contains(res.Plan.Command, "--remote unix://"+listen) {
 		t.Errorf("command must attach to the container-absolute socket unix://%s: %q", listen, res.Plan.Command)
 	}
-	if res.Plan.Stream.ResumeThreadID != "" {
-		t.Errorf("cold start ResumeThreadID = %q, want empty", res.Plan.Stream.ResumeThreadID)
-	}
-	// turn/start is a fire-and-forget notification; poll briefly for the server
-	// to observe it rather than racing the async read loop.
-	deadline := time.Now().Add(time.Second)
-	for {
-		srv.mu.Lock()
-		turns := srv.turns
-		srv.mu.Unlock()
-		if turns == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("cold start must issue exactly one turn/start, observed %d", turns)
-		}
-		time.Sleep(5 * time.Millisecond)
+	b.mu.Lock()
+	binding := b.frames["f1"]
+	b.mu.Unlock()
+	if binding == nil || binding.threadID != threadID || binding.resumePhase != resumePhaseAttached {
+		t.Errorf("cold start must bind+attach the frame, got %+v", binding)
 	}
 }
 
 func TestBackendBindFrameResumeRemoteCommand(t *testing.T) {
 	const listen = "/opt/agent-reactor/run/codex-sess2.sock"
 	const thread = "thread-abc"
-	b, _ := newBoundBackend(t, listen)
+	b := newBoundBackend(t, listen)
 
 	res, err := b.BindFrame(context.Background(), subsystem.BindRequest{
 		FrameID: "f1",
@@ -221,7 +222,7 @@ func newHelperBackend(t *testing.T, mode string) *Backend {
 	sock := filepath.Join(t.TempDir(), "codex-x.sock")
 	return New(&fakeRuntime{}, nil, "sid", "sess1", "/p",
 		os.Args[0], []string{"--mode", mode}, "", false, false,
-		sock, func() state.FrameID { return "" }, 3*time.Second)
+		sock, 3*time.Second)
 }
 
 func TestBackendStartDialsAndInitializes(t *testing.T) {

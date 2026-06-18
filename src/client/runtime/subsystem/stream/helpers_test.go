@@ -35,18 +35,6 @@ func TestExtractTurnID(t *testing.T) {
 	}
 }
 
-func TestExtractThreadCWD(t *testing.T) {
-	if got := extractThreadCWD([]byte(`{"cwd":"/p"}`)); got != "/p" {
-		t.Errorf("flat: %q", got)
-	}
-	if got := extractThreadCWD([]byte(`{"thread":{"cwd":"/q"}}`)); got != "/q" {
-		t.Errorf("nested: %q", got)
-	}
-	if got := extractThreadCWD([]byte(`bad`)); got != "" {
-		t.Errorf("bad: %q", got)
-	}
-}
-
 func TestExtractText(t *testing.T) {
 	if got := extractText([]byte(`{"text":"hi"}`)); got != "hi" {
 		t.Errorf("text: %q", got)

@@ -106,7 +106,7 @@ func TestBackend_BindThreadRegistersMultipleFrameBindings(t *testing.T) {
 	b := New(nil, nil, "stream:session:sess1", "sess1", "/workspace/agent-roost",
 		"codex", nil, "", false, false,
 		"/opt/agent-reactor/run/codex.sock",
-		func() state.FrameID { return "" }, 0,
+		0,
 	)
 
 	frameA := state.FrameID("frame-a")
