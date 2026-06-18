@@ -8,8 +8,8 @@ import "net/http"
 // needs 'unsafe-inline' because both index.html's inline <style> block and
 // xterm.js's runtime-injected <style> element are inline styles; this relaxes
 // styles only, not script execution. connect-src 'self' confines the WebSocket
-// to the same origin; frame-ancestors 'none' blocks framing (alongside the
-// X-Frame-Options header, for browsers that honour only one).
+// to the same origin (this host, which proxies to the backend); frame-ancestors
+// 'none' blocks framing (alongside the X-Frame-Options header).
 const contentSecurityPolicy = "default-src 'none'; " +
 	"script-src 'self'; " +
 	"style-src 'self' 'unsafe-inline'; " +

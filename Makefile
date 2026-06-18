@@ -3,6 +3,7 @@ BRIDGE           := reactor-bridge
 ORCHESTRATOR     := orchestrator
 CLAUDE_APP_SERVER := claude-app-server
 SERVER           := server
+WEB              := web
 NOTIFY_PS1  := notify.ps1
 SRC_DIR     := src
 INSTALL_DIR    := $(HOME)/.local/bin
@@ -11,8 +12,8 @@ LIBEXEC_DIR    := $(HOME)/.local/lib/agent-reactor
 CODEX_SCHEMA_DIR := $(SRC_DIR)/platform/agent/codexschema
 CODEX_SCHEMA_TMP := /tmp/codex-schema-gen
 
-.PHONY: build build-orchestrator build-claude-app-server build-server build-all \
-        build-experimental install clean test vet lint verify-bridge-deps \
+.PHONY: build build-orchestrator build-claude-app-server build-server build-web build-all \
+        run-dev build-experimental install clean test vet lint verify-bridge-deps \
         codex-schema-update codex-schema-check
 
 build:
@@ -26,12 +27,21 @@ build-orchestrator:
 build-claude-app-server:
 	cd $(SRC_DIR) && go build -o ../$(CLAUDE_APP_SERVER) ./cmd/claude-app-server
 
-# build-server builds the tmux-free web client⇄server (cmd/server). It manages
-# agent sessions over pty and serves the embedded web client over WebSocket.
+# build-server builds the tmux-free backend (cmd/server): pty session host with a
+# REST + WebSocket API that clients connect to. It serves no UI.
 build-server:
 	cd $(SRC_DIR) && go build -o ../$(SERVER) ./cmd/server
 
-build-all: build build-orchestrator build-claude-app-server build-server
+# build-web builds the web-client host (cmd/web): serves the browser UI and
+# reverse-proxies /api and /ws to the backend.
+build-web:
+	cd $(SRC_DIR) && go build -o ../$(WEB) ./cmd/web
+
+build-all: build build-orchestrator build-claude-app-server build-server build-web
+
+# run-dev builds and launches the backend + web-client together for local dev.
+run-dev: build-server build-web
+	./scripts/run-dev.sh
 
 build-experimental:
 	cd $(SRC_DIR) && go build -tags experimental -o ../$(BINARY) ./cmd/arc

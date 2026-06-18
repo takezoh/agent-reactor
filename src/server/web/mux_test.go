@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -21,7 +20,7 @@ const testToken = "test-token"
 func TestMuxCreateListStop(t *testing.T) {
 	svc := session.NewService(agentlaunch.DirectDispatcher{})
 	defer svc.CloseAll(context.Background())
-	mux := NewMux(svc, fstest.MapFS{}, testToken)
+	mux := NewMux(svc, testToken)
 
 	info := decodeInfo(t, doReq(t, mux, http.MethodPost, "/api/sessions",
 		`{"command":"sleep 5"}`, http.StatusCreated))
@@ -42,7 +41,7 @@ func TestMuxCreateListStop(t *testing.T) {
 func TestMuxCreateBadCommand(t *testing.T) {
 	svc := session.NewService(agentlaunch.DirectDispatcher{})
 	defer svc.CloseAll(context.Background())
-	mux := NewMux(svc, fstest.MapFS{}, testToken)
+	mux := NewMux(svc, testToken)
 	doReq(t, mux, http.MethodPost, "/api/sessions", `{"command":""}`, http.StatusBadRequest)
 }
 
@@ -51,7 +50,7 @@ func TestMuxCreateBadCommand(t *testing.T) {
 func TestMuxRequiresToken(t *testing.T) {
 	svc := session.NewService(agentlaunch.DirectDispatcher{})
 	defer svc.CloseAll(context.Background())
-	mux := NewMux(svc, fstest.MapFS{}, testToken)
+	mux := NewMux(svc, testToken)
 
 	r := httptest.NewRequest(http.MethodGet, "/api/sessions", nil) // no Authorization
 	w := httptest.NewRecorder()
@@ -61,53 +60,13 @@ func TestMuxRequiresToken(t *testing.T) {
 	}
 }
 
-// TestMuxStaticPublic confirms the static shell loads without auth: a browser
-// navigating to the page cannot send an Authorization header (the token lives
-// in the fragment), so gating the shell would deadlock the bootstrap. The shell
-// holds no secrets; authority is on /api and /ws.
-func TestMuxStaticPublic(t *testing.T) {
-	svc := session.NewService(agentlaunch.DirectDispatcher{})
-	defer svc.CloseAll(context.Background())
-	assets := fstest.MapFS{
-		"index.html":      {Data: []byte("<html>shell</html>")},
-		"vendor/xterm.js": {Data: []byte("//js")},
-	}
-	mux := NewMux(svc, assets, testToken)
-
-	r := httptest.NewRequest(http.MethodGet, "/", nil) // no Authorization
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("static shell GET / = %d, want 200 (must serve without auth)", w.Code)
-	}
-	if !strings.Contains(w.Body.String(), "shell") {
-		t.Fatalf("static shell body = %q", w.Body.String())
-	}
-
-	// A vendored file is served, but the directory autoindex is suppressed.
-	if got := staticGet(t, mux, "/vendor/xterm.js"); got != http.StatusOK {
-		t.Fatalf("GET /vendor/xterm.js = %d, want 200", got)
-	}
-	if got := staticGet(t, mux, "/vendor/"); got != http.StatusNotFound {
-		t.Fatalf("GET /vendor/ = %d, want 404 (no directory listing)", got)
-	}
-}
-
-func staticGet(t *testing.T, h http.Handler, path string) int {
-	t.Helper()
-	r := httptest.NewRequest(http.MethodGet, path, nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
-	return w.Code
-}
-
 // TestMuxWSTicketAuth exercises the ticket-gated WebSocket attach: no ticket is
 // rejected, a minted ticket attaches once, the ticket cannot be reused, and a
 // cross-origin handshake is rejected even with a fresh ticket (CSWSH defense).
 func TestMuxWSTicketAuth(t *testing.T) {
 	svc := session.NewService(agentlaunch.DirectDispatcher{})
 	defer svc.CloseAll(context.Background())
-	srv := httptest.NewServer(NewMux(svc, fstest.MapFS{}, testToken))
+	srv := httptest.NewServer(NewMux(svc, testToken))
 	defer srv.Close()
 
 	info := createSession(t, srv, "cat")

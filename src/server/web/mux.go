@@ -3,9 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"io/fs"
 	"net/http"
-	"strings"
 
 	"github.com/coder/websocket"
 
@@ -22,22 +20,18 @@ type Sessions interface {
 	Session(id string) (*termvt.Session, bool)
 }
 
-// NewMux builds the HTTP handler. Authority lives on the data plane, not the
-// shell: the static web client (HTML/JS/CSS) holds no secrets and is served
-// without auth — a browser navigating to the page cannot send an Authorization
-// header, and the bearer token must never travel in a URL. The REST API is
-// guarded by the bearer token (Authorization header); the WebSocket attach
-// endpoint — which a browser cannot send headers on — is guarded by a
-// short-lived, single-use ticket minted over the token-authenticated API. The
-// client carries the token in the URL fragment (never sent to the server) and
-// uses it as a header for the API.
-func NewMux(svc Sessions, assets fs.FS, token string) http.Handler {
+// NewMux builds the backend HTTP handler: the session REST API and the
+// per-session WebSocket attach endpoint. It is a headless API — it serves no
+// HTML. Any client (the web-client host, a future native client) connects here;
+// the web UI is served and proxied by a separate process (client/web.Handler).
+//
+// Authority lives on the data plane: the REST API is guarded by the bearer
+// token (Authorization header — never a URL query param); the WebSocket attach
+// endpoint, which a browser cannot send headers on, is guarded by a short-lived
+// single-use ticket minted over the token-authenticated API.
+func NewMux(svc Sessions, token string) http.Handler {
 	tickets := newTicketStore()
 	mux := http.NewServeMux()
-
-	// Public static shell. ServeMux precedence routes /api/ and /ws to the
-	// guarded handlers below; everything else falls here.
-	mux.Handle("/", staticHandler(assets))
 
 	// REST API: bearer token via Authorization header (never a query param).
 	mux.Handle("/api/", TokenAuth(token, apiHandler(svc, tickets)))
@@ -88,21 +82,6 @@ func apiHandler(svc Sessions, tickets *ticketStore) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"ticket": tickets.mint()})
 	})
 	return mux
-}
-
-// staticHandler serves the embedded client assets but suppresses directory
-// autoindex listings (e.g. /vendor/), which a bare http.FileServer would now
-// expose since a directory is embedded. Only files are served; directory paths
-// 404. The shell holds no secrets, but listings are needless attack surface.
-func staticHandler(assets fs.FS) http.Handler {
-	fileServer := http.FileServer(http.FS(assets))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" && strings.HasSuffix(r.URL.Path, "/") {
-			http.NotFound(w, r)
-			return
-		}
-		fileServer.ServeHTTP(w, r)
-	})
 }
 
 func serveAttach(svc Sessions, w http.ResponseWriter, r *http.Request) {

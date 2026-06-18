@@ -35,6 +35,7 @@ github.com/takezoh/agent-reactor/client/tui                          50
 github.com/takezoh/agent-reactor/client/tui/glyphs                   85
 github.com/takezoh/agent-reactor/client/tui/image                    50
 github.com/takezoh/agent-reactor/client/uiproc                       95
+github.com/takezoh/agent-reactor/client/web                          90
 
 # cmd/ — binary entry points
 github.com/takezoh/agent-reactor/cmd/claude-app-server               60
@@ -45,9 +46,11 @@ github.com/takezoh/agent-reactor/cmd/linear-graphql-cli               0
 github.com/takezoh/agent-reactor/cmd/orchestrator                    55
 github.com/takezoh/agent-reactor/cmd/arc                           15
 github.com/takezoh/agent-reactor/cmd/reactor-bridge                     0
-# cmd/server: main/run/serve bind sockets and block (untestable in a unit test);
-# floor reflects the pure helpers (token, self-signed cert) that are covered.
-github.com/takezoh/agent-reactor/cmd/server                          15
+# cmd/server & cmd/web: main/run bind sockets and block (untestable in a unit
+# test). The cert/serve helpers moved to platform/lib/tlsdev (tested there), so
+# only randToken stays pure in cmd/server — hence the floor dropped from 15.
+github.com/takezoh/agent-reactor/cmd/server                           8
+github.com/takezoh/agent-reactor/cmd/web                              0
 
 # orchestrator/ — Symphony scheduler service
 github.com/takezoh/agent-reactor/orchestrator/agent                  80
@@ -81,6 +84,7 @@ github.com/takezoh/agent-reactor/platform/lib/github                 85
 github.com/takezoh/agent-reactor/platform/lib/notify                 30
 github.com/takezoh/agent-reactor/platform/lib/openurl                60
 github.com/takezoh/agent-reactor/platform/lib/plastic                45
+github.com/takezoh/agent-reactor/platform/lib/tlsdev                 30
 github.com/takezoh/agent-reactor/platform/lib/tmux                   10
 github.com/takezoh/agent-reactor/platform/lib/vcs                    85
 github.com/takezoh/agent-reactor/platform/lib/wsl                    45

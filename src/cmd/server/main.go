@@ -1,13 +1,16 @@
-// Command server runs the agent-reactor web server: it manages agent sessions
-// over pty (tmux-free) and serves a web client that operates them from a
-// browser over WebSocket. Auth is a bearer token; transport is TLS
-// (self-signed by default, or -tls-cert/-tls-key, or -insecure for local dev).
+// Command server is the agent-reactor backend: a headless API that manages
+// agent sessions over pty (tmux-free) and exposes them to any client over a
+// REST + WebSocket interface. Sessions are host-owned — they keep running when
+// a client disconnects, and several clients can attach to and share one session
+// (e.g. one operator's claude-code driven by another). It serves no HTML; the
+// web UI is a separate process (cmd/web) that connects here, as will future
+// native clients. Auth is a bearer token; transport is TLS (self-signed by
+// default, or -tls-cert/-tls-key, or -insecure for local dev).
 package main
 
 import (
 	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -17,8 +20,8 @@ import (
 	"syscall"
 	"time"
 
-	clientweb "github.com/takezoh/agent-reactor/client/web"
 	"github.com/takezoh/agent-reactor/platform/agentlaunch"
+	"github.com/takezoh/agent-reactor/platform/lib/tlsdev"
 	"github.com/takezoh/agent-reactor/server/session"
 	serverweb "github.com/takezoh/agent-reactor/server/web"
 )
@@ -46,8 +49,7 @@ func run() error {
 	}
 
 	svc := session.NewService(agentlaunch.DirectDispatcher{})
-	handler := serverweb.SecurityHeaders(serverweb.NewMux(svc, clientweb.Assets, token))
-	srv := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: *addr, Handler: serverweb.NewMux(svc, token), ReadHeaderTimeout: 5 * time.Second}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -63,27 +65,11 @@ func run() error {
 	if *insecure {
 		scheme = "http"
 	}
-	log.Printf("agent-reactor server on %s://%s  token=%s", scheme, *addr, token)
-	if err := serve(srv, *insecure, *certFile, *keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	log.Printf("agent-reactor backend on %s://%s  token=%s", scheme, *addr, token)
+	if err := tlsdev.Serve(srv, *insecure, *certFile, *keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
-}
-
-func serve(srv *http.Server, insecure bool, cert, key string) error {
-	switch {
-	case insecure:
-		return srv.ListenAndServe()
-	case cert != "" && key != "":
-		return srv.ListenAndServeTLS(cert, key)
-	default:
-		tlsCert, err := selfSignedCert()
-		if err != nil {
-			return err
-		}
-		srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{tlsCert}, MinVersion: tls.VersionTLS12}
-		return srv.ListenAndServeTLS("", "")
-	}
 }
 
 func randToken() string {

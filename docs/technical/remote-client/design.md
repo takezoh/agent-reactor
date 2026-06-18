@@ -184,21 +184,31 @@ The tmux-free web client⇄server now lives in `src/` (the original
 - `platform/termvt/` — pty (`creack/pty`) → server-side VT (`charmbracelet/x/vt`)
   tee + multi-session Manager; emits typed events (OSC 9/133/title captured as
   Control), reattach snapshot via `Render()`, resize, multi-subscriber fan-out.
-- `server/web/` — WebSocket↔termvt attach (asciicast v2 output + control frames),
-  REST `/api/sessions`, static-client mux. Auth: bearer token via `Authorization`
-  header (never a query param); WebSocket connections use a short-lived,
-  single-use ticket minted over that API and the default same-origin check
-  (anti-CSWSH). All responses carry `Referrer-Policy: no-referrer` and a strict
-  CSP (`script-src 'self'`; xterm.js is vendored, not CDN-loaded).
+- `server/web/` — the **headless backend** API: WebSocket↔termvt attach (asciicast
+  v2 output + control frames) + REST `/api/sessions`. Auth: bearer token via
+  `Authorization` header (never a query param); WebSocket connections use a
+  short-lived single-use ticket minted over that API plus the default same-origin
+  check (anti-CSWSH). It serves no HTML — any client connects here.
 - `server/session/` — session lifecycle over `termvt.Manager`; launch wrapping via
   `agentlaunch.Dispatcher` (Direct now; `SandboxDispatcher`/devcontainer drop-in).
-- `client/web/` — embedded `xterm.js` single-page client.
-- `cmd/server/` — composition + TLS (self-signed default) + token + graceful stop.
+  Sessions are host-owned: they survive client disconnect and are shared across
+  attaching clients (multi-subscriber fan-out).
+- `client/web/` — the **web-client host**: the embedded `xterm.js` UI plus
+  `Handler` (serves the UI under a strict CSP — `script-src 'self'`, vendored
+  xterm.js — and reverse-proxies `/api`/`/ws` to the backend, enforcing the
+  browser-facing origin check). The browser is same-origin with this host.
+- `platform/lib/tlsdev/` — shared dev TLS serving (self-signed default / supplied
+  cert / `-insecure`) used by both binaries.
+- `cmd/server/` — backend composition + TLS + token + graceful stop.
+- `cmd/web/` — web-client host composition + TLS + graceful stop.
 
-Run: `make build-server && ./server -insecure -token <tok> -addr :8443`, then open
-`/#token=<tok>` (fragment, not query). Go tests cover termvt, the session service,
-the REST mux + header auth, the single-use ticket store, the security headers, and
-the http→ws→pty attach path including ticket gating and cross-origin rejection;
+Run: `make run-dev` (builds + launches backend `./server` and web host `./web`
+on localhost, prints `http://127.0.0.1:8080/#token=<tok>`); or run them
+separately (`./server -insecure …` + `./web -server http://… -insecure …`).
+Future native clients connect to the backend directly. Go tests cover termvt
+(fan-out isolation), the session service, the backend REST mux + header auth +
+ticket store + http→ws→pty attach (ticket gating + cross-origin rejection), the
+web host's static serving / CSP / proxy / origin check, and `tlsdev`;
 `go test -race` green.
 
 **Remaining (large, incremental):** reuse the pure core (`state.Reduce`/`Driver`)
