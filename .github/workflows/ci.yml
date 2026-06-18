@@ -23,6 +23,9 @@ jobs:
       - name: vet
         run: go vet ./...
 
+      - name: vet (e2e build tag)
+        run: go vet -tags e2e ./client/runtime/subsystem/stream/...
+
       - name: test
         run: go test ./...
 
@@ -60,6 +63,25 @@ jobs:
 
       - name: test -race
         run: go test -race ./...
+
+  # Active fuzzing of the routing-isolation invariant. A separate job (like
+  # race) so its non-deterministic, time-boxed exploration stays off the main
+  # ci job's critical path. The seed corpus already runs in ci's `test` step.
+  fuzz:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+
+      - name: fuzz routing isolation
+        run: go test -run '^$' -fuzz '^FuzzStreamRouting$' -fuzztime=30s ./client/runtime/subsystem/stream/
 
   schema-drift:
     runs-on: ubuntu-latest

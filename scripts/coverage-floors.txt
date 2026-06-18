@@ -26,7 +26,7 @@ github.com/takezoh/agent-reactor/client/runtime                      58
 github.com/takezoh/agent-reactor/client/runtime/framereg             95
 github.com/takezoh/agent-reactor/client/runtime/subsystem            15
 github.com/takezoh/agent-reactor/client/runtime/subsystem/cli        70
-github.com/takezoh/agent-reactor/client/runtime/subsystem/stream     72
+github.com/takezoh/agent-reactor/client/runtime/subsystem/stream     74
 github.com/takezoh/agent-reactor/client/runtime/worker               90
 github.com/takezoh/agent-reactor/client/state                        80
 github.com/takezoh/agent-reactor/client/state/view                   95

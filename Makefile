@@ -45,6 +45,13 @@ vet:
 lint:
 	cd $(SRC_DIR) && go tool golangci-lint run ./...
 
+# Opt-in fidelity backstop: routing-isolation invariant against a REAL app-server
+# (not codex-only). Configure via REACTOR_E2E_CODEX_BIN and/or
+# REACTOR_E2E_APPSERVER_BIN; skips if none set. Validates the in-process fake —
+# see docs/technical/client/stream-backend-e2e.md and docs/adr/0002.
+test-e2e:
+	cd $(SRC_DIR) && go test -tags e2e -run TestStreamRoutingE2E ./client/runtime/subsystem/stream/ -v
+
 verify-bridge-deps:
 	@echo "Checking that reactor-bridge does not import client/state, client/uiproc, or platform/features..."
 	@cd $(SRC_DIR) && go list -deps ./cmd/reactor-bridge | grep -E 'takezoh/agent-reactor/(client/(state|uiproc)|platform/features)$$' && echo "FAIL: bridge imports forbidden packages" && exit 1 || echo "OK: bridge deps are clean"

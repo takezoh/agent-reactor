@@ -132,6 +132,12 @@ func (s *bindServer) OnServerRequest(id int64, _ string, _ json.RawMessage) {
 	_ = s.conn.Reply(id, map[string]any{})
 }
 
+func (s *bindServer) turnStartCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.turns
+}
+
 func newBoundBackend(t *testing.T, listenSock string) (*Backend, *bindServer) {
 	t.Helper()
 	b := New(&fakeRuntime{}, nil, "sid", "sess1", "/p", "codex", nil, "", false, false,

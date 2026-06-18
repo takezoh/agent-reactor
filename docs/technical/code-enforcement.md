@@ -102,6 +102,14 @@ Exceptions are declared **by path pattern in `.golangci.yml`, not by an in-code 
 
 Wire-format / persistence types are written with **stdlib only (`encoding/json`)** (AGENTS.md / ARCHITECTURE.md) — a portability constraint. The `depguard` rule `proto-wire-stdlib-only` (scope `client/proto/**`) denies codec libraries (protobuf, msgpack, cbor) from the wire layer; `client/proto/codec.go` uses only `encoding/json`. The rule is a deny-list of the realistic offenders rather than a stdlib allow-list, matching the intent: do not bring a new codec library into the wire layer.
 
+## 6. Routing isolation (test-pinned)
+
+A multiplexed subsystem backend — one app-server connection fronting many frames — must route every server event to the frame that *initiated* the thread, never to an inferred/active frame. A leak is **cross-talk**: one agent's output surfaces in another agent's session. This is the [No fabricated fallbacks](../../ARCHITECTURE.md#design-principles) principle for `runtime/subsystem/stream`.
+
+Unlike sections 1–5 this cannot be caught at lint/compile time (it is a runtime routing property), so it is **test-pinned**: the [routing-isolation contract](client/stream-backend-testing.md) (`TestStreamRoutingContract`, `TestStreamRoutingWired*`, `FuzzStreamRouting`) asserts that every emitted `EvSubsystem` carries the owning frame's id. The cross-talk cases are gated behind `REACTOR_ROUTING_PINS` only until the demux fix lands; thereafter they are permanent regression cover and the gate is removed. The fix also adds a grep/lint guard that the start-binding path does not consult the active-frame lookup. Rationale: [ADR 0001](../adr/0001-multiplexed-backends-shared-routing-contract.md); fidelity backstop: [ADR 0002](../adr/0002-optin-appserver-e2e-validates-fakes.md).
+
+Exception: none — a multiplexed backend that cannot satisfy the invariant is a defect, not a candidate for opt-out.
+
 ## Related
 
 - Canonical design principles: [ARCHITECTURE.md](../../ARCHITECTURE.md)

@@ -20,6 +20,20 @@ Both decision-loop layers (`client/` and `orchestrator/scheduler`) share the Fun
 - **shell tests** (`client/runtime`, `orchestrator/scheduler` loop) — inject fakes for backend interfaces (`runtime.Config` `noopTmux`/`noopPersist`; scheduler `Deps{ Tracker, Spawn, Clock, … }` with a fake clock). Drive events through the loop and assert the published state.
 - **TUI tests** — pass messages directly to Bubbletea's `Model.Update` and verify the returned model. No real terminal required.
 
+## Multiplexed-subsystem routing harness
+
+The stream subsystem multiplexes many frames over one codex app-server
+connection; its safety-critical property is **routing isolation** (an event
+reaches only the frame that started its thread). It is pinned by a dedicated
+harness — direct-drive contract, a wired fake app-server exercised under `-race`,
+a stdlib `FuzzStreamRouting`, and an opt-in real app-server fidelity backstop
+([setup](../technical/client/stream-backend-e2e.md)). The
+cross-talk regression cases are RED on the current demux and gated behind
+`REACTOR_ROUTING_PINS` until the fix lands. Full guide:
+[stream backend testing](../technical/client/stream-backend-testing.md). This is
+the test-pinned enforcement catalogued in
+[code-enforcement.md §6](../technical/code-enforcement.md).
+
 ## Coverage Tiers
 
 Coverage targets are tiered by architectural blast radius. A regression in `state` corrupts every session; a regression in `lib/tmux` typically surfaces as one broken pane.
