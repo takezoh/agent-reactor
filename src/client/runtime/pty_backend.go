@@ -23,12 +23,12 @@ import (
 type PtyBackend struct {
 	mgr *termvt.Manager
 
-	mu       sync.Mutex
-	panes    map[string]*termvt.Session // target (paneID) → session
-	buffers  map[string]string          // named tmux-style paste buffers
-	env      map[string]string          // session-level env (tmux session env stand-in)
-	paneSeq  int                        // last allocated pane number
-	winSeq   int                        // last allocated window index
+	mu      sync.Mutex
+	panes   map[string]*termvt.Session // target (paneID) → session
+	buffers map[string]string          // named tmux-style paste buffers
+	env     map[string]string          // session-level env (tmux session env stand-in)
+	paneSeq int                        // last allocated pane number
+	winSeq  int                        // last allocated window index
 }
 
 // NewPtyBackend returns a PtyBackend with its own termvt.Manager.
@@ -265,7 +265,7 @@ func (p *PtyBackend) ResizeWindow(target string, width, height int) error {
 
 // The following WindowLayout ops have no pty equivalent — layout composition
 // moves client-side in the tmux-removal phase (ADR 0004).
-func (p *PtyBackend) SwapPane(srcPane, dstPane string) error  { return nil }
+func (p *PtyBackend) SwapPane(srcPane, dstPane string) error    { return nil }
 func (p *PtyBackend) BreakPane(srcPane, dstWindow string) error { return nil }
 func (p *PtyBackend) BreakPaneToNewWindow(srcPane, name string) (string, error) {
 	return "", nil
@@ -278,10 +278,10 @@ func (p *PtyBackend) RunChain(ops ...[]string) error { return nil }
 
 // === TmuxControl (all stubbed — no server-side equivalent) ===
 
-func (p *PtyBackend) SetStatusLine(line string) error               { return nil }
-func (p *PtyBackend) DetachClient() error                           { return nil }
-func (p *PtyBackend) KillSession() error                            { return nil }
-func (p *PtyBackend) DisplayPopup(width, height, cmd string) error  { return nil }
+func (p *PtyBackend) SetStatusLine(line string) error              { return nil }
+func (p *PtyBackend) DetachClient() error                          { return nil }
+func (p *PtyBackend) KillSession() error                           { return nil }
+func (p *PtyBackend) DisplayPopup(width, height, cmd string) error { return nil }
 
 // === helpers ===
 

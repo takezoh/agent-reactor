@@ -61,10 +61,10 @@ func TestSessionExitCodeAlive(t *testing.T) {
 // last n lines with all CSI ... m (SGR) sequences removed.
 func TestStripSGRTail(t *testing.T) {
 	cases := []struct {
-		name  string
-		in    string
-		n     int
-		want  string
+		name string
+		in   string
+		n    int
+		want string
 	}{
 		{
 			name: "strips SGR colour codes",
