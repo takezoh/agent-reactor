@@ -21,9 +21,14 @@ make build-server                     # → ./server
 ./server -tls-cert cert.pem -tls-key key.pem -addr :8443 -token mytoken
 ```
 
-Open `https://<host>:8443/?token=<token>` in a browser (the token gates every
-request, including loading the page). For cross-host access, point the browser at
-the server's address; for an SSH-only host, forward the port (`ssh -L`).
+Open `https://<host>:8443/#token=<token>` in a browser. The token goes in the
+URL **fragment** (`#…`), not the query string, so it is never sent to the
+server, logged, or leaked via `Referer`. The static page itself holds no secrets
+and loads without auth; authority is on the data plane: the page uses the token
+as an `Authorization: Bearer` header for the REST API and exchanges it for a
+short-lived, single-use ticket to open each WebSocket (browsers cannot set
+headers on a WebSocket). For cross-host access, point the browser at the
+server's address; for an SSH-only host, forward the port (`ssh -L`).
 
 ## Using it
 
@@ -43,6 +48,6 @@ the server's address; for an SSH-only host, forward the port (`ssh -L`).
 | Flag | Default | Meaning |
 |---|---|---|
 | `-addr` | `:8443` | Listen address |
-| `-token` | generated | Bearer token (header `Authorization: Bearer …` or `?token=`) |
+| `-token` | generated | Bearer token (REST: `Authorization: Bearer …`; WebSocket: single-use ticket; never accepted as a query parameter) |
 | `-tls-cert` / `-tls-key` | — | TLS certificate/key; self-signed if omitted |
 | `-insecure` | false | Serve plain HTTP (local dev only) |

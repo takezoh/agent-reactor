@@ -21,7 +21,9 @@ func TestTokenAuth(t *testing.T) {
 		{"no token", func(*http.Request) {}, http.StatusUnauthorized},
 		{"wrong token", func(r *http.Request) { r.Header.Set("Authorization", "Bearer nope") }, http.StatusUnauthorized},
 		{"bearer header", func(r *http.Request) { r.Header.Set("Authorization", "Bearer secret") }, http.StatusOK},
-		{"query param", func(r *http.Request) { r.URL.RawQuery = "token=secret" }, http.StatusOK},
+		// The query parameter must NOT authenticate: it would leak the token into
+		// access logs, history, and Referer headers.
+		{"query param rejected", func(r *http.Request) { r.URL.RawQuery = "token=secret" }, http.StatusUnauthorized},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -38,6 +40,7 @@ func TestTokenAuth(t *testing.T) {
 
 func TestTokenAuthEmptyWantRejects(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/?token=anything", nil)
+	r.Header.Set("Authorization", "Bearer ")
 	w := httptest.NewRecorder()
 	TokenAuth("", okHandler()).ServeHTTP(w, r)
 	if w.Code != http.StatusUnauthorized {

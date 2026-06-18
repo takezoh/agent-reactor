@@ -132,7 +132,7 @@ This generalizes the existing `EvPaneOsc`/`EvPanePrompt` path; `x/vt`’s
 |---|---|---|
 | Local, same host | Unix socket (existing) | SO_PEERCRED (existing) |
 | Remote | TCP + **TLS** | **bearer token** (mTLS optional) |
-| Web | WebSocket (gateway bridges proto ↔ ws) | token / session cookie |
+| Web | WebSocket (gateway bridges proto ↔ ws) | bearer token via `Authorization` header (REST); short-lived single-use ticket (WS); default origin check (anti-CSWSH) |
 
 `proto.Client`/`DialConn` already accept any `net.Conn`, so TLS is a drop-in
 dialer; the server `StartIPC` grows a `StartIPCNet(tcp, tlsConfig, Authenticator)`
@@ -185,15 +185,21 @@ The tmux-free web client⇄server now lives in `src/` (the original
   tee + multi-session Manager; emits typed events (OSC 9/133/title captured as
   Control), reattach snapshot via `Render()`, resize, multi-subscriber fan-out.
 - `server/web/` — WebSocket↔termvt attach (asciicast v2 output + control frames),
-  bearer-token auth, REST `/api/sessions`, static-client mux.
+  REST `/api/sessions`, static-client mux. Auth: bearer token via `Authorization`
+  header (never a query param); WebSocket connections use a short-lived,
+  single-use ticket minted over that API and the default same-origin check
+  (anti-CSWSH). All responses carry `Referrer-Policy: no-referrer` and a strict
+  CSP (`script-src 'self'`; xterm.js is vendored, not CDN-loaded).
 - `server/session/` — session lifecycle over `termvt.Manager`; launch wrapping via
   `agentlaunch.Dispatcher` (Direct now; `SandboxDispatcher`/devcontainer drop-in).
 - `client/web/` — embedded `xterm.js` single-page client.
 - `cmd/server/` — composition + TLS (self-signed default) + token + graceful stop.
 
 Run: `make build-server && ./server -insecure -token <tok> -addr :8443`, then open
-`/?token=<tok>`. Go tests cover termvt, the session service, the REST mux + auth,
-and the http→ws→pty attach path; `go test -race` green.
+`/#token=<tok>` (fragment, not query). Go tests cover termvt, the session service,
+the REST mux + header auth, the single-use ticket store, the security headers, and
+the http→ws→pty attach path including ticket gating and cross-origin rejection;
+`go test -race` green.
 
 **Remaining (large, incremental):** reuse the pure core (`state.Reduce`/`Driver`)
 for status detection / view / persistence per §“C”, and remove the legacy tmux

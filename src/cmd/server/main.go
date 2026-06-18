@@ -24,6 +24,15 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run wires and serves the web server. It returns an error rather than calling
+// log.Fatal so its deferred cleanup (signal-context stop) always runs; main
+// turns a non-nil error into the fatal exit.
+func run() error {
 	addr := flag.String("addr", ":8443", "listen address")
 	tokenFlag := flag.String("token", "", "bearer token (generated and printed if empty)")
 	certFile := flag.String("tls-cert", "", "TLS certificate file (self-signed if empty)")
@@ -37,7 +46,7 @@ func main() {
 	}
 
 	svc := session.NewService(agentlaunch.DirectDispatcher{})
-	handler := serverweb.TokenAuth(token, serverweb.NewMux(svc, clientweb.Assets))
+	handler := serverweb.SecurityHeaders(serverweb.NewMux(svc, clientweb.Assets, token))
 	srv := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -56,8 +65,9 @@ func main() {
 	}
 	log.Printf("agent-reactor server on %s://%s  token=%s", scheme, *addr, token)
 	if err := serve(srv, *insecure, *certFile, *keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
+		return err
 	}
+	return nil
 }
 
 func serve(srv *http.Server, insecure bool, cert, key string) error {

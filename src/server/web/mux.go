@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"strings"
 
 	"github.com/coder/websocket"
 
@@ -21,11 +22,44 @@ type Sessions interface {
 	Session(id string) (*termvt.Session, bool)
 }
 
-// NewMux builds the HTTP handler: the static web client, the session REST API,
-// and the per-session WebSocket attach endpoint. Wrap it with TokenAuth.
-func NewMux(svc Sessions, assets fs.FS) http.Handler {
+// NewMux builds the HTTP handler. Authority lives on the data plane, not the
+// shell: the static web client (HTML/JS/CSS) holds no secrets and is served
+// without auth — a browser navigating to the page cannot send an Authorization
+// header, and the bearer token must never travel in a URL. The REST API is
+// guarded by the bearer token (Authorization header); the WebSocket attach
+// endpoint — which a browser cannot send headers on — is guarded by a
+// short-lived, single-use ticket minted over the token-authenticated API. The
+// client carries the token in the URL fragment (never sent to the server) and
+// uses it as a header for the API.
+func NewMux(svc Sessions, assets fs.FS, token string) http.Handler {
+	tickets := newTicketStore()
 	mux := http.NewServeMux()
-	mux.Handle("GET /", http.FileServer(http.FS(assets)))
+
+	// Public static shell. ServeMux precedence routes /api/ and /ws to the
+	// guarded handlers below; everything else falls here.
+	mux.Handle("/", staticHandler(assets))
+
+	// REST API: bearer token via Authorization header (never a query param).
+	mux.Handle("/api/", TokenAuth(token, apiHandler(svc, tickets)))
+
+	// The WebSocket attach endpoint authenticates with a single-use ticket (a
+	// browser WebSocket cannot carry an Authorization header), never the bearer
+	// token, so the token never appears in a URL.
+	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
+		if !tickets.consume(r.URL.Query().Get("ticket")) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		serveAttach(svc, w, r)
+	})
+	return mux
+}
+
+// apiHandler builds the header-authenticated REST routes (session CRUD and
+// WebSocket-ticket minting). Mount it under /api/ wrapped with TokenAuth.
+func apiHandler(svc Sessions, tickets *ticketStore) http.Handler {
+	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/sessions", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, svc.List())
@@ -50,10 +84,25 @@ func NewMux(svc Sessions, assets fs.FS) http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
-		serveAttach(svc, w, r)
+	mux.HandleFunc("POST /api/ws-ticket", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"ticket": tickets.mint()})
 	})
 	return mux
+}
+
+// staticHandler serves the embedded client assets but suppresses directory
+// autoindex listings (e.g. /vendor/), which a bare http.FileServer would now
+// expose since a directory is embedded. Only files are served; directory paths
+// 404. The shell holds no secrets, but listings are needless attack surface.
+func staticHandler(assets fs.FS) http.Handler {
+	fileServer := http.FileServer(http.FS(assets))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" && strings.HasSuffix(r.URL.Path, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
 func serveAttach(svc Sessions, w http.ResponseWriter, r *http.Request) {
@@ -62,7 +111,10 @@ func serveAttach(svc Sessions, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
-	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	// Leaving InsecureSkipVerify unset enforces the default origin check (the
+	// request Origin host must equal Host), which blocks cross-site WebSocket
+	// hijacking from a browser. Non-browser clients send no Origin and pass.
+	c, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return
 	}

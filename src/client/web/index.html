@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>agent-reactor — web client</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
+  <link rel="stylesheet" href="/vendor/xterm.css" />
   <style>
     html, body { margin: 0; height: 100%; background: #111; color: #ddd; font-family: monospace; }
     #app { display: flex; height: 100vh; }
@@ -36,85 +36,8 @@
       <div id="events"><h3>server-side events</h3><div id="evlist"></div></div>
     </div>
   </div>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
-  <script>
-    const token = new URLSearchParams(location.search).get('token') || '';
-    const authHeaders = { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' };
-    const term = new Terminal({ fontSize: 13, cursorBlink: true, theme: { background: '#111' } });
-    const fit = new FitAddon.FitAddon();
-    term.loadAddon(fit);
-    term.open(document.getElementById('term'));
-    fit.fit();
-
-    let ws = null, activeID = null;
-    const status = (s) => document.getElementById('status').textContent = s;
-
-    function logEv(k, text) {
-      const d = document.createElement('div');
-      d.className = 'ev';
-      d.innerHTML = '<span class="k">[' + k + ']</span> ';
-      d.appendChild(document.createTextNode(text));
-      document.getElementById('evlist').prepend(d);
-    }
-
-    async function api(method, path, body) {
-      const r = await fetch(path, { method, headers: authHeaders, body: body ? JSON.stringify(body) : undefined });
-      if (!r.ok) throw new Error(await r.text());
-      return r.status === 204 ? null : r.json();
-    }
-
-    async function refresh() {
-      const sessions = await api('GET', '/api/sessions');
-      const list = document.getElementById('list');
-      list.innerHTML = '';
-      for (const s of sessions) {
-        const el = document.createElement('div');
-        el.className = 'sess' + (s.id === activeID ? ' active' : '');
-        el.textContent = s.id + ' · ' + s.command;
-        const stop = document.createElement('button');
-        stop.textContent = '✕';
-        stop.onclick = async (e) => { e.stopPropagation(); await api('DELETE', '/api/sessions/' + s.id); refresh(); };
-        el.onclick = () => attach(s.id);
-        el.appendChild(document.createTextNode(' '));
-        el.appendChild(stop);
-        list.appendChild(el);
-      }
-    }
-
-    function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
-    function sendResize() { send({ k: 'r', cols: term.cols, rows: term.rows }); }
-
-    function attach(id) {
-      if (ws) { ws.close(); ws = null; }
-      activeID = id;
-      term.reset();
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(`${proto}://${location.host}/ws?session=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`);
-      ws.onopen = () => { status('attached ' + id); sendResize(); refresh(); };
-      ws.onclose = () => status('detached');
-      ws.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
-        if (Array.isArray(msg)) { if (msg[1] === 'o') term.write(msg[2]); return; }
-        logEv(msg.k + (msg.code ? ' ' + msg.code : ''), msg.data || '');
-      };
-    }
-
-    term.onData((d) => send({ k: 'i', d }));
-    term.onResize(() => sendResize());
-    addEventListener('resize', () => fit.fit());
-    document.getElementById('create').onclick = async () => {
-      try {
-        const info = await api('POST', '/api/sessions', {
-          command: document.getElementById('cmd').value,
-          project: document.getElementById('project').value,
-          cols: term.cols, rows: term.rows,
-        });
-        await refresh();
-        attach(info.id);
-      } catch (err) { status('error: ' + err.message); }
-    };
-    refresh();
-  </script>
+  <script src="/vendor/xterm.js"></script>
+  <script src="/vendor/addon-fit.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>
