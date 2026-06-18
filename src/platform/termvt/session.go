@@ -1,10 +1,12 @@
 package termvt
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -38,12 +40,14 @@ type Session struct {
 	cmd  *exec.Cmd
 	em   *vt.Emulator
 
-	mu      sync.Mutex
-	subs    map[int]chan Event
-	pending []Control // produced by OSC handlers during em.Write
-	nextID  int
-	cols    int
-	rows    int
+	mu       sync.Mutex
+	subs     map[int]chan Event
+	pending  []Control // produced by OSC handlers during em.Write
+	nextID   int
+	cols     int
+	rows     int
+	exited   bool // set once readLoop reaps the process
+	exitCode int  // valid only when exited
 }
 
 // NewSession starts spec.Argv in a pty sized cols×rows and begins streaming.
@@ -111,8 +115,11 @@ func (s *Session) readLoop() {
 			break
 		}
 	}
-	_ = s.cmd.Wait() // reap the process so it does not linger as a zombie
+	waitErr := s.cmd.Wait() // reap the process so it does not linger as a zombie
+	code := exitCodeFromWait(waitErr)
 	s.mu.Lock()
+	s.exited = true
+	s.exitCode = code
 	s.fanout(Event{Kind: EventExit})
 	for id, ch := range s.subs {
 		close(ch)
@@ -183,11 +190,26 @@ func (s *Session) Snapshot() []byte {
 	return []byte(s.em.Render())
 }
 
+// CaptureTail returns the trailing n rendered lines of the session's screen
+// with SGR escapes stripped. It is the adapter CapturePane-style callers use to
+// read plain text out of the emulator grid.
+func CaptureTail(s *Session, n int) string {
+	return stripSGRTail(string(s.Snapshot()), n)
+}
+
 // Size returns the current terminal dimensions.
 func (s *Session) Size() (cols, rows int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.cols, s.rows
+}
+
+// ExitCode reports the process exit code once it has been reaped. exited is
+// false while the process is still running (code is then meaningless and 0).
+func (s *Session) ExitCode() (code int, exited bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.exitCode, s.exited
 }
 
 // Close kills the process and closes the pty. readLoop then emits EventExit and
@@ -241,4 +263,39 @@ func oscText(data []byte) string {
 		return str[i+1:]
 	}
 	return str
+}
+
+// exitCodeFromWait extracts the process exit code from cmd.Wait()'s error.
+// nil → 0 (clean exit); *exec.ExitError → the reported code; any other error
+// → -1 (could not determine, e.g. process was signalled before exec).
+func exitCodeFromWait(err error) int {
+	if err == nil {
+		return 0
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return -1
+}
+
+// sgrPattern matches CSI ... m (SGR / Select Graphic Rendition) sequences. The
+// emulator's Render encodes colours and styles as these escapes; CapturePane
+// callers want the plain text. Other CSI sequences (cursor moves, etc.) are not
+// present in a rendered snapshot, so stripping SGR alone suffices.
+var sgrPattern = regexp.MustCompile("\x1b\\[[0-9;:]*m")
+
+// stripSGRTail returns the trailing n lines of s with SGR escape sequences
+// removed. n <= 0 returns the empty string; n larger than the line count
+// returns all lines.
+func stripSGRTail(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	clean := sgrPattern.ReplaceAllString(s, "")
+	lines := strings.Split(clean, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
