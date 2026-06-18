@@ -34,6 +34,22 @@ contract, a wired fake app-server exercised under `-race`, a stdlib
 the test-pinned enforcement catalogued in
 [code-enforcement.md §6](../technical/code-enforcement.md).
 
+## Fan-out isolation harness (termvt multiplexer)
+
+The tmux-free web server's `platform/termvt` is the same shape — one source
+(a pty) multiplexed to many subscribers — so it carries the analogous
+safety-critical property: **fan-out isolation** (every event reaches exactly the
+live subscribers of its own session, in order; a slow subscriber is severed, not
+allowed to block or corrupt the others). It is pinned by a real-pty contract
+(`fanout_contract_test.go`: multi-subscriber delivery, `Manager` cross-talk,
+slow-vs-fast containment, control-before-output ordering) run under `-race`, plus
+a `server/web` `FuzzInbound` over the untrusted client→server frame decode.
+Unlike the stream subsystem, termvt has no in-process fake — its only backend is
+a real pty — so there is no opt-in e2e tier. Full guide:
+[termvt multiplexer testing](../technical/platform/termvt-multiplexer-testing.md);
+rationale: [ADR 0003](../adr/0003-termvt-fanout-isolation.md);
+enforcement: [code-enforcement.md §7](../technical/code-enforcement.md).
+
 ## Coverage Tiers
 
 Coverage targets are tiered by architectural blast radius. A regression in `state` corrupts every session; a regression in `lib/tmux` typically surfaces as one broken pane.
@@ -41,7 +57,7 @@ Coverage targets are tiered by architectural blast radius. A regression in `stat
 | Tier | Target | Layer | Members |
 |------|--------|-------|---------|
 | **S** | ≥85% | Pure domain layer & wire types | `state`, `state/view`, `proto`, `features`, `orchestrator/scheduler` (pure `Reduce` + transitions) |
-| **A** | ≥75% | Core execution layer | `runtime`, `runtime/worker`, `runtime/subsystem/*`, `driver`, `driver/vt`, `connector`, `config`, `sandbox/devcontainer` |
+| **A** | ≥75% | Core execution layer | `runtime`, `runtime/worker`, `runtime/subsystem/*`, `driver`, `driver/vt`, `connector`, `config`, `sandbox/devcontainer`, `platform/termvt`, `server/session`, `server/web` |
 | **B** | ≥60% | Infrastructure integrations | `lib/*` (except thin CLI wrappers), `proto/sessions`, `hostexec`, `mcpproxy`, `tui`, `tools` |
 | **C** | ≥40% | Thin CLI & wiring | `main`, `cli`, `lib/tmux`, `lib/gemini`, `lib/notify` |
 | **D** | smoke tests minimum | Trivial packages | `event`, `internal/globutil`, `lib/wsl`, `runtime/subsystem` (shared utilities), `sandbox`, `cmd/bridge` |

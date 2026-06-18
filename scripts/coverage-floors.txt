@@ -45,6 +45,9 @@ github.com/takezoh/agent-reactor/cmd/linear-graphql-cli               0
 github.com/takezoh/agent-reactor/cmd/orchestrator                    55
 github.com/takezoh/agent-reactor/cmd/arc                           15
 github.com/takezoh/agent-reactor/cmd/reactor-bridge                     0
+# cmd/server: main/run/serve bind sockets and block (untestable in a unit test);
+# floor reflects the pure helpers (token, self-signed cert) that are covered.
+github.com/takezoh/agent-reactor/cmd/server                          15
 
 # orchestrator/ — Symphony scheduler service
 github.com/takezoh/agent-reactor/orchestrator/agent                  80
@@ -90,3 +93,8 @@ github.com/takezoh/agent-reactor/platform/sandbox                    90
 github.com/takezoh/agent-reactor/platform/sandbox/devcontainer       70
 github.com/takezoh/agent-reactor/platform/secretenv                  34
 github.com/takezoh/agent-reactor/platform/shellalias                  90
+github.com/takezoh/agent-reactor/platform/termvt                     85
+
+# server/ — tmux-free web client⇄server (pty multiplexer + web gateway)
+github.com/takezoh/agent-reactor/server/session                      78
+github.com/takezoh/agent-reactor/server/web                          90

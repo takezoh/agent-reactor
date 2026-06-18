@@ -59,17 +59,30 @@ func readInbound(ctx context.Context, sess Attacher, c *websocket.Conn) {
 		if err != nil {
 			return
 		}
-		var in inbound
-		if json.Unmarshal(data, &in) != nil {
-			continue
-		}
-		switch in.K {
-		case "i":
-			sess.WriteInput([]byte(in.D))
-		case "r":
-			if in.Cols > 0 && in.Rows > 0 {
-				_ = sess.Resize(in.Cols, in.Rows)
-			}
+		applyInbound(sess, data)
+	}
+}
+
+// applyInbound decodes data and applies it to sess: "i" writes input, "r"
+// resizes — but only with positive dimensions (the absolute upper bound that
+// keeps the pty/VT grid safe is enforced downstream by termvt.normalizeSize).
+// Malformed JSON and unknown kinds are ignored. Returns true if the frame
+// produced an action. Split out from readInbound so the untrusted-input decode
+// path is unit- and fuzz-testable (FuzzInbound).
+func applyInbound(sess Attacher, data []byte) bool {
+	var in inbound
+	if json.Unmarshal(data, &in) != nil {
+		return false
+	}
+	switch in.K {
+	case "i":
+		sess.WriteInput([]byte(in.D))
+		return true
+	case "r":
+		if in.Cols > 0 && in.Rows > 0 {
+			_ = sess.Resize(in.Cols, in.Rows)
+			return true
 		}
 	}
+	return false
 }

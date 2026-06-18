@@ -110,6 +110,14 @@ Unlike sections 1–5 this cannot be caught at lint/compile time (it is a runtim
 
 Exception: none — a multiplexed backend that cannot satisfy the invariant is a defect, not a candidate for opt-out.
 
+## 7. Fan-out isolation (test-pinned)
+
+The tmux-free multiplexer `platform/termvt` is the same shape as §6 — one source (a pty) fanned out to many subscribers — and shares the cross-talk failure mode. Its **fan-out isolation** invariant: every event reaches exactly the live subscribers of its own session (all, in order, control-before-output), and a subscriber that cannot keep up is *severed*, never allowed to block or corrupt the others. Cross-talk here is one session's bytes surfacing in another's terminal, or a slow client wedging a healthy one.
+
+Like §6 this is a runtime property, not lint/compile-catchable, so it is **test-pinned**: the [fan-out isolation contract](platform/termvt-multiplexer-testing.md) (`TestFanoutDeliversToEverySubscriber`, `TestManagerSessionsDoNotCrossTalk`, `TestSlowSubscriberDoesNotStarveFast`, `TestControlPrecedesOutputInChunk`) runs against a real pty under `-race`, and `server/web`'s `FuzzInbound` pins the untrusted client→server frame decode (no panic, no non-positive resize). Rationale: [ADR 0003](../adr/0003-termvt-fanout-isolation.md). Unlike §6 there is no opt-in e2e tier — termvt has no in-process fake to validate (its only backend is a real pty).
+
+Exception: none — a multiplexer that cannot satisfy fan-out isolation is a defect, not a candidate for opt-out.
+
 ## Related
 
 - Canonical design principles: [ARCHITECTURE.md](../../ARCHITECTURE.md)

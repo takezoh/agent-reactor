@@ -6,10 +6,13 @@ import (
 	"time"
 )
 
-// waitFor reads events until pred matches or the deadline elapses.
-func waitFor(t *testing.T, ch <-chan Event, pred func(Event) bool, d time.Duration) {
+// waitTimeout bounds how long the event-waiting helpers block before failing.
+const waitTimeout = 3 * time.Second
+
+// waitFor reads events until pred matches or waitTimeout elapses.
+func waitFor(t *testing.T, ch <-chan Event, pred func(Event) bool) {
 	t.Helper()
-	deadline := time.After(d)
+	deadline := time.After(waitTimeout)
 	for {
 		select {
 		case ev, ok := <-ch:
@@ -43,7 +46,7 @@ func TestSessionEchoesInput(t *testing.T) {
 
 	_, ch := s.Subscribe()
 	s.WriteInput([]byte("ping-123\n"))
-	waitFor(t, ch, func(ev Event) bool { return outputContains(ev, "ping-123") }, 3*time.Second)
+	waitFor(t, ch, func(ev Event) bool { return outputContains(ev, "ping-123") })
 }
 
 func TestSessionCapturesOSC9(t *testing.T) {
@@ -56,7 +59,7 @@ func TestSessionCapturesOSC9(t *testing.T) {
 	defer func() { _ = s.Close() }()
 
 	_, ch := s.Subscribe()
-	waitFor(t, ch, func(ev Event) bool { return controlMatch(ev, "osc", 9, "hello-notif") }, 3*time.Second)
+	waitFor(t, ch, func(ev Event) bool { return controlMatch(ev, "osc", 9, "hello-notif") })
 }
 
 func TestSessionCapturesOSC133Prompt(t *testing.T) {
@@ -67,7 +70,7 @@ func TestSessionCapturesOSC133Prompt(t *testing.T) {
 	defer func() { _ = s.Close() }()
 
 	_, ch := s.Subscribe()
-	waitFor(t, ch, func(ev Event) bool { return controlMatch(ev, "prompt", 133, "A") }, 3*time.Second)
+	waitFor(t, ch, func(ev Event) bool { return controlMatch(ev, "prompt", 133, "A") })
 }
 
 func TestSessionCapturesTitle(t *testing.T) {
@@ -78,7 +81,7 @@ func TestSessionCapturesTitle(t *testing.T) {
 	defer func() { _ = s.Close() }()
 
 	_, ch := s.Subscribe()
-	waitFor(t, ch, func(ev Event) bool { return controlMatch(ev, "title", 0, "my-title") }, 3*time.Second)
+	waitFor(t, ch, func(ev Event) bool { return controlMatch(ev, "title", 0, "my-title") })
 }
 
 func TestSessionReattachSnapshotFirst(t *testing.T) {
@@ -121,7 +124,7 @@ func TestSessionEmitsExitOnClose(t *testing.T) {
 	}
 	_, ch := s.Subscribe()
 	_ = s.Close()
-	waitFor(t, ch, func(ev Event) bool { return ev.Kind == EventExit }, 3*time.Second)
+	waitFor(t, ch, func(ev Event) bool { return ev.Kind == EventExit })
 }
 
 func TestSessionDefaultSize(t *testing.T) {
@@ -138,6 +141,25 @@ func TestSessionDefaultSize(t *testing.T) {
 func TestNewSessionEmptyArgv(t *testing.T) {
 	if _, err := NewSession(Spec{}); err == nil {
 		t.Fatal("expected error for empty argv")
+	}
+}
+
+// TestNormalizeSizeClamp pins the dimension guard: non-positive sizes floor to
+// the defaults and oversized ones are capped at maxDim — so a client cannot
+// overflow the uint16 pty winsize (65536 → 0) or drive the VT grid toward OOM.
+func TestNormalizeSizeClamp(t *testing.T) {
+	cases := []struct{ inC, inR, wantC, wantR int }{
+		{0, 0, 80, 24},
+		{-5, -1, 80, 24},
+		{100, 30, 100, 30},
+		{100000, 100000, maxDim, maxDim}, // OOM-sized grid → clamped
+		{65536, 1, maxDim, 1},            // would wrap to 0 cols without the cap
+	}
+	for _, c := range cases {
+		if gotC, gotR := normalizeSize(c.inC, c.inR); gotC != c.wantC || gotR != c.wantR {
+			t.Errorf("normalizeSize(%d,%d) = %dx%d, want %dx%d",
+				c.inC, c.inR, gotC, gotR, c.wantC, c.wantR)
+		}
 	}
 }
 

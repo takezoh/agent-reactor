@@ -3,7 +3,6 @@ package termvt
 import (
 	"reflect"
 	"testing"
-	"time"
 )
 
 func TestManagerCreateGetList(t *testing.T) {
@@ -52,7 +51,7 @@ func TestManagerRemove(t *testing.T) {
 		t.Fatal("session x still present after Remove")
 	}
 	// Remove closed the session → the subscriber sees EventExit then close.
-	waitFor(t, ch, func(ev Event) bool { return ev.Kind == EventExit }, 3*time.Second)
+	waitFor(t, ch, func(ev Event) bool { return ev.Kind == EventExit })
 
 	if err := m.Remove("missing"); err == nil {
 		t.Fatal("expected error removing missing session")

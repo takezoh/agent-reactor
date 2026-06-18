@@ -83,6 +83,9 @@ jobs:
       - name: fuzz routing isolation
         run: go test -run '^$' -fuzz '^FuzzStreamRouting$' -fuzztime=30s ./client/runtime/subsystem/stream/
 
+      - name: fuzz web inbound decode
+        run: go test -run '^$' -fuzz '^FuzzInbound$' -fuzztime=30s ./server/web/
+
   schema-drift:
     runs-on: ubuntu-latest
     steps:
