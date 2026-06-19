@@ -35,17 +35,27 @@ All documentation is organized by **audience × architecture layer** under [`doc
 Three top-level trees under `src/`:
 
 ```
-platform/      Shared infrastructure — the client and orchestrator both depend on this
+platform/      Shared infrastructure — the client, server, and orchestrator all depend on this
 client/        client-specific code — TUI, state machine, runtime, drivers, connectors
 orchestrator/  Symphony SPEC implementation — poll/dispatch/reconcile + observability HTTP
-cmd/           Binary entry points — cmd/arc/, cmd/reactor-bridge/, cmd/orchestrator/, cmd/claude-app-server/
+server/        HTTP/WS gateway — stateless proxy fronting the arc daemon over its Unix socket
+cmd/           Binary entry points — cmd/arc/, cmd/server/, cmd/reactor-bridge/, cmd/orchestrator/, cmd/claude-app-server/
 ```
 
-**Import direction**: `cmd/*` → `client/*` + `orchestrator/*` + `platform/*` → (no reverse). The three-layer boundary is enforced by `depguard` (see `src/.golangci.yml`, rules `platform-no-client-or-orchestrator` and `client-no-orchestrator`):
+**Import direction**: `cmd/*` → `client/*` + `orchestrator/*` + `server/*` + `platform/*` → (no reverse). The layer boundaries are enforced by `depguard` (see `src/.golangci.yml`, rules `platform-no-client-or-orchestrator`, `client-no-orchestrator`, and `server-layer`):
 
-- `platform/*` imports neither `client/*` nor `orchestrator/*`
-- `client/*` does not import `orchestrator/*`
-- `orchestrator/*` does not import `client/*`
+| from \ to      | platform | client/proto | client/state | client/runtime | orchestrator | server |
+|----------------|----------|--------------|--------------|----------------|--------------|--------|
+| `platform/*`   | ✅        | ❌            | ❌            | ❌              | ❌            | ❌      |
+| `client/*`     | ✅        | ✅            | ✅            | ✅              | ❌            | ❌      |
+| `orchestrator/*` | ✅      | ✅            | ✅            | ❌              | ✅            | ❌      |
+| `server/*`     | ✅        | ✅            | ✅            | ✅              | ❌            | ✅      |
+
+Key invariants:
+- `platform/*` imports neither `client/*` nor `orchestrator/*` nor `server/*`
+- `client/*` does not import `orchestrator/*` or `server/*`
+- `orchestrator/*` does not import `client/*` or `server/*`
+- `server/*` does not import `orchestrator/*`
 
 The full set of `depguard` rules (including the intra-`client/` isolation rules) and every other code-level enforcement mechanism are catalogued in [code & architecture enforcement](docs/technical/code-enforcement.md).
 
@@ -54,6 +64,55 @@ The full set of `depguard` rules (including the intra-`client/` isolation rules)
 - **[`platform/`](docs/technical/platform/README.md)** — shared base: the agent-launch primitive (`agentlaunch`: argv-based `Spawn` + `SplitArgs`, host/container `Dispatcher`, on `procgroup`), sandbox backends, host-exec and MCP-proxy brokers, path translation, logger, tool wrappers (`lib/<tool>`), trackers, metrics, credential providers. Tool-specific knowledge is allowed here so it stays out of the generic layers above. Agent-agnostic launch lives here; per-agent command construction stays in `lib/<tool>`, while transport, `codexclient.Conn`, and `Handler` remain per-layer.
 - **[`client/`](docs/technical/client/README.md)** — all of the client: the pure `state/` domain core, `runtime/` imperative shell, value-type `driver/` and `connector/` plugins, `runtime/subsystem/` (`cli` and `stream`), the `proto/` IPC wire layer, and the Bubbletea `tui/`. Terminology, the design-decision log, and the full dependency graph are documented there.
 - **[`orchestrator/`](docs/technical/orchestrator/README.md)** — a TUI-less, single-authority service implementing the [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md): `workflowfile/`, `wfconfig/`, `scheduler/` (poll/dispatch/reconcile), `workspace/`, `agent/`, `prompt/`, `httpserver/`, `lineargql/`. It shares `platform/` with the client but does not import `client/`. Per-issue workspaces are local git clones of the source repo (GitHub); issue state lives in the tracker (Linear or GitHub). SPEC ↔ package correspondence and deviation posture: [`docs/technical/orchestrator/symphony-conformance.md`](docs/technical/orchestrator/symphony-conformance.md).
+- **`server/`** — HTTP/WS gateway that fronts the `arc daemon` over its Unix socket; stateless proxy bridging the browser front-end to `client/runtime`. Does not import `orchestrator/*`. See [Server gateway (server/*)](#server-gateway-server) below for full detail.
+
+### Server gateway (server/*)
+
+`server/*` is the HTTP/WS façade that fronts a long-lived `arc daemon`
+(the `client/runtime` event loop) over its Unix socket. It is a **stateless
+proxy** — sessions and side effects live in the daemon — so the same daemon
+can be reached by the TUI (`cmd/arc`), the browser front-end (`cmd/server` +
+xterm.js), and future native clients with consistent behaviour.
+
+- `server/web/daemon_client.go` wraps `proto.Client` with an eager dial +
+  supervisor goroutine. `Health()` / `LastError()` / `LastAttemptAt()` give
+  the HTTP layer enough signal to return `503` while the daemon is down
+  ([ADR 0012](docs/adr/0012-daemon-client-eager-dial-supervisor.md)).
+- `server/web/gateway.go` bridges one WebSocket to one daemon-side surface
+  subscription (`proto.CmdSurfaceSubscribe`). On daemon disconnect it sends
+  a `controlMsg{k:"c"}` payload and immediately follows with a typed close
+  (`StatusGoingAway`) — the two-step shutdown defined in
+  [ADR 0011](docs/adr/0011-two-step-ws-close-on-daemon-disconnect.md).
+- `server/web/mux.go` maps REST `/api/sessions` GET/POST/DELETE to
+  `proto.CmdEvent{Event: state.Event{Create,List,Stop}Session}` via the
+  daemon client; cols/rows are packed into `state.LaunchOptions`
+  ([ADR 0005](docs/adr/0005-cmd-server-as-arc-daemon-gateway.md), FR-022).
+- `cmd/server/main.go` is the binary entry point: it resolves the daemon
+  socket via `platform/socketpath.ResolveDaemonSocket(-arc-sock, ARC_SOCKET,
+  ~/.agent-reactor/arc.sock)`, boots `DaemonClient`, and serves
+  `server/web.NewMux(daemon, token)` behind a bearer-token + ws-ticket gate
+  (auth invariant unchanged from the previous in-process design;
+  [ADR 0017](docs/adr/0017-platform-socketpath-helper.md)).
+- `server/session` is retained behind a `legacy_session` build tag for one
+  more release cycle ([ADR 0014](docs/adr/0014-server-session-legacy-build-tag.md));
+  a future ε PR removes the directory with `git rm`.
+
+**Design invariant**: `server/*` never calls `platform/termvt`, `platform/agentlaunch`,
+or any other platform primitive that controls agent I/O directly. All session
+state and side effects remain in the daemon. The server layer is purely a
+protocol translator: JSON-over-HTTP/WS on the external face, typed `proto`
+IPC on the daemon face.
+
+**Import direction** (enforced by `depguard` rule `server-layer`,
+[ADR 0016](docs/adr/0016-depguard-server-layer-rule.md)): `server/*` may
+import `platform/*`, `client/proto`, `client/state`, and `client/runtime`
+(the subset needed to speak IPC). It must not import `orchestrator/*`.
+
+Related ADRs: [0005](docs/adr/0005-cmd-server-as-arc-daemon-gateway.md) (cmd/server as gateway) ·
+[0011](docs/adr/0011-two-step-ws-close-on-daemon-disconnect.md) (two-step WS close) ·
+[0012](docs/adr/0012-daemon-client-eager-dial-supervisor.md) (daemon client supervisor) ·
+[0014](docs/adr/0014-server-session-legacy-build-tag.md) (legacy_session build tag) ·
+[0016](docs/adr/0016-depguard-server-layer-rule.md) (depguard server layer rule).
 
 Files matching `client/state/reduce_*.go` host state-machine dispatch tables. They are exempt from the 80-line function limit (see [AGENTS.md](AGENTS.md)) because forced extraction of dispatch arms fragments the state machine without adding clarity. File-length (500 lines) and naming rules still apply.
 
