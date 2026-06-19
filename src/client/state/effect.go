@@ -317,3 +317,71 @@ func (EffInjectPrompt) isEffect() {}
 type EffSwapHidden struct{}
 
 func (EffSwapHidden) isEffect() {}
+
+// === Surface streaming (PR-2 reducer-only; runtime wires in PR-3) ===
+
+// EffSurfaceSubscribeStart asks the runtime to begin streaming pane
+// output for SessionID toward ConnID. The reducer guarantees the
+// session exists and that ActiveFrame is non-nil before emitting this.
+// The runtime is responsible for starting the relay goroutine.
+type EffSurfaceSubscribeStart struct {
+	ConnID    ConnID
+	SessionID SessionID
+}
+
+func (EffSurfaceSubscribeStart) isEffect() {}
+
+// EffSurfaceSubscribeStop asks the runtime to stop the relay started by
+// EffSurfaceSubscribeStart. Idempotent on the runtime side. Emitted on
+// explicit unsubscribe and on EvConnClosed for every still-subscribed
+// (ConnID, SessionID) pair.
+type EffSurfaceSubscribeStop struct {
+	ConnID    ConnID
+	SessionID SessionID
+}
+
+func (EffSurfaceSubscribeStop) isEffect() {}
+
+// EffSurfaceResize forwards a logical resize request to the pty backend
+// behind SessionID. The runtime resolves the backend from its internal
+// sessionPanes map.
+type EffSurfaceResize struct {
+	SessionID SessionID
+	Cols      uint16
+	Rows      uint16
+}
+
+func (EffSurfaceResize) isEffect() {}
+
+// EffSurfaceWriteRaw forwards uninterpreted bytes to SessionID's pane.
+// Data is owned by the effect; the reducer must not retain a reference
+// after emitting.
+type EffSurfaceWriteRaw struct {
+	SessionID SessionID
+	Data      []byte
+}
+
+func (EffSurfaceWriteRaw) isEffect() {}
+
+// EffBroadcastSurfaceOutput tells the runtime to broadcast one chunk of
+// pane output as EvtSurfaceOutput to all ConnIDs subscribed to SessionID
+// (per State.SurfaceSubs). The runtime is responsible for assigning the
+// per-subscribe Sequence number.
+type EffBroadcastSurfaceOutput struct {
+	SessionID SessionID
+	Data      []byte
+	TimeSec   float64
+}
+
+func (EffBroadcastSurfaceOutput) isEffect() {}
+
+// EffBroadcastPromptEvent tells the runtime to broadcast a prompt-state
+// transition (EvtPromptEvent on the wire) to all subscribers interested
+// in FrameID's session.
+type EffBroadcastPromptEvent struct {
+	FrameID  FrameID
+	Phase    string
+	ExitCode int
+}
+
+func (EffBroadcastPromptEvent) isEffect() {}
