@@ -12,12 +12,28 @@ func reduceConnOpened(s State, e EvConnOpened) (State, []Effect) {
 }
 
 func reduceConnClosed(s State, e EvConnClosed) (State, []Effect) {
-	if _, ok := s.Subscribers[e.ConnID]; !ok {
+	_, hasSub := s.Subscribers[e.ConnID]
+	inner, hasSurface := s.SurfaceSubs[e.ConnID]
+	if !hasSub && !hasSurface {
 		return s, nil
 	}
-	s.Subscribers = cloneSubscribers(s.Subscribers)
-	delete(s.Subscribers, e.ConnID)
-	return s, nil
+	var effs []Effect
+	if hasSub {
+		s.Subscribers = cloneSubscribers(s.Subscribers)
+		delete(s.Subscribers, e.ConnID)
+	}
+	if hasSurface {
+		// Emit one Stop per (ConnID, SessionID) before dropping the
+		// outer map entry so the runtime can tear down each relay.
+		// Iteration order is non-deterministic — tests must compare as
+		// sets, not slices.
+		s.SurfaceSubs = cloneSurfaceSubs(s.SurfaceSubs)
+		for sid := range inner {
+			effs = append(effs, EffSurfaceSubscribeStop{ConnID: e.ConnID, SessionID: sid})
+		}
+		delete(s.SurfaceSubs, e.ConnID)
+	}
+	return s, effs
 }
 
 func reduceSubscribe(s State, e EvCmdSubscribe) (State, []Effect) {
