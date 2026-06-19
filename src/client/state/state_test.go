@@ -13,6 +13,9 @@ func TestNewReturnsInitializedMaps(t *testing.T) {
 	if s.Subscribers == nil {
 		t.Error("Subscribers map should be initialized")
 	}
+	if s.SurfaceSubs == nil {
+		t.Error("SurfaceSubs map should be initialized")
+	}
 	if s.Jobs == nil {
 		t.Error("Jobs map should be initialized")
 	}
@@ -79,6 +82,33 @@ func TestCloneSessionsIndependence(t *testing.T) {
 	}
 	if len(orig) != 2 {
 		t.Errorf("orig len = %d, want 2 (clone mutation leaked)", len(orig))
+	}
+}
+
+func TestCloneSurfaceSubsIndependence(t *testing.T) {
+	origInner := map[SessionID]struct{}{"s1": {}, "s2": {}}
+	orig := map[ConnID]map[SessionID]struct{}{
+		1: origInner,
+	}
+	cloned := cloneSurfaceSubs(orig)
+	if len(cloned) != 1 {
+		t.Fatalf("clone outer len = %d, want 1", len(cloned))
+	}
+	if len(cloned[1]) != 2 {
+		t.Fatalf("clone inner len = %d, want 2", len(cloned[1]))
+	}
+	// Mutate cloned outer: add a new ConnID entry.
+	cloned[2] = map[SessionID]struct{}{"s3": {}}
+	if _, ok := orig[2]; ok {
+		t.Error("adding ConnID to clone leaked into original outer map")
+	}
+	// Mutate cloned inner: add a new SessionID inside ConnID 1.
+	cloned[1]["s99"] = struct{}{}
+	if _, ok := orig[1]["s99"]; ok {
+		t.Error("mutating clone inner map leaked into original inner map (shallow copy detected)")
+	}
+	if len(orig[1]) != 2 {
+		t.Errorf("orig inner len = %d, want 2 after clone mutation", len(orig[1]))
 	}
 }
 

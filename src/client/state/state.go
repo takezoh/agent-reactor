@@ -40,8 +40,20 @@ const (
 // Maps are owned by the state and updated copy-on-write inside Reduce —
 // callers must not mutate a State they did not produce.
 type State struct {
-	Sessions         map[SessionID]Session
-	Subscribers      map[ConnID]Subscriber
+	Sessions    map[SessionID]Session
+	Subscribers map[ConnID]Subscriber
+	// SurfaceSubs records which (ConnID, SessionID) pairs are streaming
+	// pane output via the surface.subscribe RPC. The outer map is keyed by
+	// ConnID so connection close can drop all subscriptions in one step
+	// (see reduceConnClosed). The inner set keeps lookup O(1).
+	//
+	// In-memory only: SurfaceSubs is NOT persisted to sessions.json on
+	// purpose. Subscriptions reset on daemon restart so clients must
+	// re-subscribe (matches the runtime's relay-goroutine lifecycle).
+	//
+	// Per-ConnID cap: the reducer enforces len(SurfaceSubs[ConnID]) <= 8
+	// (ADR 0007); excess subscribe attempts get RespErr(resource_exhausted).
+	SurfaceSubs      map[ConnID]map[SessionID]struct{}
 	Jobs             map[JobID]JobMeta
 	NextJobID        JobID
 	NextConnID       ConnID
@@ -128,6 +140,7 @@ func New() State {
 	return State{
 		Sessions:       map[SessionID]Session{},
 		Subscribers:    map[ConnID]Subscriber{},
+		SurfaceSubs:    map[ConnID]map[SessionID]struct{}{},
 		Jobs:           map[JobID]JobMeta{},
 		Connectors:     map[string]ConnectorState{},
 		ActiveOccupant: OccupantMain,

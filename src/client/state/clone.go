@@ -30,3 +30,15 @@ func cloneJobs(in map[JobID]JobMeta) map[JobID]JobMeta {
 func cloneConnectors(in map[string]ConnectorState) map[string]ConnectorState {
 	return cloneMap(in)
 }
+
+func cloneSurfaceSubs(in map[ConnID]map[SessionID]struct{}) map[ConnID]map[SessionID]struct{} {
+	out := make(map[ConnID]map[SessionID]struct{}, len(in)+1)
+	for k, v := range in {
+		inner := make(map[SessionID]struct{}, len(v)+1)
+		for sid := range v {
+			inner[sid] = struct{}{}
+		}
+		out[k] = inner
+	}
+	return out
+}
