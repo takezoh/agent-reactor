@@ -23,7 +23,7 @@ func errDialer(err error) dialFunc {
 
 // waitHealth polls Health() up to deadline; returns whether the target value
 // was observed.
-func waitHealth(d *DaemonClient, want bool, deadline time.Duration) bool {
+func waitHealth(d *DaemonClient, want bool, deadline time.Duration) bool { //nolint:unparam
 	end := time.Now().Add(deadline)
 	for time.Now().Before(end) {
 		if d.Health() == want {
