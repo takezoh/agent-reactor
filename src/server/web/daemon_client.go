@@ -38,7 +38,7 @@ type DaemonClient struct {
 	sockPath string
 
 	mu     sync.RWMutex
-	cli    *proto.Client        // nil while disconnected
+	cli    *proto.Client         // nil while disconnected
 	events chan proto.ServerEvent // closed and replaced on each reconnect
 
 	health      atomic.Bool
@@ -86,9 +86,21 @@ func NewDaemonClientWithDialer(dialFn func() (*proto.Client, error), minDelay, m
 	return d
 }
 
-// Close shuts down the supervisor goroutine. Idempotent.
+// Close shuts down the supervisor goroutine and the underlying connection.
+// Idempotent.
 func (d *DaemonClient) Close() {
-	d.once.Do(func() { close(d.stop) })
+	d.once.Do(func() {
+		close(d.stop)
+		// Close the underlying proto.Client so the fanoutEvents goroutine and
+		// any in-flight reads are unblocked and can exit cleanly.
+		d.mu.Lock()
+		cli := d.cli
+		d.cli = nil
+		d.mu.Unlock()
+		if cli != nil {
+			cli.Close()
+		}
+	})
 }
 
 // Health returns true when the daemon is currently reachable.
@@ -136,6 +148,7 @@ func (d *DaemonClient) SubscribeEvents() <-chan proto.ServerEvent {
 }
 
 // tryDialOnce performs a single dial attempt and updates health/lastErr/lastAttempt.
+// It closes any prior *proto.Client before overwriting d.cli to avoid conn leaks.
 // attempt is the 1-based attempt counter used for logging.
 func (d *DaemonClient) tryDialOnce(attempt int) {
 	now := time.Now()
@@ -152,8 +165,12 @@ func (d *DaemonClient) tryDialOnce(attempt int) {
 	}
 
 	d.mu.Lock()
+	prev := d.cli // close any prior client that wasn't already cleaned up
 	d.cli = cli
 	d.mu.Unlock()
+	if prev != nil {
+		prev.Close()
+	}
 	d.health.Store(true)
 	slog.Info("server/web: daemon connected", "sock", d.sockPath, "attempt", attempt)
 }
@@ -190,6 +207,8 @@ func (d *DaemonClient) supervise() {
 			// Disconnect detected.
 		}
 
+		// markDown immediately closes the old events chan so subscribers
+		// observe a typed close rather than blocking on a silent channel.
 		d.markDown("events channel closed")
 		attempt = d.reconnectLoop(attempt)
 	}
@@ -207,9 +226,9 @@ func (d *DaemonClient) reconnectLoop(attempt int) int {
 		}
 
 		jitter := time.Duration(rand.Float64() * float64(delay))
-		slog.Warn("server/web: daemon dial failed",
+		slog.Warn("server/web: backing off before next dial",
 			"sock", d.sockPath,
-			"err", d.LastError(),
+			"attempt", attempt,
 			"delay", jitter)
 
 		select {
@@ -222,13 +241,18 @@ func (d *DaemonClient) reconnectLoop(attempt int) int {
 		d.tryDialOnce(attempt)
 
 		if d.health.Load() {
-			// Reconnected: close the stale events chan and open a fresh one.
+			// Reconnected: open a fresh events chan (old one was closed in markDown).
 			d.mu.Lock()
-			close(d.events)
 			d.events = make(chan proto.ServerEvent, 64)
 			d.mu.Unlock()
-			return attempt + 1
+			return attempt
 		}
+
+		slog.Warn("server/web: daemon dial failed",
+			"sock", d.sockPath,
+			"attempt", attempt,
+			"err", d.LastError(),
+			"delay", jitter)
 
 		// Increase delay (capped at maxDelay).
 		delay *= 2
@@ -260,11 +284,16 @@ func (d *DaemonClient) fanoutEvents(cli *proto.Client, done chan<- struct{}) {
 	}
 }
 
-// markDown updates health state and logs a disconnect event.
+// markDown updates health state, closes the current events channel so that
+// all SubscribeEvents callers observe a typed close immediately, and logs the
+// disconnect event.
 func (d *DaemonClient) markDown(reason string) {
 	d.mu.Lock()
 	d.cli = nil
+	evCh := d.events
 	d.mu.Unlock()
+
 	d.health.Store(false)
+	close(evCh) // subscribers observe typed close immediately
 	slog.Warn("server/web: daemon disconnected", "reason", reason)
 }
