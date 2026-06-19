@@ -40,6 +40,11 @@ func (r *Runtime) execute(eff state.Effect) {
 	case state.EffInjectPrompt:
 		r.executeInjectPrompt(e)
 
+	case state.EffSurfaceSubscribeStart, state.EffSurfaceSubscribeStop,
+		state.EffSurfaceResize, state.EffSurfaceWriteRaw,
+		state.EffBroadcastSurfaceOutput, state.EffBroadcastPromptEvent:
+		r.executeSurfaceEffect(e)
+
 	default:
 		r.executeMiscEffect(eff)
 	}
@@ -129,6 +134,65 @@ func (r *Runtime) executeInjectPrompt(e state.EffInjectPrompt) {
 	inj := NewRuntimeTmuxInjector(r.sessionPanes, r.cfg.Tmux)
 	if err := InjectPrompt(inj, e.FrameID, e.Text); err != nil {
 		slog.Warn("runtime: inject prompt failed", "frame", e.FrameID, "err", err)
+	}
+}
+
+// executeSurfaceEffect dispatches the six surface-streaming effects to
+// TerminalRelay or proto_bridge helpers.
+func (r *Runtime) executeSurfaceEffect(eff state.Effect) {
+	switch e := eff.(type) {
+	case state.EffSurfaceSubscribeStart:
+		if r.terminalRelay == nil {
+			return
+		}
+		paneID := r.sessionPaneForSession(e.SessionID)
+		if paneID == "" {
+			slog.Warn("runtime: surface subscribe: no pane for session",
+				"session", e.SessionID, "conn", e.ConnID)
+			return
+		}
+		if err := r.terminalRelay.Subscribe(e.ConnID, e.SessionID, paneID); err != nil {
+			slog.Warn("runtime: surface subscribe failed",
+				"session", e.SessionID, "conn", e.ConnID, "err", err)
+		}
+
+	case state.EffSurfaceSubscribeStop:
+		if r.terminalRelay == nil {
+			return
+		}
+		r.terminalRelay.Unsubscribe(e.ConnID, e.SessionID)
+
+	case state.EffSurfaceResize:
+		if r.terminalRelay == nil {
+			return
+		}
+		paneID := r.sessionPaneForSession(e.SessionID)
+		if paneID == "" {
+			return
+		}
+		if err := r.terminalRelay.Resize(paneID, int(e.Cols), int(e.Rows)); err != nil {
+			slog.Warn("runtime: surface resize failed",
+				"session", e.SessionID, "err", err)
+		}
+
+	case state.EffSurfaceWriteRaw:
+		if r.terminalRelay == nil {
+			return
+		}
+		paneID := r.sessionPaneForSession(e.SessionID)
+		if paneID == "" {
+			return
+		}
+		if err := r.terminalRelay.Write(paneID, e.Data); err != nil {
+			slog.Warn("runtime: surface write failed",
+				"session", e.SessionID, "err", err)
+		}
+
+	case state.EffBroadcastSurfaceOutput:
+		r.broadcastSurfaceOutput(e)
+
+	case state.EffBroadcastPromptEvent:
+		r.broadcastPromptEvent(e)
 	}
 }
 

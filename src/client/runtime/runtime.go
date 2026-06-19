@@ -176,6 +176,10 @@ type Runtime struct {
 	// sockbridge) so PruneProcessGroups can reap them after a crash that
 	// skipped graceful Stop. Nil when no data dir is configured.
 	pgidTracker *procgroup.Tracker
+
+	// terminalRelay fans pane output from TerminalRelay to subscribed ConnIDs.
+	// Nil when cfg.Tmux does not implement SurfaceBackend.
+	terminalRelay *TerminalRelay
 }
 
 // PruneProcessGroups reaps host process groups left marked by an earlier daemon
@@ -272,6 +276,9 @@ func New(cfg Config) *Runtime {
 		}
 	}
 	r.registerSubsystemFactories()
+	if sb, ok := cfg.Tmux.(SurfaceBackend); ok {
+		r.terminalRelay = NewTerminalRelay(sb, r.enqueueInternal)
+	}
 	return r
 }
 
@@ -387,6 +394,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 	defer close(r.done)
 	defer r.workers.Stop()
 	defer r.shutdownIPC()
+	if r.terminalRelay != nil {
+		defer r.terminalRelay.Close()
+	}
 	defer r.cfg.EventLog.CloseAll()
 	defer r.cfg.ToolLog.CloseAll()
 	defer r.deactivateBeforeExit()

@@ -40,29 +40,42 @@ func commandToStateEvent(connID state.ConnID, reqID string, cmd proto.Command) s
 			Timestamp: c.Timestamp,
 			Payload:   decodeSubsystemPayload(c.Payload),
 		}
-	case proto.CmdSurfaceReadText:
-		return state.EvCmdSurfaceReadText{
-			ConnID:    connID,
-			ReqID:     reqID,
-			SessionID: state.SessionID(c.SessionID),
-			Lines:     c.Lines,
-		}
-	case proto.CmdSurfaceSendText:
-		return state.EvCmdSurfaceSendText{
-			ConnID:    connID,
-			ReqID:     reqID,
-			SessionID: state.SessionID(c.SessionID),
-			Text:      c.Text,
-		}
-	case proto.CmdSurfaceSendKey:
-		return state.EvCmdSurfaceSendKey{
-			ConnID:    connID,
-			ReqID:     reqID,
-			SessionID: state.SessionID(c.SessionID),
-			Key:       c.Key,
-		}
 	case proto.CmdDriverList:
 		return state.EvCmdDriverList{ConnID: connID, ReqID: reqID}
+	case proto.CmdPeerSend, proto.CmdPeerList, proto.CmdPeerSetSummary, proto.CmdPeerDrainInbox:
+		return peerCommandToEvent(connID, reqID, c)
+	}
+	if ev := surfaceCommandToEvent(connID, reqID, cmd); ev != nil {
+		return ev
+	}
+	return nil
+}
+
+// surfaceCommandToEvent translates surface.* commands into their state events.
+// Returns nil if cmd is not a surface command.
+func surfaceCommandToEvent(connID state.ConnID, reqID string, cmd proto.Command) state.Event {
+	switch c := cmd.(type) {
+	case proto.CmdSurfaceReadText:
+		return state.EvCmdSurfaceReadText{ConnID: connID, ReqID: reqID, SessionID: state.SessionID(c.SessionID), Lines: c.Lines}
+	case proto.CmdSurfaceSendText:
+		return state.EvCmdSurfaceSendText{ConnID: connID, ReqID: reqID, SessionID: state.SessionID(c.SessionID), Text: c.Text}
+	case proto.CmdSurfaceSendKey:
+		return state.EvCmdSurfaceSendKey{ConnID: connID, ReqID: reqID, SessionID: state.SessionID(c.SessionID), Key: c.Key}
+	case proto.CmdSurfaceSubscribe:
+		return state.EvCmdSurfaceSubscribe{ConnID: connID, ReqID: reqID, SessionID: state.SessionID(c.SessionID)}
+	case proto.CmdSurfaceUnsubscribe:
+		return state.EvCmdSurfaceUnsubscribe{ConnID: connID, ReqID: reqID, SessionID: state.SessionID(c.SessionID)}
+	case proto.CmdSurfaceResize:
+		return state.EvCmdSurfaceResize{ConnID: connID, ReqID: reqID, SessionID: state.SessionID(c.SessionID), Cols: c.Cols, Rows: c.Rows}
+	case proto.CmdSurfaceWriteRaw:
+		return state.EvCmdSurfaceWriteRaw{ConnID: connID, ReqID: reqID, SessionID: state.SessionID(c.SessionID), Data: c.Data}
+	}
+	return nil
+}
+
+// peerCommandToEvent translates peer.* commands into their state events.
+func peerCommandToEvent(connID state.ConnID, reqID string, cmd proto.Command) state.Event {
+	switch c := cmd.(type) {
 	case proto.CmdPeerSend:
 		return peerEvEvent(connID, reqID, state.EventPeerSend, state.PeerSendParams{
 			ToFrameID:   c.ToFrameID,

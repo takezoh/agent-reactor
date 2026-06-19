@@ -182,6 +182,13 @@ func (r *Runtime) dispatchInternal(ev internalEvent) {
 		r.startRestoredTaps()
 	case internalSpawnComplete:
 		r.handleSpawnComplete(e)
+	case internalBroadcastSurface:
+		r.broadcastSurfaceFromInternal(e)
+	case internalSurfaceClosed:
+		if r.terminalRelay != nil {
+			r.terminalRelay.Unsubscribe(e.ConnID, e.SessionID)
+		}
+		r.dispatch(state.EvCmdSurfaceUnsubscribe{ConnID: e.ConnID, ReqID: "", SessionID: e.SessionID})
 	}
 }
 

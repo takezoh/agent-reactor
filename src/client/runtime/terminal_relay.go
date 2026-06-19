@@ -28,7 +28,7 @@ type surfaceKey struct {
 type surfaceSub struct {
 	paneID string
 	subID  int           // termvt subscriber id returned by SubscribeSurface
-	cancel chan struct{}  // closed to stop the fan-out goroutine early
+	cancel chan struct{} // closed to stop the fan-out goroutine early
 	seq    uint64        // next Sequence value to emit (subscribe-scoped, resets on re-subscribe)
 }
 
