@@ -106,6 +106,18 @@ func DecodeCommand(env Envelope) (Command, error) {
 	case CmdNameSurfaceSendKey:
 		var c CmdSurfaceSendKey
 		return decodeInto(env.Data, &c)
+	case CmdNameSurfaceSubscribe:
+		var c CmdSurfaceSubscribe
+		return decodeInto(env.Data, &c)
+	case CmdNameSurfaceUnsubscribe:
+		var c CmdSurfaceUnsubscribe
+		return decodeInto(env.Data, &c)
+	case CmdNameSurfaceResize:
+		var c CmdSurfaceResize
+		return decodeInto(env.Data, &c)
+	case CmdNameSurfaceWriteRaw:
+		var c CmdSurfaceWriteRaw
+		return decodeInto(env.Data, &c)
 	case CmdNameDriverList:
 		var c CmdDriverList
 		return decodeInto(env.Data, &c)
@@ -230,6 +242,12 @@ func DecodeEvent(env Envelope) (ServerEvent, error) {
 		return decodeIntoEvent(env.Data, &e)
 	case EvtNamePeerMessage:
 		var e EvtPeerMessage
+		return decodeIntoEvent(env.Data, &e)
+	case EvtNameSurfaceOutput:
+		var e EvtSurfaceOutput
+		return decodeIntoEvent(env.Data, &e)
+	case EvtNamePromptEvent:
+		var e EvtPromptEvent
 		return decodeIntoEvent(env.Data, &e)
 	}
 	return nil, fmt.Errorf("proto: unknown event: %q", env.Name)
