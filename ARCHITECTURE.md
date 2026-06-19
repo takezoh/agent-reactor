@@ -48,7 +48,7 @@ cmd/           Binary entry points — cmd/arc/, cmd/server/, cmd/reactor-bridge
 |----------------|----------|--------------|--------------|----------------|--------------|--------|
 | `platform/*`   | ✅        | ❌            | ❌            | ❌              | ❌            | ❌      |
 | `client/*`     | ✅        | ✅            | ✅            | ✅              | ❌            | ❌      |
-| `orchestrator/*` | ✅      | ✅            | ✅            | ❌              | ✅            | ❌      |
+| `orchestrator/*` | ✅      | ❌            | ❌            | ❌              | ✅            | ❌      |
 | `server/*`     | ✅        | ✅            | ✅            | ✅              | ❌            | ✅      |
 
 Key invariants:
