@@ -1,5 +1,3 @@
-//go:build legacy_session
-
 package main
 
 import "testing"
