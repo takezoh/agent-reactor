@@ -1,95 +1,200 @@
-//go:build legacy_session
-
 package web
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"time"
 
 	"github.com/coder/websocket"
 
-	"github.com/takezoh/agent-reactor/platform/termvt"
-	"github.com/takezoh/agent-reactor/server/session"
+	"github.com/takezoh/agent-reactor/client/proto"
+	"github.com/takezoh/agent-reactor/client/state"
 )
 
-// Sessions is the session-service surface the HTTP API needs (satisfied by
-// *session.Service; a fake is used in tests).
-type Sessions interface {
-	Create(ctx context.Context, spec session.Spec) (session.Info, error)
-	List() []session.Info
-	Stop(ctx context.Context, id string) error
-	Session(id string) (*termvt.Session, bool)
+// apiSessionInfo is the REST wire shape for one session. It mirrors the
+// former server/session.Info JSON shape so existing browser UI keeps working.
+type apiSessionInfo struct {
+	ID        string `json:"id"`
+	Project   string `json:"project,omitempty"`
+	Command   string `json:"command"`
+	CreatedAt string `json:"created_at"`
 }
 
-// NewMux builds the backend HTTP handler: the session REST API and the
-// per-session WebSocket attach endpoint. It is a headless API — it serves no
-// HTML. Any client (the web-client host, a future native client) connects here;
-// the web UI is served and proxied by a separate process (client/web.Handler).
+// apiCreateReq is the POST /api/sessions body (mirrors old server/session.Spec).
+type apiCreateReq struct {
+	Project string `json:"project"`
+	Command string `json:"command"`
+	Cols    int    `json:"cols,omitempty"`
+	Rows    int    `json:"rows,omitempty"`
+}
+
+// NewMux builds the backend HTTP handler. DaemonClient replaces the old
+// Sessions interface; auth/ticket/CSP invariants are unchanged.
 //
 // Authority lives on the data plane: the REST API is guarded by the bearer
 // token (Authorization header — never a URL query param); the WebSocket attach
 // endpoint, which a browser cannot send headers on, is guarded by a short-lived
 // single-use ticket minted over the token-authenticated API.
-func NewMux(svc Sessions, token string) http.Handler {
+func NewMux(d *DaemonClient, token string) http.Handler {
 	tickets := newTicketStore()
 	mux := http.NewServeMux()
 
 	// REST API: bearer token via Authorization header (never a query param).
-	mux.Handle("/api/", TokenAuth(token, apiHandler(svc, tickets)))
+	mux.Handle("/api/", TokenAuth(token, apiHandler(d, tickets)))
 
 	// The WebSocket attach endpoint authenticates with a single-use ticket (a
 	// browser WebSocket cannot carry an Authorization header), never the bearer
 	// token, so the token never appears in a URL.
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
+		if !d.Health() {
+			http.Error(w, "daemon unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		if !tickets.consume(r.URL.Query().Get("ticket")) {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		serveAttach(svc, w, r)
+		serveAttach(d, w, r)
 	})
 	return mux
 }
 
 // apiHandler builds the header-authenticated REST routes (session CRUD and
 // WebSocket-ticket minting). Mount it under /api/ wrapped with TokenAuth.
-func apiHandler(svc Sessions, tickets *ticketStore) http.Handler {
+func apiHandler(d *DaemonClient, tickets *ticketStore) http.Handler {
 	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /api/sessions", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, svc.List())
-	})
-	mux.HandleFunc("POST /api/sessions", func(w http.ResponseWriter, r *http.Request) {
-		var spec session.Spec
-		if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		info, err := svc.Create(r.Context(), spec)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		writeJSON(w, http.StatusCreated, info)
-	})
-	mux.HandleFunc("DELETE /api/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if err := svc.Stop(r.Context(), r.PathValue("id")); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	})
+	mux.HandleFunc("GET /api/sessions", handleListSessions(d))
+	mux.HandleFunc("POST /api/sessions", handleCreateSession(d))
+	mux.HandleFunc("DELETE /api/sessions/{id}", handleDeleteSession(d))
 	mux.HandleFunc("POST /api/ws-ticket", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"ticket": tickets.mint()})
 	})
 	return mux
 }
 
-func serveAttach(svc Sessions, w http.ResponseWriter, r *http.Request) {
-	sess, ok := svc.Session(r.URL.Query().Get("session"))
-	if !ok {
-		http.Error(w, "session not found", http.StatusNotFound)
+func handleListSessions(d *DaemonClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !d.Health() {
+			http.Error(w, "daemon unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		resp, err := d.SendCommand(r.Context(), proto.CmdEvent{
+			Event:   state.EventListSessions,
+			Payload: json.RawMessage("{}"),
+		})
+		if err != nil {
+			handleProtoError(w, err)
+			return
+		}
+		rs, ok := resp.(proto.RespSessions)
+		if !ok {
+			http.Error(w, "unexpected response type", http.StatusInternalServerError)
+			return
+		}
+		out := make([]apiSessionInfo, len(rs.Sessions))
+		for i, s := range rs.Sessions {
+			out[i] = apiSessionInfo{
+				ID:        s.ID,
+				Project:   s.Project,
+				Command:   s.Command,
+				CreatedAt: s.CreatedAt,
+			}
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
+func handleCreateSession(d *DaemonClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !d.Health() {
+			http.Error(w, "daemon unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		var req apiCreateReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		params := state.CreateSessionParams{
+			Project: req.Project,
+			Command: req.Command,
+			Options: state.LaunchOptions{
+				Cols: uint16(req.Cols),
+				Rows: uint16(req.Rows),
+			},
+		}
+		payload, err := json.Marshal(params)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		resp, err := d.SendCommand(r.Context(), proto.CmdEvent{
+			Event:   state.EventCreateSession,
+			Payload: json.RawMessage(payload),
+		})
+		if err != nil {
+			handleProtoError(w, err)
+			return
+		}
+		rc, ok := resp.(proto.RespCreateSession)
+		if !ok {
+			http.Error(w, "unexpected response type", http.StatusInternalServerError)
+			return
+		}
+		info := apiSessionInfo{
+			ID:        rc.SessionID,
+			Project:   req.Project,
+			Command:   req.Command,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		writeJSON(w, http.StatusCreated, info)
+	}
+}
+
+func handleDeleteSession(d *DaemonClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !d.Health() {
+			http.Error(w, "daemon unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		id := r.PathValue("id")
+		payload, _ := json.Marshal(state.StopSessionParams{SessionID: id})
+		_, err := d.SendCommand(r.Context(), proto.CmdEvent{
+			Event:   state.EventStopSession,
+			Payload: json.RawMessage(payload),
+		})
+		if err != nil {
+			handleProtoError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// handleProtoError maps proto.ErrorBody codes to HTTP status codes.
+func handleProtoError(w http.ResponseWriter, err error) {
+	var eb *proto.ErrorBody
+	if errors.As(err, &eb) {
+		switch eb.Code {
+		case proto.ErrNotFound:
+			http.Error(w, eb.Message, http.StatusNotFound)
+		case proto.ErrInvalidArgument:
+			http.Error(w, eb.Message, http.StatusBadRequest)
+		default:
+			http.Error(w, eb.Message, http.StatusInternalServerError)
+		}
+		return
+	}
+	http.Error(w, err.Error(), http.StatusInternalServerError)
+}
+
+func serveAttach(d *DaemonClient, w http.ResponseWriter, r *http.Request) {
+	sessionID := r.URL.Query().Get("session")
+	if sessionID == "" {
+		http.Error(w, "missing session", http.StatusBadRequest)
 		return
 	}
 	// Leaving InsecureSkipVerify unset enforces the default origin check (the
@@ -100,11 +205,26 @@ func serveAttach(svc Sessions, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = c.CloseNow() }()
-	_ = AttachWS(r.Context(), sess, c)
+	_ = AttachWS(r.Context(), NewDaemonAdapter(d), sessionID, c)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// sendAndReceive is a helper used in tests: it sends a context-scoped command
+// and wraps the response. Not exported; lives here to keep mux.go self-contained.
+func sendAndReceive[T proto.Response](ctx context.Context, d *DaemonClient, cmd proto.Command) (T, error) {
+	var zero T
+	resp, err := d.SendCommand(ctx, cmd)
+	if err != nil {
+		return zero, err
+	}
+	v, ok := resp.(T)
+	if !ok {
+		return zero, errors.New("unexpected response type")
+	}
+	return v, nil
 }
