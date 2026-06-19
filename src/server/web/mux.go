@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -214,17 +213,3 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// sendAndReceive is a helper used in tests: it sends a context-scoped command
-// and wraps the response. Not exported; lives here to keep mux.go self-contained.
-func sendAndReceive[T proto.Response](ctx context.Context, d *DaemonClient, cmd proto.Command) (T, error) {
-	var zero T
-	resp, err := d.SendCommand(ctx, cmd)
-	if err != nil {
-		return zero, err
-	}
-	v, ok := resp.(T)
-	if !ok {
-		return zero, errors.New("unexpected response type")
-	}
-	return v, nil
-}
