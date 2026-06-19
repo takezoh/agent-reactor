@@ -303,6 +303,10 @@ const (
 type LaunchOptions struct {
 	Worktree     WorktreeOption `json:"worktree,omitempty"`
 	InitialInput []byte         `json:"initial_input,omitempty"`
+	// Cols and Rows carry terminal size hints from the web API (FR-022).
+	// The runtime bridges these to termvt.Spec on session launch (β scope).
+	Cols uint16 `json:"cols,omitempty"`
+	Rows uint16 `json:"rows,omitempty"`
 }
 
 type LaunchSubsystem string
