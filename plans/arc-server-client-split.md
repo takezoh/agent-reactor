@@ -9,7 +9,10 @@
 > 撤去、配線前提 6 件のうち #1/#2/#3 を解消(#4/#5/#6 は moot)。
 > **A0 完了**(2026-06-19): `PtyPaneTap` 新設 + `Config.Tap` 配線。driver run-state
 > 検出が PtyBackend 上で復活(Claude title prefix と Shell OSC 133)。
-> 次は A1(web 側で pure core を経由した view / persist / connector)→ C。
+> **A1 Master Plan 確定**(2026-06-19): 統合方針 W1(`cmd/server` を arc daemon の
+> HTTP/WS gateway 化、IPC client パターン)+ React+TS frontend(Zustand)で、
+> 5 PR 段階分割(α/β/γ/δ/ε)。詳細は [A1 Master Plan](/home/ubuntu/.claude/plans/plans-cheerful-thompson.md)。
+> 次は A1-α(`cmd/server` を arc daemon の gateway 化、wire 互換維持)→ … → C。
 
 ## 1. ゴール(remote-client-design.md より)
 
@@ -182,10 +185,21 @@ PtyBackend を runtime に挿す上で出ていた 6 件:
 - **注意**: 本 A0 PR でも **arc TUI は動かない**(表示面なし)。表示面の復活は
   A1(web 経由)で扱う。
 
-#### A1. web から pure core を経由した view / persist / connector — **次**
+#### A1. web から pure core を経由した view / persist / connector — **進行中**(Master Plan 確定)
 - A0 で pure core まで OSC が届くようになったので、A1 は web 側(`server/web` /
-  `client/web`)を pure core consumer に書き換える作業。実装計画は別 plan ファイル
-  で切り出す予定。
+  `client/web`)を pure core consumer に書き換える作業。
+- **Master Plan**(2026-06-19): [A1 Master Plan](/home/ubuntu/.claude/plans/plans-cheerful-thompson.md)。
+  - 統合方針 W1(`cmd/server` を arc daemon の HTTP/WS gateway 化、IPC client
+    パターン。`server/session.Service` は削除し、session ownership は daemon 単独)
+  - Frontend: React + TypeScript(vite + Zustand + xterm.js)
+  - 5 PR 段階分割:
+    - A1-α: `cmd/server` を arc daemon の gateway 化(wire 互換維持、~600-900 行)
+    - A1-β: React+TS frontend 置換(wire 互換のまま、~1500-2500 行)
+    - A1-γ: view-update broadcast(run-state / driver view / tool log、~600-1000 行)
+    - A1-δ: 永続化(transcript / event-log tail)+ connector(github)(~1000-1500 行)
+    - A1-ε: cleanup + `server/session` 完全削除(~300-600 行)
+- 各サブ PR の詳細 plan は A0 と同じく実装直前に別 plan ファイルで切り出す。
+- 次は A1-α。
 
 ### C. tmux 全削除(phase 3)
 - **What**: tmux backend と関連を削除。`cmd/arc/tmux_layout.go`, `client/runtime` の
@@ -249,8 +263,14 @@ PtyBackend を runtime に挿す上で出ていた 6 件:
    - 単体 7 ケース(`pty_tap_test.go`)+ 配線 2 ケース(`pty_tap_wire_test.go`)で
      `EvPaneOsc{Cmd:0, Title:"Braille"}` / `EvPanePrompt{Phase: Command/Complete}`
      が enqueue されることを確認
-6. **A1: web から pure core を経由した view / persist / connector** ← 次。
-   - termvt の Control 経路を web 描画(現状の `server/web` スタック)に統合し、
-     pure core の view と一致させる。実装計画は別途切り出し
-7. C: tmux 実装の残りを削除(56 ファイルから漸減 — `cmd/arc/tmux_layout.go` は B1b で削除済み、
+6. **A1 Master Plan 確定**(2026-06-19): [A1 Master Plan](/home/ubuntu/.claude/plans/plans-cheerful-thompson.md)。
+   - 統合方針 W1(`cmd/server` を arc daemon の HTTP/WS gateway 化)
+   - Frontend = React + TypeScript(vite + Zustand)
+   - 5 PR 段階分割(A1-α/β/γ/δ/ε)
+7. **A1-α: `cmd/server` を arc daemon の gateway 化** ← 次。
+   - termvt の Control 経路を arc daemon の IPC subscribe 経由で web に流す。
+   - `server/session.Service` の削除と `cmd/server` の `proto.Dial` 化。
+   - wire は既存 asciicast + `{k,code,data}` 互換を維持(α は backend 構造変更のみ)。
+   - 実装計画は別 plan ファイルで切り出し
+8. C: tmux 実装の残りを削除(56 ファイルから漸減 — `cmd/arc/tmux_layout.go` は B1b で削除済み、
    `tmux_pipe_tap.go` / `panetap.go` の旧 PaneTap 実装は A1 完了後に整理)
