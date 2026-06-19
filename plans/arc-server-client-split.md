@@ -46,7 +46,7 @@ remote-client-design.md §2 の「backend だけ差し替えて pure core 再利
   - 長所: 既存 runtime に触れない
   - 短所: driver ロジックの二重実装・設計乖離が恒久化・tmux 削除に繋がらない
 
-> 決定 → ADR 化(`docs/adr/`)。以降の A/C は (i) 前提で記述。
+> **決定済み: (i) 採用** — [ADR 0004](../docs/adr/0004-ptybackend-reuses-pure-core.md)。以降の A/C は (i) 前提。
 
 ## 4. 残作業(依存順)
 
@@ -112,13 +112,15 @@ remote-client-design.md §2 の「backend だけ差し替えて pure core 再利
 
 ## 6. 未確定・要裏取り
 
-- [ ] **B の方針 (i)/(ii)** を確定(最優先・ADR 化)
-- [ ] termvt の Control event が本当にどこにも繋がっていないかの最終確認
-- [ ] `backends.go` 役割インターフェースのうち termvt で表現困難なものの洗い出し
+- [x] **B の方針 (i)/(ii)** を確定 → (i) 採用([ADR 0004](../docs/adr/0004-ptybackend-reuses-pure-core.md))
+- [x] termvt の Control event が pure core に未接続を確認(`server/web`/`server/session` は `client/state`/`client/driver` を import せず)
+- [x] `backends.go` 役割 IF の写像 → データ面は termvt に全写像、`WindowLayout`/`TmuxControl` は server 等価物無し→client-side
+- [ ] **session ownership**(`server/session.Service` vs runtime PtyBackend)を B1 着手前に決定 ← 新たな未決(ADR 0004 Open questions)
 - [ ] web で複数ペイン同時表示(layout)をどの phase で入れるか(C 後の client-side layout 想定)
 
 ## 7. 次アクション
 
-1. B の方針を決める(`plan-how` で技術設計を詰める or 本調査の裏取り後に判断)
-2. 決定を `docs/adr/` に ADR として記録
-3. B1 → A → C を順に着手(各々テスト必須 = AGENTS.md)
+1. ~~B の方針を決める~~ → (i) 採用(本調査の裏取り完了)
+2. ~~決定を ADR 化~~ → [ADR 0004](../docs/adr/0004-ptybackend-reuses-pure-core.md)
+3. **session ownership の未決を詰める**(B1 着手前)→ `plan-how` で B1 技術設計
+4. B1(PtyBackend)→ A → C を順に着手(各々テスト必須 = AGENTS.md)
