@@ -1,3 +1,5 @@
+//go:build legacy_session
+
 // Package session is the server's session-lifecycle service: it creates,
 // lists, and stops agent sessions, each backed by a termvt pty session. Launch
 // wrapping (direct vs devcontainer) is delegated to an agentlaunch.Dispatcher,
