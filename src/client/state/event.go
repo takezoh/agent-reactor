@@ -81,6 +81,46 @@ type EvCmdSurfaceSendKey struct {
 	Key       string
 }
 
+// EvCmdSurfaceSubscribe registers ConnID as a streaming subscriber for
+// the named session's pane output. While subscribed, the runtime emits
+// EvtSurfaceOutput broadcasts addressed to ConnID. Multiple SessionIDs
+// can be subscribed under one ConnID; the per-ConnID cap (see ADR 0007)
+// is enforced by the reducer.
+type EvCmdSurfaceSubscribe struct {
+	ConnID    ConnID
+	ReqID     string
+	SessionID SessionID
+}
+
+// EvCmdSurfaceUnsubscribe removes ConnID's subscription for SessionID.
+// Idempotent: unsubscribing an already-removed entry returns RespOK.
+type EvCmdSurfaceUnsubscribe struct {
+	ConnID    ConnID
+	ReqID     string
+	SessionID SessionID
+}
+
+// EvCmdSurfaceResize requests a logical pane resize to (Cols, Rows) for
+// SessionID. The reducer forwards this to the runtime via EffSurfaceResize;
+// the runtime delegates to the pty backend.
+type EvCmdSurfaceResize struct {
+	ConnID    ConnID
+	ReqID     string
+	SessionID SessionID
+	Cols      uint16
+	Rows      uint16
+}
+
+// EvCmdSurfaceWriteRaw writes uninterpreted bytes to SessionID's pane.
+// Data is the raw byte slice (already base64-decoded by the proto layer).
+// No Enter is appended; key names are not interpreted.
+type EvCmdSurfaceWriteRaw struct {
+	ConnID    ConnID
+	ReqID     string
+	SessionID SessionID
+	Data      []byte
+}
+
 // EvCmdDriverList requests the list of registered drivers.
 type EvCmdDriverList struct {
 	ConnID ConnID
@@ -244,24 +284,28 @@ type EvPanePrompt struct {
 
 // === isEvent markers ===
 
-func (EvCmdSubscribe) isEvent()       {}
-func (EvCmdUnsubscribe) isEvent()     {}
-func (EvCmdSurfaceReadText) isEvent() {}
-func (EvCmdSurfaceSendText) isEvent() {}
-func (EvCmdSurfaceSendKey) isEvent()  {}
-func (EvCmdDriverList) isEvent()      {}
-func (EvEvent) isEvent()              {}
-func (EvDriverEvent) isEvent()        {}
-func (EvSubsystem) isEvent()          {}
-func (EvConnOpened) isEvent()         {}
-func (EvConnClosed) isEvent()         {}
-func (EvTick) isEvent()               {}
-func (EvFileChanged) isEvent()        {}
-func (EvJobResult) isEvent()          {}
-func (EvPaneDied) isEvent()           {}
-func (EvTmuxWindowVanished) isEvent() {}
-func (EvFrameCommandExited) isEvent() {}
-func (EvTmuxPaneSpawned) isEvent()    {}
-func (EvTmuxSpawnFailed) isEvent()    {}
-func (EvPaneOsc) isEvent()            {}
-func (EvPanePrompt) isEvent()         {}
+func (EvCmdSubscribe) isEvent()          {}
+func (EvCmdUnsubscribe) isEvent()        {}
+func (EvCmdSurfaceReadText) isEvent()    {}
+func (EvCmdSurfaceSendText) isEvent()    {}
+func (EvCmdSurfaceSendKey) isEvent()     {}
+func (EvCmdSurfaceSubscribe) isEvent()   {}
+func (EvCmdSurfaceUnsubscribe) isEvent() {}
+func (EvCmdSurfaceResize) isEvent()      {}
+func (EvCmdSurfaceWriteRaw) isEvent()    {}
+func (EvCmdDriverList) isEvent()         {}
+func (EvEvent) isEvent()                 {}
+func (EvDriverEvent) isEvent()           {}
+func (EvSubsystem) isEvent()             {}
+func (EvConnOpened) isEvent()            {}
+func (EvConnClosed) isEvent()            {}
+func (EvTick) isEvent()                  {}
+func (EvFileChanged) isEvent()           {}
+func (EvJobResult) isEvent()             {}
+func (EvPaneDied) isEvent()              {}
+func (EvTmuxWindowVanished) isEvent()    {}
+func (EvFrameCommandExited) isEvent()    {}
+func (EvTmuxPaneSpawned) isEvent()       {}
+func (EvTmuxSpawnFailed) isEvent()       {}
+func (EvPaneOsc) isEvent()               {}
+func (EvPanePrompt) isEvent()            {}
