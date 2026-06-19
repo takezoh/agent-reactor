@@ -1,3 +1,5 @@
+//go:build legacy_session
+
 // Command server is the agent-reactor backend: a headless API that manages
 // agent sessions over pty (tmux-free) and exposes them to any client over a
 // REST + WebSocket interface. Sessions are host-owned — they keep running when

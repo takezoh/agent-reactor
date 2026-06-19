@@ -3,45 +3,113 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
-	"time"
 
 	"github.com/coder/websocket"
 
-	"github.com/takezoh/agent-reactor/platform/termvt"
+	"github.com/takezoh/agent-reactor/client/proto"
 )
 
-// Attacher is the subset of *termvt.Session the gateway needs. Declared as an
-// interface so the bridge can be tested with a fake.
+// errDaemonGone is returned by writeOutbound when the daemon events channel
+// closes, indicating the daemon disconnected.
+var errDaemonGone = errors.New("server/web: daemon disconnected")
+
+// Attacher is the daemon-side surface AttachWS needs (proto.Client wrapper).
+// Implemented by DaemonAdapter; a fake is used in gateway_terminal_test.go.
 type Attacher interface {
-	Subscribe() (int, <-chan termvt.Event)
-	Unsubscribe(id int)
-	WriteInput(b []byte) error
-	Resize(cols, rows int) error
+	// SubscribeSurface starts streaming output for sessionID on this WS.
+	// Returns immediately after the daemon ack and yields a chan of
+	// proto.ServerEvent filtered to this session (best-effort: events
+	// for other sessions may also come through if the daemon-side filter
+	// is coarse — the gateway re-filters).
+	SubscribeSurface(ctx context.Context, sessionID string) (<-chan proto.ServerEvent, error)
+	UnsubscribeSurface(ctx context.Context, sessionID string) error
+	WriteRaw(ctx context.Context, sessionID string, data []byte) error
+	Resize(ctx context.Context, sessionID string, cols, rows uint16) error
 }
 
-// AttachWS bridges one WebSocket connection to a session: it streams output and
-// control events to the client (writer loop) and forwards client input/resize
-// (reader goroutine). It returns when the connection or session closes.
-func AttachWS(ctx context.Context, sess Attacher, c *websocket.Conn) error {
+// DaemonAdapter implements Attacher on top of DaemonClient.
+type DaemonAdapter struct {
+	d *DaemonClient
+}
+
+// NewDaemonAdapter wraps a DaemonClient as an Attacher.
+func NewDaemonAdapter(d *DaemonClient) *DaemonAdapter { return &DaemonAdapter{d: d} }
+
+// SubscribeSurface sends CmdSurfaceSubscribe and returns the shared events channel.
+func (a *DaemonAdapter) SubscribeSurface(ctx context.Context, sid string) (<-chan proto.ServerEvent, error) {
+	if _, err := a.d.SendCommand(ctx, proto.CmdSurfaceSubscribe{SessionID: sid}); err != nil {
+		return nil, err
+	}
+	return a.d.SubscribeEvents(), nil
+}
+
+// UnsubscribeSurface sends CmdSurfaceUnsubscribe to the daemon.
+func (a *DaemonAdapter) UnsubscribeSurface(ctx context.Context, sid string) error {
+	_, err := a.d.SendCommand(ctx, proto.CmdSurfaceUnsubscribe{SessionID: sid})
+	return err
+}
+
+// WriteRaw sends CmdSurfaceWriteRaw to the daemon.
+func (a *DaemonAdapter) WriteRaw(ctx context.Context, sid string, data []byte) error {
+	_, err := a.d.SendCommand(ctx, proto.CmdSurfaceWriteRaw{SessionID: sid, Data: data})
+	return err
+}
+
+// Resize sends CmdSurfaceResize to the daemon.
+func (a *DaemonAdapter) Resize(ctx context.Context, sid string, cols, rows uint16) error {
+	_, err := a.d.SendCommand(ctx, proto.CmdSurfaceResize{SessionID: sid, Cols: cols, Rows: rows})
+	return err
+}
+
+// writeTypedClose sends a WebSocket typed close frame.
+func writeTypedClose(c *websocket.Conn, status websocket.StatusCode, reason string) {
+	_ = c.Close(status, reason)
+}
+
+// AttachWS bridges one WebSocket connection to a session surface. It streams
+// output events to the client (writeOutbound) and forwards client input/resize
+// (readInbound goroutine). Returns when the connection or daemon closes.
+func AttachWS(ctx context.Context, sess Attacher, sessionID string, c *websocket.Conn) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	id, ch := sess.Subscribe()
-	defer sess.Unsubscribe(id)
+	ch, err := sess.SubscribeSurface(ctx, sessionID)
+	if err != nil {
+		var eb *proto.ErrorBody
+		if errors.As(err, &eb) {
+			_ = c.Write(ctx, websocket.MessageText, controlFrame("c", 0, string(eb.Code)))
+		}
+		writeTypedClose(c, websocket.StatusGoingAway, "subscribe-failed")
+		return err
+	}
+	defer func() { _ = sess.UnsubscribeSurface(context.Background(), sessionID) }()
 
-	start := time.Now()
-	go func() { readInbound(ctx, sess, c); cancel() }()
+	go func() { readInbound(ctx, sess, sessionID, c); cancel() }()
+	return writeOutbound(ctx, sessionID, c, ch)
+}
 
+// writeOutbound reads proto.ServerEvent values from ch and encodes them as WS
+// frames. On daemon disconnect (ch closed) it sends the 2-step close defined
+// in ADR 0011: control frame then StatusGoingAway typed close.
+func writeOutbound(ctx context.Context, sessionID string, c *websocket.Conn, ch <-chan proto.ServerEvent) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case ev, ok := <-ch:
 			if !ok {
-				return nil
+				// Daemon disconnected: 2-step close (ADR 0011).
+				_ = c.Write(ctx, websocket.MessageText, controlFrame("c", 0, "daemon-disconnected"))
+				writeTypedClose(c, websocket.StatusGoingAway, "daemon-disconnected")
+				return errDaemonGone
 			}
-			frame := encodeEvent(time.Since(start).Seconds(), ev)
+			// Filter: only forward events belonging to this session.
+			if out, ok2 := ev.(proto.EvtSurfaceOutput); ok2 && out.SessionID != sessionID {
+				continue
+			}
+			frame := encodeServerEvent(ev)
 			if frame == nil {
 				continue
 			}
@@ -52,43 +120,37 @@ func AttachWS(ctx context.Context, sess Attacher, c *websocket.Conn) error {
 	}
 }
 
-// readInbound forwards client messages (input, resize) to the session until the
-// connection closes.
-func readInbound(ctx context.Context, sess Attacher, c *websocket.Conn) {
+// readInbound forwards client messages (input, resize) to the session until
+// the connection or context closes. Errors are logged at warn level and cause
+// the function to return; the caller goroutine then invokes cancel().
+func readInbound(ctx context.Context, sess Attacher, sessionID string, c *websocket.Conn) {
 	for {
 		_, data, err := c.Read(ctx)
 		if err != nil {
 			return
 		}
-		applyInbound(sess, data)
+		applyInboundProto(ctx, sess, sessionID, data)
 	}
 }
 
-// applyInbound decodes data and applies it to sess: "i" writes input, "r"
-// resizes — but only with positive dimensions (the absolute upper bound that
-// keeps the pty/VT grid safe is enforced downstream by termvt.normalizeSize).
-// Malformed JSON and unknown kinds are ignored. Returns true if the frame
-// produced an action. Split out from readInbound so the untrusted-input decode
-// path is unit- and fuzz-testable (FuzzInbound).
-func applyInbound(sess Attacher, data []byte) bool {
+// applyInboundProto decodes a raw browser frame and dispatches to sess.
+// "i" → WriteRaw; "r" (positive cols+rows) → Resize. Unknown kinds are
+// silently dropped.
+func applyInboundProto(ctx context.Context, sess Attacher, sessionID string, data []byte) {
 	var in inbound
 	if json.Unmarshal(data, &in) != nil {
-		return false
+		return
 	}
 	switch in.K {
 	case "i":
-		// Best-effort: a failed write (closed pty) is logged but does not change
-		// the inbound-frame disposition — the session teardown path handles the
-		// closed pty, and the WebSocket reader will see its own error next read.
-		if err := sess.WriteInput([]byte(in.D)); err != nil {
-			slog.Warn("web: write input to session", "err", err)
+		if err := sess.WriteRaw(ctx, sessionID, []byte(in.D)); err != nil {
+			slog.Warn("server/web: write raw to session", "err", err)
 		}
-		return true
 	case "r":
 		if in.Cols > 0 && in.Rows > 0 {
-			_ = sess.Resize(in.Cols, in.Rows)
-			return true
+			if err := sess.Resize(ctx, sessionID, uint16(in.Cols), uint16(in.Rows)); err != nil {
+				slog.Warn("server/web: resize session", "err", err)
+			}
 		}
 	}
-	return false
 }
