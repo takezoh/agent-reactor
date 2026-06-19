@@ -1,52 +1,59 @@
-// Package web bridges a browser (xterm.js over WebSocket) to a server-side
-// termvt session. It encodes terminal output as asciicast v2 frames and
-// structured control events, and decodes client input/resize messages.
-//
-// It depends on platform/termvt and stdlib + coder/websocket only; session
-// lifecycle (create/stop) is owned by the server runtime, not this package —
-// the gateway only attaches to an already-running session.
+// Package web bridges a browser to arc daemon over WebSocket. wire.go
+// encodes daemon-side proto events into the asciicast v2 + control wire
+// the browser UI already speaks, and decodes inbound browser frames
+// into proto.Command values.
 package web
 
 import (
+	"encoding/base64"
 	"encoding/json"
 
-	"github.com/takezoh/agent-reactor/platform/termvt"
+	"github.com/takezoh/agent-reactor/client/proto"
 )
 
-// outputFrame encodes an asciicast v2 output event: [time, "o", data].
-func outputFrame(t float64, data []byte) []byte {
-	b, _ := json.Marshal([]any{t, "o", string(data)})
+// outputFrameFromSurface encodes EvtSurfaceOutput as the asciicast v2
+// output array: [TimeSec, "o", string(base64.Decode(DataB64))].
+func outputFrameFromSurface(e proto.EvtSurfaceOutput) []byte {
+	data, _ := base64.StdEncoding.DecodeString(e.DataB64)
+	b, _ := json.Marshal([]any{e.TimeSec, "o", string(data)})
 	return b
 }
 
-// controlMsg is a server→client control event (OSC/title/bell/exit), distinct
-// from output by being a JSON object rather than the asciicast array.
+// controlMsg is a server→client control event distinct from output by
+// being a JSON object rather than the asciicast array.
 type controlMsg struct {
 	K    string `json:"k"`
 	Code int    `json:"code,omitempty"`
 	Data string `json:"data,omitempty"`
 }
 
-func controlFrame(kind string, code int, data string) []byte {
-	b, _ := json.Marshal(controlMsg{K: kind, Code: code, Data: data})
+// controlFrameFromNotification encodes EvtAgentNotification as
+// {"k":"osc","code":<Cmd>,"data":"<Title>|<Body>"} (existing UI 互換).
+func controlFrameFromNotification(e proto.EvtAgentNotification) []byte {
+	data := e.Title
+	if e.Body != "" {
+		if data != "" {
+			data += " | "
+		}
+		data += e.Body
+	}
+	b, _ := json.Marshal(controlMsg{K: "osc", Code: e.Cmd, Data: data})
 	return b
 }
 
-// encodeEvent renders a termvt.Event as a single WebSocket text frame.
-func encodeEvent(elapsed float64, ev termvt.Event) []byte {
-	switch ev.Kind {
-	case termvt.EventOutput:
-		return outputFrame(elapsed, ev.Data)
-	case termvt.EventControl:
-		return controlFrame(ev.Ctl.Kind, ev.Ctl.Code, ev.Ctl.Data)
-	case termvt.EventExit:
-		return controlFrame("exit", 0, "")
-	default:
-		return nil
+// encodeServerEvent renders a proto.ServerEvent as one WebSocket text frame.
+// Returns nil for events the browser does not need (the gateway drops nil).
+func encodeServerEvent(ev proto.ServerEvent) []byte {
+	switch e := ev.(type) {
+	case proto.EvtSurfaceOutput:
+		return outputFrameFromSurface(e)
+	case proto.EvtAgentNotification:
+		return controlFrameFromNotification(e)
 	}
+	return nil
 }
 
-// inbound is a client→server message (always a JSON object).
+// inbound is a browser→server message (always a JSON object).
 type inbound struct {
 	K    string `json:"k"` // "i" input | "r" resize
 	D    string `json:"d"`
