@@ -90,9 +90,11 @@ func evictChildFrame(s State, sessID SessionID, sess Session, idx int, frameID F
 // emit them without importing proto. The runtime translates them to
 // proto.ErrCode values when serializing the response.
 const (
-	ErrCodeNotFound        = "not_found"
-	ErrCodeInvalidArgument = "invalid_argument"
-	ErrCodeInternal        = "internal"
-	ErrCodeAlreadyExists   = "already_exists"
-	ErrCodeUnsupported     = "unsupported"
+	ErrCodeNotFound          = "not_found"
+	ErrCodeInvalidArgument   = "invalid_argument"
+	ErrCodeInternal          = "internal"
+	ErrCodeAlreadyExists     = "already_exists"
+	ErrCodeUnsupported       = "unsupported"
+	ErrCodeResourceExhausted = "resource_exhausted"
+	ErrCodeFrameNotReady     = "frame_not_ready"
 )
