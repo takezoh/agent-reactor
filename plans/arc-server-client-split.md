@@ -12,7 +12,8 @@
 > **A1 Master Plan 確定**(2026-06-19): 統合方針 W1(`cmd/server` を arc daemon の
 > HTTP/WS gateway 化、IPC client パターン)+ React+TS frontend(Zustand)で、
 > 5 PR 段階分割(α/β/γ/δ/ε)。詳細は [A1 Master Plan](/home/ubuntu/.claude/plans/plans-cheerful-thompson.md)。
-> 次は A1-α(`cmd/server` を arc daemon の gateway 化、wire 互換維持)→ … → C。
+> **A1-α 詳細計画確定**(2026-06-19): [`docs/specs/2026-06-19-a1-alpha-impl-plan.md`](../docs/specs/2026-06-19-a1-alpha-impl-plan.md) + ADR 0005-0018(14 件)。
+> α は更に 3 PR(PR-1: proto+codec / PR-2: state reducer / PR-3: runtime relay + server/web gateway)に細分化。次は A1-α PR-1 → … → C。
 
 ## 1. ゴール(remote-client-design.md より)
 
@@ -194,6 +195,9 @@ PtyBackend を runtime に挿す上で出ていた 6 件:
   - Frontend: React + TypeScript(vite + Zustand + xterm.js)
   - 5 PR 段階分割:
     - A1-α: `cmd/server` を arc daemon の gateway 化(wire 互換維持、~600-900 行)
+      - **詳細計画確定**: [`docs/specs/2026-06-19-a1-alpha-impl-plan.md`](../docs/specs/2026-06-19-a1-alpha-impl-plan.md) + [ADR 0005-0018](../docs/adr/)。
+      - 更に 3 PR に細分化(ADR 0015): PR-1 proto+codec(~300-450 行)/ PR-2 state reducer + `Subscribers.Surface`(~250-400 行)/ PR-3 runtime relay + server/web gateway + daemon_client(~600-900 行)。
+      - subscribe race 対応は β に倒した(ADR 0018)。α は `RespErr(frame-not-ready)` 即返。
     - A1-β: React+TS frontend 置換(wire 互換のまま、~1500-2500 行)
     - A1-γ: view-update broadcast(run-state / driver view / tool log、~600-1000 行)
     - A1-δ: 永続化(transcript / event-log tail)+ connector(github)(~1000-1500 行)
@@ -267,10 +271,12 @@ PtyBackend を runtime に挿す上で出ていた 6 件:
    - 統合方針 W1(`cmd/server` を arc daemon の HTTP/WS gateway 化)
    - Frontend = React + TypeScript(vite + Zustand)
    - 5 PR 段階分割(A1-α/β/γ/δ/ε)
-7. **A1-α: `cmd/server` を arc daemon の gateway 化** ← 次。
-   - termvt の Control 経路を arc daemon の IPC subscribe 経由で web に流す。
-   - `server/session.Service` の削除と `cmd/server` の `proto.Dial` 化。
-   - wire は既存 asciicast + `{k,code,data}` 互換を維持(α は backend 構造変更のみ)。
-   - 実装計画は別 plan ファイルで切り出し
-8. C: tmux 実装の残りを削除(56 ファイルから漸減 — `cmd/arc/tmux_layout.go` は B1b で削除済み、
+7. **A1-α: `cmd/server` を arc daemon の gateway 化**
+   - 詳細計画 [`docs/specs/2026-06-19-a1-alpha-impl-plan.md`](../docs/specs/2026-06-19-a1-alpha-impl-plan.md) + [ADR 0005-0018](../docs/adr/) を 2026-06-19 commit。
+   - `server/session.Service` は build tag `legacy_session` で隔離(ε で `git rm`、ADR 0014)。
+   - 新 proto は Surface 接頭辞統一(`CmdSurfaceSubscribe`/`Unsubscribe`/`Resize`/`WriteRaw` + `EvtSurfaceOutput`/`PromptEvent`、ADR 0006)。
+   - `State.Subscribers.Surface[ConnID][SessionID]` で subscribe 関係を state に保持(ADR 0007)。
+   - PR-1/PR-2/PR-3 の 3 段階で実装(ADR 0015)。
+8. **A1-α PR-1: `client/proto` + codec + Fuzz** ← 次。/plan-impl で実装。
+9. C: tmux 実装の残りを削除(56 ファイルから漸減 — `cmd/arc/tmux_layout.go` は B1b で削除済み、
    `tmux_pipe_tap.go` / `panetap.go` の旧 PaneTap 実装は A1 完了後に整理)
