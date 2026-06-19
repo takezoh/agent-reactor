@@ -93,14 +93,32 @@ the web surface (plan A) and the eventual tmux removal (plan C).
 - Cements the design divergence rather than closing it.
 - Does not enable tmux removal.
 
-## Open questions (settle in B1 design)
+## Open questions — resolved in B1
 
-- **Session ownership.** `server/session.Service` currently owns lifecycle over
-  `termvt.Manager`. With PtyBackend the runtime also spawns/controls sessions.
-  Either the runtime's PtyBackend drives `termvt.Manager` directly (and
-  `server/session` delegates to / is replaced by it), or the web gateway talks
-  *through* the runtime via `proto`. To be decided before B1 implementation.
-- **Reattach after daemon restart.** tmux sessions survived the arc daemon;
-  host-owned termvt sessions live in the server process. The persistence story
-  for pane recovery (today keyed on tmux session env `ROOST_SESSION_<sid>`)
-  needs a pty-world replacement.
+- **Session ownership → the runtime's PtyBackend owns its own `termvt.Manager`.**
+  `NewPtyBackend()` constructs a private `termvt.Manager`; the arc daemon and
+  `cmd/server` are separate processes, so each holding its own Manager cannot
+  collide. B1 does **not** touch `server/session.Service` / `cmd/server`.
+  Converging the web surface onto the daemon's runtime-owned sessions (so the
+  web inherits driver intelligence, and `cmd/server` is absorbed or proxied) is
+  plan A, not B1.
+- **Reattach after daemon restart → not preserved across restart in B1.** termvt
+  sessions are children of the arc daemon and die with it — the same model as the
+  already-shipped `cmd/server` (sessions survive client disconnect but not a host
+  restart). Session *definitions* persist via `SessionSnapshot`; on restart the
+  daemon cold re-spawns rather than re-attaching live processes. PtyBackend's
+  `SetEnv`/`ShowEnvironment` are in-process only and documented as non-persistent;
+  a tmux-session-env replacement for cross-restart pane recovery is deferred (a
+  detached supervisor that outlives the daemon is explicitly out of scope here).
+
+## Status of B1 implementation
+
+The PtyBackend type and its unit tests are implemented and reviewed
+(`client/runtime/pty_backend.go`; `platform/termvt` gained `Session.ExitCode`
+and `CaptureTail`). Data plane is real, presentation plane is stubbed. It is
+**not yet wired into the runtime** (`NewPtyBackend` is test-only). The
+integration prerequisites before wiring — missing-pane error contract vs
+`isMissingPaneErr`, shell-string vs argv command form, `ResizeWindow` target
+shape, session-env persistence, `PipePane` tap, main-window kill guard — are
+tracked under "B1-wiring の前提条件" in
+[arc-server-client-split.md](../../plans/arc-server-client-split.md).
