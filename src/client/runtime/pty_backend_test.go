@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/takezoh/agent-reactor/platform/termvt"
 )
 
 // Compile-time proof that PtyBackend satisfies the full TmuxBackend role set.
@@ -566,6 +568,144 @@ func TestPtyBackendRespawn(t *testing.T) {
 	// Empty respawn command is rejected.
 	if err := b.RespawnPane(paneID, ""); err == nil {
 		t.Error("RespawnPane(empty) error = nil, want non-nil")
+	}
+}
+
+// TestPtyBackendSubscribeSurface_SnapshotFirst verifies that the first event
+// received on a freshly opened subscriber channel has Kind == EventOutput
+// (the reattach snapshot that termvt.Session.Subscribe guarantees).
+func TestPtyBackendSubscribeSurface_SnapshotFirst(t *testing.T) {
+	b := NewPtyBackend()
+	// cat keeps the session alive so the subscriber channel stays open.
+	_, paneID, err := b.SpawnWindow("t", "cat", "", nil)
+	if err != nil {
+		t.Fatalf("SpawnWindow: %v", err)
+	}
+	defer func() { _ = b.KillPaneWindow(paneID) }()
+
+	// Send a marker so the VT emulator has rendered content before we subscribe.
+	if err := b.SendKeys(paneID, "snapshot-marker"); err != nil {
+		t.Fatalf("SendKeys: %v", err)
+	}
+	waitUntil(t, func() bool {
+		out, err := b.CapturePane(paneID, 50)
+		return err == nil && strings.Contains(out, "snapshot-marker")
+	})
+
+	subID, ch, err := b.SubscribeSurface(paneID)
+	if err != nil {
+		t.Fatalf("SubscribeSurface: %v", err)
+	}
+	defer func() { _ = b.UnsubscribeSurface(paneID, subID) }()
+
+	// The first event from Subscribe is always the reattach snapshot (EventOutput).
+	deadline := time.After(3 * time.Second)
+	select {
+	case ev, ok := <-ch:
+		if !ok {
+			t.Fatal("SubscribeSurface channel closed immediately")
+		}
+		if ev.Kind != termvt.EventOutput {
+			t.Fatalf("first event Kind = %v, want EventOutput", ev.Kind)
+		}
+	case <-deadline:
+		t.Fatal("timeout waiting for first event from SubscribeSurface")
+	}
+}
+
+// TestPtyBackendWriteSurface verifies that bytes sent via WriteSurface reach
+// the pty: cat echoes them back and they appear in the captured output.
+func TestPtyBackendWriteSurface(t *testing.T) {
+	b := NewPtyBackend()
+	_, paneID, err := b.SpawnWindow("t", "cat", "", nil)
+	if err != nil {
+		t.Fatalf("SpawnWindow: %v", err)
+	}
+	defer func() { _ = b.KillPaneWindow(paneID) }()
+
+	subID, ch, err := b.SubscribeSurface(paneID)
+	if err != nil {
+		t.Fatalf("SubscribeSurface: %v", err)
+	}
+	defer func() { _ = b.UnsubscribeSurface(paneID, subID) }()
+
+	// Drain the initial snapshot event so the loop below sees only live output.
+	deadline := time.After(3 * time.Second)
+	select {
+	case <-ch:
+	case <-deadline:
+		t.Fatal("timeout waiting for snapshot event")
+	}
+
+	if err := b.WriteSurface(paneID, []byte("hello\n")); err != nil {
+		t.Fatalf("WriteSurface: %v", err)
+	}
+
+	// Read events until "hello" appears in the accumulated data or timeout.
+	var got strings.Builder
+	deadline = time.After(3 * time.Second)
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				t.Fatal("subscriber channel closed before observing hello")
+			}
+			if ev.Kind == termvt.EventOutput {
+				got.Write(ev.Data)
+				if strings.Contains(got.String(), "hello") {
+					return // success
+				}
+			}
+		case <-deadline:
+			t.Fatalf("timeout: observed %q, want to see hello", got.String())
+		}
+	}
+}
+
+// TestPtyBackendResizeSurface verifies that ResizeSurface updates both the pty
+// winsize and the VT emulator grid so PaneSize reports the new dimensions.
+func TestPtyBackendResizeSurface(t *testing.T) {
+	b := NewPtyBackend()
+	_, paneID, err := b.SpawnWindow("t", "sleep 5", "", nil)
+	if err != nil {
+		t.Fatalf("SpawnWindow: %v", err)
+	}
+	defer func() { _ = b.KillPaneWindow(paneID) }()
+
+	if err := b.ResizeSurface(paneID, 120, 40); err != nil {
+		t.Fatalf("ResizeSurface: %v", err)
+	}
+
+	cols, rows, err := b.PaneSize(paneID)
+	if err != nil {
+		t.Fatalf("PaneSize: %v", err)
+	}
+	if cols != 120 || rows != 40 {
+		t.Fatalf("PaneSize = %dx%d, want 120x40", cols, rows)
+	}
+}
+
+// TestPtyBackendSurface_MissingPaneTarget verifies that all surface accessors
+// wrap ErrPaneMissing when the target pane does not exist.
+func TestPtyBackendSurface_MissingPaneTarget(t *testing.T) {
+	b := NewPtyBackend()
+	const unknown = "%999"
+
+	_, _, err := b.SubscribeSurface(unknown)
+	if err == nil || !errors.Is(err, ErrPaneMissing) {
+		t.Errorf("SubscribeSurface(unknown) = %v, want ErrPaneMissing", err)
+	}
+
+	if err := b.UnsubscribeSurface(unknown, 0); err == nil || !errors.Is(err, ErrPaneMissing) {
+		t.Errorf("UnsubscribeSurface(unknown) = %v, want ErrPaneMissing", err)
+	}
+
+	if err := b.WriteSurface(unknown, []byte("x")); err == nil || !errors.Is(err, ErrPaneMissing) {
+		t.Errorf("WriteSurface(unknown) = %v, want ErrPaneMissing", err)
+	}
+
+	if err := b.ResizeSurface(unknown, 80, 24); err == nil || !errors.Is(err, ErrPaneMissing) {
+		t.Errorf("ResizeSurface(unknown) = %v, want ErrPaneMissing", err)
 	}
 }
 

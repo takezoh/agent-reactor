@@ -316,6 +316,66 @@ func (p *PtyBackend) JoinPane(srcPane, dstPane string, before bool, sizePct int)
 func (p *PtyBackend) SelectPane(target string) error { return nil }
 func (p *PtyBackend) RunChain(ops ...[]string) error { return nil }
 
+// === Surface accessors (ADR 0009) ===
+//
+// SubscribeSurface, UnsubscribeSurface, WriteSurface, and ResizeSurface are
+// the bridge between the web-facing terminal_relay and the termvt sessions
+// managed by PtyBackend. They follow the same resolvePaneTarget + mgr.Get
+// pattern as the existing inspect and IO methods so the call site in
+// terminal_relay addresses panes by the same synthetic id the runtime uses.
+
+// SubscribeSurface registers a subscriber on the termvt.Session for paneID
+// and returns the subscriber id and its event channel. The first event on the
+// channel is a reattach snapshot of the current screen (termvt's guarantee).
+// The caller is responsible for calling UnsubscribeSurface when done.
+func (p *PtyBackend) SubscribeSurface(target string) (int, <-chan termvt.Event, error) {
+	target = p.resolvePaneTarget(target)
+	sess, ok := p.mgr.Get(target)
+	if !ok {
+		return 0, nil, fmt.Errorf("runtime: unknown pane %q: %w", target, ErrPaneMissing)
+	}
+	id, ch := sess.Subscribe()
+	return id, ch, nil
+}
+
+// UnsubscribeSurface releases the subscriber id on paneID's session. It is
+// safe to call after the session has exited (the channel will already be
+// closed); the pane-not-found error is ignored in that case because the
+// caller's only goal is teardown.
+func (p *PtyBackend) UnsubscribeSurface(target string, id int) error {
+	target = p.resolvePaneTarget(target)
+	sess, ok := p.mgr.Get(target)
+	if !ok {
+		return fmt.Errorf("runtime: unknown pane %q: %w", target, ErrPaneMissing)
+	}
+	sess.Unsubscribe(id)
+	return nil
+}
+
+// WriteSurface writes raw bytes directly to paneID's pty. Unlike SendKeys,
+// no carriage return is appended; the caller (xterm.js via terminal_relay)
+// is expected to have already assembled the correct byte sequence.
+func (p *PtyBackend) WriteSurface(target string, data []byte) error {
+	target = p.resolvePaneTarget(target)
+	sess, ok := p.mgr.Get(target)
+	if !ok {
+		return fmt.Errorf("runtime: unknown pane %q: %w", target, ErrPaneMissing)
+	}
+	return sess.WriteInput(data)
+}
+
+// ResizeSurface resizes paneID's pty and VT emulator grid to (cols, rows).
+// It delegates directly to sess.Resize so both the pty winsize and the
+// emulator grid are updated atomically.
+func (p *PtyBackend) ResizeSurface(target string, cols, rows int) error {
+	target = p.resolvePaneTarget(target)
+	sess, ok := p.mgr.Get(target)
+	if !ok {
+		return fmt.Errorf("runtime: unknown pane %q: %w", target, ErrPaneMissing)
+	}
+	return sess.Resize(cols, rows)
+}
+
 // === TmuxControl (all stubbed — no server-side equivalent) ===
 
 func (p *PtyBackend) SetStatusLine(line string) error              { return nil }

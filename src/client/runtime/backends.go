@@ -13,6 +13,12 @@ import (
 // transient failures via errors.Is(err, ErrPaneMissing).
 var ErrPaneMissing = errors.New("pane missing")
 
+// ErrNotImplemented is returned by backend methods that are not implemented
+// on a given backend type. RealTmuxBackend returns this for the surface
+// accessor methods (SubscribeSurface, UnsubscribeSurface, WriteSurface,
+// ResizeSurface) which only have meaning on PtyBackend.
+var ErrNotImplemented = errors.New("runtime: not implemented on this backend")
+
 // Backend interfaces. The runtime depends on these abstractions, not
 // on concrete tmux/persistence/fs/log libraries, so tests can plug in
 // fakes and so the production wiring lives in one place (cmd/main).

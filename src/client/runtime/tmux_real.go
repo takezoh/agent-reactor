@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/takezoh/agent-reactor/platform/lib/tmux"
+	"github.com/takezoh/agent-reactor/platform/termvt"
 )
 
 // RealTmuxBackend wraps a *tmux.Client into the runtime's TmuxBackend
@@ -273,3 +274,30 @@ func (b *RealTmuxBackend) SendEnter(target string) error {
 // startup for the operations that aren't part of TmuxBackend
 // (Attach, CreateSession, SetOption on session-scoped keys).
 func (b *RealTmuxBackend) Underlying() *tmux.Client { return b.client }
+
+// === Surface accessors — not implemented on the tmux backend ===
+//
+// RealTmuxBackend is retained only until the A1-α C-phase removes tmux
+// entirely (ADR 0004). These stubs satisfy the surface accessor contract so
+// that code that depends on PtyBackend exclusively can be tested without a
+// tmux session, but they must never be called in production code paths.
+
+// SubscribeSurface always returns ErrNotImplemented on the tmux backend.
+func (b *RealTmuxBackend) SubscribeSurface(_ string) (int, <-chan termvt.Event, error) {
+	return 0, nil, ErrNotImplemented
+}
+
+// UnsubscribeSurface always returns ErrNotImplemented on the tmux backend.
+func (b *RealTmuxBackend) UnsubscribeSurface(_ string, _ int) error {
+	return ErrNotImplemented
+}
+
+// WriteSurface always returns ErrNotImplemented on the tmux backend.
+func (b *RealTmuxBackend) WriteSurface(_ string, _ []byte) error {
+	return ErrNotImplemented
+}
+
+// ResizeSurface always returns ErrNotImplemented on the tmux backend.
+func (b *RealTmuxBackend) ResizeSurface(_ string, _, _ int) error {
+	return ErrNotImplemented
+}
