@@ -54,17 +54,6 @@ func TestShellDisplayName(t *testing.T) {
 	}
 }
 
-func TestRunCoordinatorRejectsInsideTmux(t *testing.T) {
-	t.Setenv("TMUX", "/tmp/tmux-1000/default,12345,0")
-	err := runCoordinator()
-	if err == nil {
-		t.Fatal("expected error when $TMUX is set, got nil")
-	}
-	if !strings.Contains(err.Error(), "refusing to start coordinator") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 // SIGHUP must not kill the daemon. Regression test for the failure mode
 // where the daemon process vanished after `attaching to tmux session`,
 // leaving every TUI pane dead and the user staring at a broken session.
@@ -220,17 +209,4 @@ func TestSuperviseRun_ContextCanceledSwallowed(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 	<-done
-}
-
-func TestShouldKeepRuntimeAliveAfterAttach(t *testing.T) {
-	errAttach := errors.New("attach failed")
-	if !shouldKeepRuntimeAliveAfterAttach(errAttach, true) {
-		t.Fatal("want keep-alive when attach failed and session exists")
-	}
-	if shouldKeepRuntimeAliveAfterAttach(nil, true) {
-		t.Fatal("did not expect keep-alive on clean detach")
-	}
-	if shouldKeepRuntimeAliveAfterAttach(errAttach, false) {
-		t.Fatal("did not expect keep-alive when session is gone")
-	}
 }

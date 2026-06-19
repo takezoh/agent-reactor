@@ -25,16 +25,12 @@ import (
 	"github.com/takezoh/agent-reactor/platform/credproxy"
 	"github.com/takezoh/agent-reactor/platform/features"
 	libnotify "github.com/takezoh/agent-reactor/platform/lib/notify"
-	"github.com/takezoh/agent-reactor/platform/lib/tmux"
 	"github.com/takezoh/agent-reactor/platform/logger"
 	sandboxdc "github.com/takezoh/agent-reactor/platform/sandbox/devcontainer"
 	"github.com/takezoh/agent-reactor/platform/shellalias"
 )
 
 func runCoordinator() error {
-	if v := os.Getenv("TMUX"); v != "" {
-		return fmt.Errorf("refusing to start coordinator inside an existing tmux session ($TMUX is set); run `%s` outside tmux or detach first", appid.ClientBin)
-	}
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -44,18 +40,17 @@ func runCoordinator() error {
 	}
 	sessionName := cfg.Tmux.SessionName
 	slog.Info("starting coordinator", "session", sessionName)
-	client := tmux.NewClient(sessionName)
 
 	dataDir := cfg.ResolveDataDir()
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir data dir: %w", err)
 	}
 
-	// Take the single-daemon lock before touching tmux or the sessions
-	// directory. Two coordinators against the same data dir each run their
-	// own event loop and persistence pass, fighting over ~/.agent-reactor/sessions
-	// (one rewrites session files the other has just deleted), which makes
-	// terminated sessions resurrect on every cold start.
+	// Take the single-daemon lock before touching the sessions directory. Two
+	// coordinators against the same data dir each run their own event loop and
+	// persistence pass, fighting over ~/.agent-reactor/sessions (one rewrites
+	// session files the other has just deleted), which makes terminated
+	// sessions resurrect on every cold start.
 	lock, err := acquireDaemonLock(filepath.Join(dataDir, appid.PidFileName))
 	if err != nil {
 		return err
@@ -75,7 +70,7 @@ func runCoordinator() error {
 		slog.Warn("shellalias: login shell lookup failed; commands stay literal", "err", err)
 	}
 
-	rt, sockPath, exePath, err := buildRuntime(ctx, cfg, loginShell, client, dataDir)
+	rt, sockPath, _, err := buildRuntime(ctx, cfg, loginShell, dataDir)
 	if err != nil {
 		return err
 	}
@@ -87,11 +82,11 @@ func runCoordinator() error {
 	// new spawn so it only targets earlier boots' markers.
 	rt.PruneProcessGroups()
 
-	if err := startSession(ctx, rt, client, cfg, sessionName, exePath, loginShell, idleThreshold); err != nil {
+	if err := startSession(ctx, rt, loginShell, idleThreshold); err != nil {
 		return err
 	}
 
-	return runAndWait(ctx, cancel, rt, client, sockPath, sessionName, exePath)
+	return runAndWait(ctx, cancel, rt, sockPath)
 }
 
 // registerDefaultDrivers wires all built-in drivers and worker runners.
@@ -112,8 +107,14 @@ func registerDefaultDrivers(cfg *config.Config, dataDir string, idleThreshold ti
 
 // buildRuntime constructs and configures the Runtime. Returns the Runtime,
 // the socket path it will listen on, the resolved client binary path, and any error.
-func buildRuntime(ctx context.Context, cfg *config.Config, loginShell string, client *tmux.Client, dataDir string) (*runtime.Runtime, string, string, error) {
-	tmuxBackend := runtime.NewRealTmuxBackend(client)
+//
+// Backend is hard-wired to PtyBackend (ADR 0004 / B1b). The runtime drives a
+// private termvt.Manager directly; tmux is no longer involved in coordinator
+// startup. Config.Tap is nil — the legacy TmuxPipePaneTap is gone, and a
+// termvt.Session.Subscribe-based pty_tap lands in plan A together with the web
+// display surface that will consume it.
+func buildRuntime(ctx context.Context, cfg *config.Config, loginShell string, dataDir string) (*runtime.Runtime, string, string, error) {
+	ptyBackend := runtime.NewPtyBackend()
 	pollInterval := time.Duration(cfg.Monitor.PollIntervalMs) * time.Millisecond
 	fastPollInterval := time.Duration(cfg.Monitor.FastPollIntervalMs) * time.Millisecond
 	sockPath := filepath.Join(dataDir, appid.SocketFileName)
@@ -123,12 +124,6 @@ func buildRuntime(ctx context.Context, cfg *config.Config, loginShell string, cl
 	if err != nil {
 		return nil, "", "", fmt.Errorf("notify: %w", err)
 	}
-
-	tapDir := filepath.Join(dataDir, "tap")
-	if err := os.MkdirAll(tapDir, 0o755); err != nil {
-		return nil, "", "", fmt.Errorf("mkdir tap dir: %w", err)
-	}
-	paneTap := runtime.NewTmuxPipePaneTap(tmuxBackend.PipePane, tapDir)
 
 	featureSet := features.FromConfig(cfg.Features.Enabled, features.All())
 	sbResolver := platformconfig.NewSandboxResolver(cfg.Sandbox)
@@ -144,13 +139,13 @@ func buildRuntime(ctx context.Context, cfg *config.Config, loginShell string, cl
 		TickInterval:      pollInterval,
 		FastTickInterval:  fastPollInterval,
 		MainPaneHeightPct: cfg.Tmux.PaneRatioVertical,
-		Tmux:              tmuxBackend,
+		Tmux:              ptyBackend,
 		Persist:           runtime.NewFilePersist(dataDir),
 		EventLog:          runtime.NewFileEventLog(dataDir),
 		ToolLog:           runtime.NewFileToolLog(dataDir),
 		Pool:              pool,
 		Notifier:          runtime.NewNotifier(&cfg.Notifications, ln),
-		Tap:               paneTap,
+		Tap:               nil,
 		Features:          featureSet,
 		Launcher:          agentLauncher,
 		StreamDispatcher:  streamDispatcher,
@@ -168,43 +163,22 @@ func buildRuntime(ctx context.Context, cfg *config.Config, loginShell string, cl
 	return rt, sockPath, exePath, nil
 }
 
-// startSession performs warm or cold startup, registering the shell driver and
-// restoring (or creating) the tmux session and persisted frame stack.
-func startSession(ctx context.Context, rt *runtime.Runtime, client *tmux.Client, cfg *config.Config, sessionName, exePath, loginShell string, idleThreshold time.Duration) error {
+// startSession registers the shell driver and runs the cold-start bootstrap.
+// Warm restart is gone with the tmux backend: PtyBackend's termvt sessions die
+// with the daemon, so cross-restart pane recovery is not in scope (ADR 0004,
+// decision 2). LoadSessionPanes / LoadSnapshot still run and walk persisted
+// state to recreate frames from scratch.
+func startSession(ctx context.Context, rt *runtime.Runtime, loginShell string, idleThreshold time.Duration) error {
 	shellDriver := statedriver.NewShellDriver(statedriver.ShellDriverName, shellDisplayName(loginShell), idleThreshold)
-	if client.SessionExists() {
-		return warmStart(rt, client, cfg, sessionName, exePath, shellDriver)
-	}
-	if err := coldStart(ctx, rt, client, cfg, sessionName, exePath, shellDriver); err != nil {
+	if err := coldStart(ctx, rt, shellDriver); err != nil {
 		return err
 	}
 	go rt.CleanupSubsystems(ctx)
 	return nil
 }
 
-func warmStart(rt *runtime.Runtime, client *tmux.Client, cfg *config.Config, sessionName, exePath string, shellDriver statedriver.ShellDriver) error {
-	slog.Info("session exists, restoring")
-	ensureHiddenWindow(client, sessionName, exePath)
-	state.Register(shellDriver)
-	if err := rt.LoadSnapshot(false); err != nil {
-		slog.Error("snapshot load failed", "err", err)
-	}
-	if err := rt.LoadSessionPanes(); err != nil {
-		slog.Warn("window map load failed", "err", err)
-	}
-	rt.RecoverActivePaneAtMain()
-	restoreSession(client, cfg, sessionName, exePath)
-	rt.ReconcileOrphans()
-	rt.RecoverSandboxFrames()
-	rt.RecoverWarmStartSessions()
-	return nil
-}
-
-func coldStart(ctx context.Context, rt *runtime.Runtime, client *tmux.Client, cfg *config.Config, sessionName, exePath string, shellDriver statedriver.ShellDriver) error {
+func coldStart(ctx context.Context, rt *runtime.Runtime, shellDriver statedriver.ShellDriver) error {
 	slog.Info("creating new session")
-	if err := setupNewSession(client, cfg, sessionName, exePath); err != nil {
-		return err
-	}
 	state.Register(shellDriver)
 	if err := rt.LoadSessionPanes(); err != nil {
 		slog.Warn("window map load failed", "err", err)
@@ -258,12 +232,11 @@ func superviseRun(cancel context.CancelFunc, errCh chan<- error, fn func() error
 }
 
 // installSignalHandlers wires SIGINT/SIGTERM/SIGHUP into the coordinator
-// context. SIGINT/SIGTERM cancel the context for graceful shutdown.
-// SIGHUP is logged and ignored: when daemon spawns `tmux attach-session` as
-// a child the parent terminal can deliver spurious SIGHUP (closing pane,
-// WSL2 init quirks); killing the daemon there would tear down every TUI
-// pane via socket EOF while the tmux session itself stays alive — the
-// "TUI suddenly broke, daemon vanished without a log" failure mode.
+// context. SIGINT/SIGTERM cancel the context for graceful shutdown. SIGHUP is
+// logged and ignored — a parent terminal can deliver spurious SIGHUP when its
+// own window closes (WSL2 init quirks etc.), and the daemon should outlive
+// that signal because session state lives in memory and persists across the
+// IPC socket rather than in the controlling terminal.
 //
 // Returns a stop function the caller must defer to restore default handlers.
 func installSignalHandlers(cancel context.CancelFunc) func() {
@@ -288,67 +261,39 @@ func installSignalHandlers(cancel context.CancelFunc) func() {
 	}
 }
 
-// runAndWait starts the event loop, IPC server, TUI panes, and blocks until
-// the session ends or the runtime errors.
-func runAndWait(ctx context.Context, cancel context.CancelFunc, rt *runtime.Runtime, client *tmux.Client, sockPath, sessionName, exePath string) error {
+// runAndWait starts the event loop and IPC server, then blocks until the
+// runtime exits (cancel from signal handler / runtime error). With the tmux
+// backend gone there is no `tmux attach-session` step — the daemon is
+// headless and clients drive it through the IPC socket. Plan A wires the web
+// display surface onto runtime via pure-core reuse; until then the daemon is
+// reachable but visually opaque.
+func runAndWait(ctx context.Context, cancel context.CancelFunc, rt *runtime.Runtime, sockPath string) error {
 	stopSignals := installSignalHandlers(cancel)
 	defer stopSignals()
 	runErrCh := make(chan error, 1)
 	go superviseRun(cancel, runErrCh, func() error { return rt.Run(ctx) })
-	rt.StartTapsForRestoredFrames()
+	// StartTapsForRestoredFrames is intentionally not called here: with
+	// Config.Tap=nil the tap_manager early-returns and the bootstrap event
+	// would be a no-op (B1b / ADR 0004). Plan A reinstates the call once a
+	// termvt.Session.Subscribe-backed pty_tap lands.
 	if err := rt.StartIPC(sockPath); err != nil {
 		return fmt.Errorf("ipc: %w", err)
 	}
 	slog.Info("server started", "sock", sockPath)
 	if relay, err := runtime.NewFileRelay(rt); err != nil {
-		slog.Warn("filerelay: start failed, TUI will show backfill only", "err", err)
+		slog.Warn("filerelay: start failed", "err", err)
 	} else {
 		defer relay.Close()
 		relay.WatchLog(logger.LogFilePath())
 		rt.SetRelay(relay)
 	}
-	// Spawn all TUI panes after StartIPC so proto.Dial succeeds on first attempt.
-	rt.RespawnMainPane()
-	respawnHeaderPane(client, sessionName, exePath)
-	respawnSessionsPane(client, sessionName, exePath)
-	respawnHiddenPane(client, sessionName, exePath)
-	slog.Info("attaching to tmux session")
-	attachErr := client.Attach()
-	slog.Info("coordinator: tmux attach returned", "err", attachErr, "session_exists", client.SessionExists())
-	if attachErr != nil {
-		slog.Warn("attach exited", "err", attachErr)
-		if shouldKeepRuntimeAliveAfterAttach(attachErr, client.SessionExists()) {
-			slog.Info("attach failed; keeping runtime alive", "session", sessionName)
-			<-rt.Done()
-			if err, ok := <-runErrCh; ok {
-				close(runErrCh)
-				return fmt.Errorf("runtime: %w", err)
-			}
-			close(runErrCh)
-			if client.SessionExists() {
-				slog.Info("detached, session kept alive")
-			} else {
-				slog.Info("tmux server exited")
-			}
-			return nil
-		}
-	}
-	cancel()
 	<-rt.Done()
 	close(runErrCh)
 	if err, ok := <-runErrCh; ok {
 		return fmt.Errorf("runtime: %w", err)
 	}
-	if client.SessionExists() {
-		slog.Info("detached, session kept alive")
-	} else {
-		slog.Info("tmux server exited")
-	}
+	slog.Info("coordinator: runtime stopped")
 	return nil
-}
-
-func shouldKeepRuntimeAliveAfterAttach(err error, sessionExists bool) bool {
-	return err != nil && sessionExists
 }
 
 // newAgentLauncher returns the AgentLauncher (TTY, for tmux panes) and
