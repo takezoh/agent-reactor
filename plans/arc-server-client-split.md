@@ -74,6 +74,32 @@ remote-client-design.md §2 の「backend だけ差し替えて pure core 再利
   `client/runtime/launcher.go`(backend 選択の DI seam)。
 - **完了条件**: 既存 reducer/driver テストが PtyBackend 上で green / `go test -race` green /
   tmux 未起動の環境で arc TUI が pty backend で動く。
+- **状況(2026-06-18)**: PtyBackend 型 + 単体テストは実装・レビュー済み(commit
+  `8ffd868` + fixup 群)。データ面実装・プレゼン面 stub。**まだ DI 配線していない**
+  (`NewPtyBackend` の呼び出しは test のみ)。
+
+#### B1-wiring の前提条件(code-review が surface した統合課題 — 配線前に解消)
+PtyBackend を runtime に挿す前に、以下を設計・解消すること。いずれも「PtyBackend が
+RealTmuxBackend のドロップイン代替である」ための、runtime 側との契約整合:
+1. **missing-pane エラー契約**: runtime は `isMissingPaneErr`(`resident.go`)で
+   `"can't find pane"` 部分文字列を見て vanished pane を判定し frame を evict する。
+   PtyBackend は `"runtime: unknown pane %q"` を返すため一致せず、`reconcileWindows`
+   が消えた pane を transient 扱いして frame を永久に残す。→ 共有 sentinel error を
+   定義し `isMissingPaneErr` に教える(両 backend が同じ語彙を返す形)。
+2. **command の形式**: runtime の `buildSpawnCommand` は `exec <cmd>` / `bash -c '…'`
+   / `$(getent …)` 等の **shell 文字列**を渡す。PtyBackend は `SplitArgs`+`exec.Command`
+   で argv 実行するためこれらが壊れる。→ 配線時に shell 経由起動(`sh -c`)にするか、
+   spawn コマンド生成側を argv 化するか決める。
+3. **ResizeWindow の target 形式**: spawn 直後 runtime は `ResizeWindow("arc:1"=
+   sessionName:windowIndex)` を呼ぶが、PtyBackend は paneID(`"%1"`)で session を引く。
+   → target 解決規約を統一(windowIndex→session の対応を持つ、等)。
+4. **session-env の非永続**: `SetEnv`/`ShowEnvironment` は in-process map で、warm 再起動を
+   跨ぐ pane 復元(`LoadSessionPanes`)を満たさない(ADR 0004 / 決定2 の既知の divergence)。
+   → 復元方式を A/後続 phase で設計(現状は doc で「非永続」と明示済み)。
+5. **PipePane=no-op**: 出力 tap は別途 `pty_tap`(`Session.Subscribe`)で配線する
+   (TODO 済み)。tap 依存の run-state 検出は A で解消。
+6. **KillPaneWindow の main 保護なし**: RealTmuxBackend の `guardNotMainWindow` 相当が無い。
+   layout pane が PtyBackend に乗る phase C で対応。
 
 ### A. web 経路で pure core 再利用
 - **What**: termvt の Control event(OSC 9/133/title)を driver/state に流し込み、
