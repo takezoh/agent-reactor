@@ -11,6 +11,33 @@ import (
 	"github.com/takezoh/agent-reactor/platform/termvt"
 )
 
+// outputFrame encodes an asciicast v2 output event: [time, "o", data].
+// Kept here (alongside encodeEvent) until gateway.go is migrated to proto events.
+func outputFrame(t float64, data []byte) []byte {
+	b, _ := json.Marshal([]any{t, "o", string(data)})
+	return b
+}
+
+func controlFrame(kind string, code int, data string) []byte {
+	b, _ := json.Marshal(controlMsg{K: kind, Code: code, Data: data})
+	return b
+}
+
+// encodeEvent renders a termvt.Event as a single WebSocket text frame.
+// Deprecated: will be replaced by encodeServerEvent once gateway.go is migrated.
+func encodeEvent(elapsed float64, ev termvt.Event) []byte {
+	switch ev.Kind {
+	case termvt.EventOutput:
+		return outputFrame(elapsed, ev.Data)
+	case termvt.EventControl:
+		return controlFrame(ev.Ctl.Kind, ev.Ctl.Code, ev.Ctl.Data)
+	case termvt.EventExit:
+		return controlFrame("exit", 0, "")
+	default:
+		return nil
+	}
+}
+
 // Attacher is the subset of *termvt.Session the gateway needs. Declared as an
 // interface so the bridge can be tested with a fake.
 type Attacher interface {
