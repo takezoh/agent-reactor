@@ -202,7 +202,9 @@ func TestMux_TicketFlowUnchanged(t *testing.T) {
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("mint: status=%d err=%v", resp.StatusCode, err)
 	}
-	var tb struct{ Ticket string `json:"ticket"` }
+	var tb struct {
+		Ticket string `json:"ticket"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&tb); err != nil {
 		t.Fatalf("decode ticket: %v", err)
 	}
@@ -363,7 +365,6 @@ func TestMux_DeleteMapsErrorToHTTPCode(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			d, daemon := newDaemonPair(t)

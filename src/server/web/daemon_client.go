@@ -38,7 +38,7 @@ type DaemonClient struct {
 	sockPath string
 
 	mu     sync.RWMutex
-	cli    *proto.Client         // nil while disconnected
+	cli    *proto.Client          // nil while disconnected
 	events chan proto.ServerEvent // closed and replaced on each reconnect
 
 	health      atomic.Bool

@@ -77,6 +77,12 @@ linters:
         - pattern: 'sync\.RWMutex'
           pkg: github\.com/takezoh/agent-reactor/orchestrator/scheduler
           msg: "scheduler/ is a pure functional core — no mutexes allowed (concurrency lives in the shell loop)"
+        - pattern: 'termvt\.NewManager\('
+          pkg: github\.com/takezoh/agent-reactor/(server|cmd/server)
+          msg: "server/* must reach the daemon via DaemonClient — no direct termvt.NewManager (see ADR 0016)"
+        - pattern: 'agentlaunch\.NewDispatcher\('
+          pkg: github\.com/takezoh/agent-reactor/(server|cmd/server)
+          msg: "server/* must reach the daemon via DaemonClient — no direct agentlaunch.NewDispatcher (see ADR 0016)"
       # The no-goroutine / no-wall-clock / no-direct-I/O invariants of the pure cores
       # are enforced by gocritic's ruleguard checker (gorules/purecore.go); forbidigo
       # matches CallExpr only and cannot see the GoStmt that `go` produces.
@@ -204,6 +210,17 @@ linters:
               desc: "codexclient/ must not import client/ (reusable platform layer — see plans/02-layout.md)"
             - pkg: github.com/takezoh/agent-reactor/orchestrator
               desc: "codexclient/ must not import orchestrator/ (reusable platform layer — see plans/02-layout.md)"
+        server-no-orchestrator-or-direct-termvt:
+          # server/* is the HTTP/WS gateway layer — it communicates with the daemon
+          # via DaemonClient (Unix-socket RPC) and must not bypass that boundary.
+          # Allowed: client/proto, client/state, client/runtime, platform/* (deny-list style).
+          # See ADR 0016.
+          files:
+            - "**/server/**"
+            - "**/cmd/server/**"
+          deny:
+            - pkg: github.com/takezoh/agent-reactor/orchestrator
+              desc: "server/* must not import orchestrator/* (HTTP/WS gateway layer — see ADR 0016)"
 
     revive:
       rules:

@@ -93,7 +93,7 @@ func (f *fakeSessionAttacher) resizeSnapshot() []resizeCall {
 
 // startGatewayServer starts an httptest server that attaches a fakeSessionAttacher
 // for sessionID over WS, returning the server, attacher, and a dial function.
-func startGatewayServer(t *testing.T, sess Attacher, sessionID string) *httptest.Server {
+func startGatewayServer(t *testing.T, sess Attacher, sessionID string) *httptest.Server { //nolint:unparam
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
