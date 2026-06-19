@@ -1,3 +1,5 @@
+//go:build legacy_session
+
 package session
 
 import (
