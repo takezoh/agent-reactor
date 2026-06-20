@@ -119,11 +119,13 @@ describe("parseServerFrame", () => {
 
 describe("serializeClientFrame", () => {
   it("serializes input frame", () => {
-    expect(serializeClientFrame({ k: "i", d: "abc" })).toBe('{"k":"i","d":"abc"}');
+    expect(serializeClientFrame({ k: "i", d: "abc", sessionId: "s1" })).toBe(
+      '{"k":"i","d":"abc","sessionId":"s1"}',
+    );
   });
   it("serializes resize frame", () => {
-    expect(serializeClientFrame({ k: "r", cols: 80, rows: 24 })).toBe(
-      '{"k":"r","cols":80,"rows":24}',
+    expect(serializeClientFrame({ k: "r", cols: 80, rows: 24, sessionId: "s1" })).toBe(
+      '{"k":"r","cols":80,"rows":24,"sessionId":"s1"}',
     );
   });
   it("serializes subscribe frame", () => {

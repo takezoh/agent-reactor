@@ -13,6 +13,12 @@ const (
 	ErrSessionStopped  ErrCode = "session_stopped"
 	ErrAlreadyExists   ErrCode = "already_exists"
 	ErrUnsupported     ErrCode = "unsupported"
+	// ErrFrameNotReady is returned by surface.subscribe when the target session
+	// exists but has no ActiveFrame yet (ADR 0018: race deferred to β; client
+	// retries with exponential backoff). The wire form uses kebab-case
+	// "frame-not-ready" because that is the exact literal the React retry
+	// layer checks for (client/web/src/socket/retry.ts).
+	ErrFrameNotReady ErrCode = "frame-not-ready"
 )
 
 // FromStateCode translates a state-package error code string into a
@@ -32,6 +38,8 @@ func FromStateCode(code string) ErrCode {
 		return ErrAlreadyExists
 	case "unsupported":
 		return ErrUnsupported
+	case "frame_not_ready":
+		return ErrFrameNotReady
 	}
 	return ErrUnknown
 }

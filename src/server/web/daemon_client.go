@@ -47,7 +47,14 @@ type DaemonClient struct {
 	mu  sync.RWMutex
 	cli *proto.Client // nil while disconnected
 
-	subsMu sync.Mutex
+	// subsMu is RW: broadcastEvent takes the read lock so multiple fan-outs
+	// can run concurrently while excluding closeAllSubs / SubscribeEvents
+	// (which take the write lock). Crucially, the read lock keeps every
+	// subscriber channel alive for the duration of one broadcast pass, so the
+	// non-blocking `select case ch <- ev` send cannot race with `close(ch)`
+	// — close() obtains the write lock and must wait for in-flight broadcasts
+	// to finish before any channel is closed.
+	subsMu sync.RWMutex
 	subs   map[chan proto.ServerEvent]struct{}
 
 	health      atomic.Bool
@@ -154,16 +161,18 @@ func (d *DaemonClient) SendCommand(ctx context.Context, cmd proto.Command) (prot
 }
 
 // SubscribeEvents registers a fresh subscriber and returns its dedicated event
-// channel. The channel is closed when the daemon disconnects (or DaemonClient
-// is Closed); callers should call SubscribeEvents again to obtain a new
-// channel after observing closure. Events broadcast across all subscribers
-// are non-blocking per recipient — slow subscribers have individual events
-// dropped (logged) but do not block other subscribers or the daemon reader.
-func (d *DaemonClient) SubscribeEvents() <-chan proto.ServerEvent {
+// channel. The subscriber is automatically unregistered when ctx is cancelled
+// (so that AttachWS / AttachLifecycleWS exits do not leak channels into the
+// fan-out map). The channel is also closed when the daemon disconnects or
+// DaemonClient is Closed; callers should call SubscribeEvents again to obtain
+// a new channel after observing closure. Events broadcast across all
+// subscribers are non-blocking per recipient — slow subscribers have
+// individual events dropped (logged) but do not block other subscribers or
+// the daemon reader.
+func (d *DaemonClient) SubscribeEvents(ctx context.Context) <-chan proto.ServerEvent {
 	ch := make(chan proto.ServerEvent, perSubscriberBuf)
+
 	d.subsMu.Lock()
-	// Reject new subscribers after Close to avoid handing out a channel that
-	// will never receive anything; the caller will observe an immediate close.
 	select {
 	case <-d.stop:
 		d.subsMu.Unlock()
@@ -173,19 +182,32 @@ func (d *DaemonClient) SubscribeEvents() <-chan proto.ServerEvent {
 	}
 	d.subs[ch] = struct{}{}
 	d.subsMu.Unlock()
+
+	// Auto-unregister when ctx is cancelled (browser disconnect path). Uses
+	// the same write lock as closeAllSubs / markDown, so the closeAllSubs
+	// case (channel already closed) gracefully no-ops via the membership
+	// check rather than panicking on double close.
+	go func() {
+		<-ctx.Done()
+		d.subsMu.Lock()
+		if _, ok := d.subs[ch]; ok {
+			delete(d.subs, ch)
+			close(ch)
+		}
+		d.subsMu.Unlock()
+	}()
 	return ch
 }
 
 // broadcastEvent fan-outs ev to every registered subscriber. Non-blocking per
-// subscriber: a slow subscriber has the event dropped (logged at warn).
+// subscriber: a slow subscriber has the event dropped (logged at warn). The
+// read lock keeps every channel alive until the fan-out finishes, eliminating
+// the send-on-closed-channel race the previous snapshot-then-iterate design
+// allowed.
 func (d *DaemonClient) broadcastEvent(ev proto.ServerEvent) {
-	d.subsMu.Lock()
-	snapshot := make([]chan proto.ServerEvent, 0, len(d.subs))
+	d.subsMu.RLock()
+	defer d.subsMu.RUnlock()
 	for ch := range d.subs {
-		snapshot = append(snapshot, ch)
-	}
-	d.subsMu.Unlock()
-	for _, ch := range snapshot {
 		select {
 		case ch <- ev:
 		default:
@@ -197,7 +219,8 @@ func (d *DaemonClient) broadcastEvent(ev proto.ServerEvent) {
 
 // closeAllSubs closes every active subscriber channel and forgets them.
 // Subscribers observe an immediate channel close (the documented disconnect
-// signal). Idempotent: safe under repeated invocation.
+// signal). Idempotent: safe under repeated invocation; obtaining the write
+// lock ensures no broadcastEvent is in flight when we close.
 func (d *DaemonClient) closeAllSubs() {
 	d.subsMu.Lock()
 	old := d.subs

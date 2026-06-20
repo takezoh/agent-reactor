@@ -48,12 +48,14 @@ type DaemonAdapter struct {
 // NewDaemonAdapter wraps a DaemonClient as an Attacher.
 func NewDaemonAdapter(d *DaemonClient) *DaemonAdapter { return &DaemonAdapter{d: d} }
 
-// SubscribeSurface sends CmdSurfaceSubscribe and returns the shared events channel.
+// SubscribeSurface sends CmdSurfaceSubscribe and returns a per-call event
+// channel. The channel is auto-unregistered from the DaemonClient fan-out
+// when ctx is cancelled (browser disconnect / WS handler return).
 func (a *DaemonAdapter) SubscribeSurface(ctx context.Context, sid string) (<-chan proto.ServerEvent, error) {
 	if _, err := a.d.SendCommand(ctx, proto.CmdSurfaceSubscribe{SessionID: sid}); err != nil {
 		return nil, err
 	}
-	return a.d.SubscribeEvents(), nil
+	return a.d.SubscribeEvents(ctx), nil
 }
 
 // UnsubscribeSurface sends CmdSurfaceUnsubscribe to the daemon.
@@ -83,17 +85,20 @@ func (a *DaemonAdapter) Resize(ctx context.Context, sid string, cols, rows uint1
 }
 
 // SubscribeLifecycle sends CmdSubscribe for sessions-changed, session-file-line,
-// and agent-notification events, and returns the shared events channel.
+// agent-notification, and surface-output events (the lifecycle WS multiplexes
+// surface output for any session the browser subscribed to via {k:"s"}). The
+// returned per-call event channel is auto-unregistered when ctx is cancelled.
 func (a *DaemonAdapter) SubscribeLifecycle(ctx context.Context) (<-chan proto.ServerEvent, error) {
 	filters := []string{
 		proto.EvtNameSessionsChanged,
 		proto.EvtNameSessionFileLine,
 		proto.EvtNameAgentNotification,
+		proto.EvtNameSurfaceOutput,
 	}
 	if _, err := a.d.SendCommand(ctx, proto.CmdSubscribe{Filters: filters}); err != nil {
 		return nil, err
 	}
-	return a.d.SubscribeEvents(), nil
+	return a.d.SubscribeEvents(ctx), nil
 }
 
 // writeTypedClose sends a WebSocket StatusGoingAway typed close frame.
@@ -272,6 +277,13 @@ func AttachLifecycleWS(ctx context.Context, sess Attacher, c *websocket.Conn) er
 // frames. Reading is also necessary so coder/websocket can autorespond to
 // ping control frames. On read error (browser close, transport failure) the
 // goroutine returns and the caller's cancel() tears down the parent ctx.
+//
+// Subscribe / unsubscribe frames carry a reqId; for each, we write back a
+// {k:"r"} success or {k:"e"} error response so the React-side
+// subscribeWithRetry promise (client/web/src/socket/retry.ts) can resolve.
+// Without those responses the promise blocks until WS close, exhausting the
+// retry budget without ever surfacing the real error code (e.g.
+// "frame-not-ready" that drives the ADR 0018 backoff).
 func readLifecycleInbound(ctx context.Context, sess Attacher, c *websocket.Conn, subs *lifecycleSubSet) {
 	for {
 		_, data, err := c.Read(ctx)
@@ -284,22 +296,9 @@ func readLifecycleInbound(ctx context.Context, sess Attacher, c *websocket.Conn,
 		}
 		switch msg.K {
 		case "s":
-			if msg.SessionID == "" {
-				continue
-			}
-			if err := sess.SendSurfaceSubscribe(ctx, msg.SessionID); err != nil {
-				slog.Warn("server/web: lifecycle surface subscribe", "err", err, "sid", msg.SessionID)
-				continue
-			}
-			subs.add(msg.SessionID)
+			handleLifecycleSubscribe(ctx, sess, c, &msg, subs)
 		case "u":
-			if msg.SessionID == "" {
-				continue
-			}
-			subs.remove(msg.SessionID)
-			if err := sess.UnsubscribeSurface(ctx, msg.SessionID); err != nil {
-				slog.Warn("server/web: lifecycle surface unsubscribe", "err", err, "sid", msg.SessionID)
-			}
+			handleLifecycleUnsubscribe(ctx, sess, c, &msg, subs)
 		case "i":
 			if msg.SessionID == "" {
 				continue
@@ -316,6 +315,98 @@ func readLifecycleInbound(ctx context.Context, sess Attacher, c *websocket.Conn,
 			}
 		}
 	}
+}
+
+// handleLifecycleSubscribe processes one {k:"s"} frame: forward the command,
+// then write a {k:"r"} or {k:"e"} response carrying the original reqId so the
+// React await-response promise can resolve.
+func handleLifecycleSubscribe(ctx context.Context, sess Attacher, c *websocket.Conn, msg *inbound, subs *lifecycleSubSet) {
+	if msg.SessionID == "" {
+		writeRespErrFrame(ctx, c, msg.ReqID, "invalid_argument", "sessionId required")
+		return
+	}
+	err := sess.SendSurfaceSubscribe(ctx, msg.SessionID)
+	if err != nil {
+		code, message := unwrapProtoError(err)
+		slog.Warn("server/web: lifecycle surface subscribe", "err", err, "sid", msg.SessionID)
+		writeRespErrFrame(ctx, c, msg.ReqID, code, message)
+		return
+	}
+	subs.add(msg.SessionID)
+	writeRespOKFrame(ctx, c, msg.ReqID)
+}
+
+// handleLifecycleUnsubscribe processes one {k:"u"} frame symmetrically with
+// handleLifecycleSubscribe.
+func handleLifecycleUnsubscribe(ctx context.Context, sess Attacher, c *websocket.Conn, msg *inbound, subs *lifecycleSubSet) {
+	if msg.SessionID == "" {
+		writeRespErrFrame(ctx, c, msg.ReqID, "invalid_argument", "sessionId required")
+		return
+	}
+	subs.remove(msg.SessionID)
+	if err := sess.UnsubscribeSurface(ctx, msg.SessionID); err != nil {
+		code, message := unwrapProtoError(err)
+		slog.Warn("server/web: lifecycle surface unsubscribe", "err", err, "sid", msg.SessionID)
+		writeRespErrFrame(ctx, c, msg.ReqID, code, message)
+		return
+	}
+	writeRespOKFrame(ctx, c, msg.ReqID)
+}
+
+// unwrapProtoError extracts (code, message) from a proto.ErrorBody, falling
+// back to ("internal", err.Error()) for opaque errors.
+func unwrapProtoError(err error) (string, string) {
+	var eb *proto.ErrorBody
+	if errors.As(err, &eb) {
+		return string(eb.Code), eb.Message
+	}
+	return "internal", err.Error()
+}
+
+// writeRespOKFrame writes {k:"r", reqId:...} (best-effort: errors logged).
+func writeRespOKFrame(ctx context.Context, c *websocket.Conn, reqID string) {
+	if reqID == "" {
+		return
+	}
+	frame, err := json.Marshal(respOKFrame{K: "r", ReqID: reqID})
+	if err != nil {
+		slog.Error("server/web: encode resp-ok frame", "err", err)
+		return
+	}
+	if err := c.Write(ctx, websocket.MessageText, frame); err != nil {
+		slog.Warn("server/web: write resp-ok frame", "err", err)
+	}
+}
+
+// writeRespErrFrame writes {k:"e", reqId, code, message} (best-effort).
+func writeRespErrFrame(ctx context.Context, c *websocket.Conn, reqID, code, message string) {
+	if reqID == "" {
+		return
+	}
+	frame, err := json.Marshal(respErrFrame{
+		K: "e", ReqID: reqID, Code: code, Message: message,
+	})
+	if err != nil {
+		slog.Error("server/web: encode resp-err frame", "err", err)
+		return
+	}
+	if err := c.Write(ctx, websocket.MessageText, frame); err != nil {
+		slog.Warn("server/web: write resp-err frame", "err", err)
+	}
+}
+
+// respOKFrame is the success response to a subscribe / unsubscribe command.
+type respOKFrame struct {
+	K     string `json:"k"` // always "r"
+	ReqID string `json:"reqId"`
+}
+
+// respErrFrame is the error response to a subscribe / unsubscribe command.
+type respErrFrame struct {
+	K       string `json:"k"` // always "e"
+	ReqID   string `json:"reqId"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 // writeOutbound reads proto.ServerEvent values from ch and encodes them as WS

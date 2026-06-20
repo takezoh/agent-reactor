@@ -121,7 +121,9 @@ func TestDaemonClient_DisconnectAndReconnect(t *testing.T) {
 	}
 
 	// Snapshot the first events channel.
-	firstCh := d.SubscribeEvents()
+	subCtx1, subCancel1 := context.WithCancel(context.Background())
+	defer subCancel1()
+	firstCh := d.SubscribeEvents(subCtx1)
 
 	// Close the server side to simulate a daemon disconnect.
 	s1.Close()
@@ -146,7 +148,9 @@ func TestDaemonClient_DisconnectAndReconnect(t *testing.T) {
 	}
 
 	// The new events channel must be different from the first.
-	secondCh := d.SubscribeEvents()
+	subCtx2, subCancel2 := context.WithCancel(context.Background())
+	defer subCancel2()
+	secondCh := d.SubscribeEvents(subCtx2)
 	if secondCh == firstCh {
 		t.Fatal("expected a fresh events channel after reconnect")
 	}

@@ -177,40 +177,60 @@ func resolveSessionFilePath(d *DaemonClient, r *http.Request, id, kindMatch stri
 // matchLogTab searches LogTabs for the best path matching the given kindMatch.
 // kindMatch is "transcript" or "event-log".
 //
+// The driver-side LogTab labels are short uppercase strings ("TRANSCRIPT",
+// "EVENTS"), and the file paths use driver-specific extensions
+// (".transcript" for transcripts, ".log" for event logs — see
+// client/driver/view_builder.go). The match table below enumerates the
+// concrete tokens each kind may carry so that grep-style label matching
+// stays correct as drivers are added.
+//
 // Matching priority:
-//  1. TabKindText tab whose label contains the kindMatch string (case-insensitive)
-//  2. TabKindText tab whose path suffix matches the expected extension
+//  1. TabKindText tab whose label (lower-cased) contains any of the kind's
+//     label tokens.
+//  2. TabKindText tab whose path suffix is one of the kind's path suffixes.
 func matchLogTab(tabs []stateview.LogTab, kindMatch string) string {
 	lowerKind := strings.ToLower(kindMatch)
 
-	// Determine expected path suffix based on kind.
-	var pathSuffix string
-	switch lowerKind {
-	case "transcript":
-		pathSuffix = ".transcript"
-	case "event-log":
-		pathSuffix = ".jsonl"
-	}
+	labelTokens, pathSuffixes := logTabMatchers(lowerKind)
 
 	for _, tab := range tabs {
 		if tab.Kind != stateview.TabKindText {
 			continue
 		}
 		label := strings.ToLower(tab.Label)
-		if strings.Contains(label, lowerKind) {
-			return tab.Path
+		for _, tok := range labelTokens {
+			if strings.Contains(label, tok) {
+				return tab.Path
+			}
 		}
 	}
-	// Fall back to path suffix match.
-	if pathSuffix != "" {
-		for _, tab := range tabs {
-			if tab.Kind != stateview.TabKindText {
-				continue
-			}
-			if strings.HasSuffix(tab.Path, pathSuffix) {
+	for _, tab := range tabs {
+		if tab.Kind != stateview.TabKindText {
+			continue
+		}
+		for _, suf := range pathSuffixes {
+			if strings.HasSuffix(tab.Path, suf) {
 				return tab.Path
 			}
 		}
 	}
 	return ""
+}
+
+// logTabMatchers returns the (labelTokens, pathSuffixes) match table for one
+// REST kind. The label tokens cover the upper-case label literals each driver
+// sets in view_builder.go; the path suffixes mirror the file extensions
+// driver code chooses (EventLogTab → ".log", driver transcript paths →
+// ".transcript"). Add new entries when drivers ship new tab kinds.
+func logTabMatchers(lowerKind string) (labels []string, pathSuffixes []string) {
+	switch lowerKind {
+	case "transcript":
+		return []string{"transcript"}, []string{".transcript"}
+	case "event-log":
+		// "events" matches the EVENTS label that EventLogTab sets; "event-log"
+		// is kept as a defensive synonym so future drivers can label their
+		// JSON-line tabs explicitly.
+		return []string{"events", "event-log"}, []string{".log", ".jsonl"}
+	}
+	return nil, nil
 }

@@ -14,6 +14,12 @@ export function TerminalPane({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
 
+  // Keep the latest sessionId in a ref so the xterm.js onData / onResize
+  // handlers always read the current active session without re-binding (the
+  // outer useEffect intentionally only runs once per Connection instance).
+  const sessionRef = useRef<string | null>(sessionId);
+  sessionRef.current = sessionId;
+
   useEffect(() => {
     if (!hostRef.current) return;
     const term = new Terminal({ convertEol: true, scrollback: 5000 });
@@ -24,10 +30,14 @@ export function TerminalPane({
     termRef.current = term;
 
     const onData = term.onData((d) => {
-      conn.send({ k: "i", d });
+      const sid = sessionRef.current;
+      if (!sid) return; // no session selected → drop, do not send empty sessionId
+      conn.send({ k: "i", d, sessionId: sid });
     });
     const onResize = term.onResize(({ cols, rows }) => {
-      conn.send({ k: "r", cols, rows });
+      const sid = sessionRef.current;
+      if (!sid) return;
+      conn.send({ k: "r", cols, rows, sessionId: sid });
     });
 
     conn.onOutput = (frame) => {
