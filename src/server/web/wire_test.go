@@ -12,6 +12,10 @@ import (
 )
 
 func TestWireEncodeServerEvent_SurfaceOutput(t *testing.T) {
+	// Wire-binary safety: the third element is the base64 STRING straight
+	// from EvtSurfaceOutput.DataB64; the browser decodes it back to bytes.
+	// Passing decoded bytes through encoding/json would corrupt non-UTF-8
+	// terminal output (U+FFFD replacement), so we test for the base64 form.
 	encoded := base64.StdEncoding.EncodeToString([]byte("hi"))
 	ev := proto.EvtSurfaceOutput{
 		SessionID: "s1",
@@ -36,8 +40,8 @@ func TestWireEncodeServerEvent_SurfaceOutput(t *testing.T) {
 	if arr[1].(string) != "o" {
 		t.Errorf("type: got %v, want \"o\"", arr[1])
 	}
-	if arr[2].(string) != "hi" {
-		t.Errorf("data: got %v, want \"hi\"", arr[2])
+	if arr[2].(string) != encoded {
+		t.Errorf("data: got %q, want %q (base64-encoded)", arr[2], encoded)
 	}
 }
 

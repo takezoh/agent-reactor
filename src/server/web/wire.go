@@ -5,7 +5,6 @@
 package web
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"time"
@@ -13,11 +12,20 @@ import (
 	"github.com/takezoh/agent-reactor/client/proto"
 )
 
-// outputFrameFromSurface encodes EvtSurfaceOutput as the asciicast v2
-// output array: [TimeSec, "o", string(base64.Decode(DataB64))].
+// outputFrameFromSurface encodes EvtSurfaceOutput as the asciicast-style
+// output array: [TimeSec, "o", DataB64].
+//
+// Wire-binary safety: the third element is the daemon-side base64 STRING
+// (NOT the decoded bytes). Decoding to a Go string and JSON-marshalling
+// raw PTY bytes is unsafe — encoding/json silently replaces any non-UTF-8
+// byte with U+FFFD, garbling 256-color sequences, raw binary, and most
+// non-ASCII output. Keeping the wire payload base64-encoded means the
+// browser (TerminalPane.tsx) atobs it back to raw bytes and feeds the
+// resulting Uint8Array directly to xterm.write — byte-faithful end to end.
+// Also avoids the prior encode→decode→encode round-trip from the daemon
+// runtime down to the browser (round-3 finding: gratuitous base64 churn).
 func outputFrameFromSurface(e proto.EvtSurfaceOutput) []byte {
-	data, _ := base64.StdEncoding.DecodeString(e.DataB64)
-	b, _ := json.Marshal([]any{e.TimeSec, "o", string(data)})
+	b, _ := json.Marshal([]any{e.TimeSec, "o", e.DataB64})
 	return b
 }
 
@@ -37,28 +45,39 @@ func controlFrame(kind string, code int, data string) []byte {
 
 // viewUpdateFrame is the server→browser frame derived from
 // proto.EvtSessionsChanged. ADR 0023: 1:1 mirror.
+//
+// Connectors deliberately has NO omitempty: an empty/nil slice must still
+// reach the wire as `"connectors":[]` so that the browser can observe
+// connector REMOVAL. The TS store guard `if (frame.connectors !== undefined)`
+// only fires when the field is present, so omitempty would leave a stale
+// connector visible after the daemon has cleared it.
 type viewUpdateFrame struct {
 	K               string                `json:"k"` // always "v"
 	Sessions        []proto.SessionInfo   `json:"sessions"`
 	ActiveSessionID string                `json:"activeSessionID,omitempty"`
-	Connectors      []proto.ConnectorInfo `json:"connectors,omitempty"`
+	Connectors      []proto.ConnectorInfo `json:"connectors"`
 }
 
 // encodeFromSessionsChanged encodes EvtSessionsChanged as a view-update
 // frame {"k":"v","sessions":[…],"activeSessionID":"…","connectors":[…]}.
 // Returns nil on marshal error (gateway drops nil frames).
 // nil slices are normalised to empty arrays so the browser codec, which
-// requires `sessions` to be an array, never receives `"sessions":null`.
+// requires `sessions` / `connectors` to be arrays, never receives
+// `"sessions":null` / `"connectors":null`.
 func encodeFromSessionsChanged(ev proto.EvtSessionsChanged) []byte {
 	sessions := ev.Sessions
 	if sessions == nil {
 		sessions = []proto.SessionInfo{}
 	}
+	connectors := ev.Connectors
+	if connectors == nil {
+		connectors = []proto.ConnectorInfo{}
+	}
 	f := viewUpdateFrame{
 		K:               "v",
 		Sessions:        sessions,
 		ActiveSessionID: ev.ActiveSessionID,
-		Connectors:      ev.Connectors, // omitempty: nil/empty stays out of wire
+		Connectors:      connectors,
 	}
 	b, err := json.Marshal(f)
 	if err != nil {

@@ -38,6 +38,11 @@ export class Connection {
   }
 
   async start(): Promise<void> {
+    // React StrictMode mounts → close()s → remounts the parent effect, which
+    // can leave closedByUser=true on a Connection reused across remounts
+    // (the useMemo instance is preserved). Reset it so the next disconnect
+    // triggers handleClose() reconnect logic instead of permanently halting.
+    this.closedByUser = false;
     useDaemonStore.getState().setStatus("connecting");
     await this.connect();
   }
@@ -92,8 +97,24 @@ export class Connection {
       throw new Error(`ws-ticket failed: ${resp.status}`);
     }
     const body = (await resp.json()) as { ticket: string };
+    // close() may have fired between the fetch await and here; if so, the
+    // user has explicitly torn the connection down — do not create a fresh
+    // WebSocket that nobody references (would leak the live socket and
+    // keep emitting onopen/onclose handlers that touch a torn-down store).
+    if (this.closedByUser) return;
     const wsFactory = this.cfg.wsFactory ?? ((u) => new WebSocket(u));
-    this.ws = wsFactory(this.cfg.wsUrl(body.ticket));
+    const ws = wsFactory(this.cfg.wsUrl(body.ticket));
+    // Symmetric guard: close() between the previous check and now races
+    // with the wsFactory call. Belt-and-braces.
+    if (this.closedByUser) {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    this.ws = ws;
     this.ws.onopen = () => this.handleOpen();
     this.ws.onmessage = (ev) => this.handleMessage(String(ev.data));
     this.ws.onclose = () => this.handleClose();

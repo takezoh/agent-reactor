@@ -164,8 +164,12 @@ func TestGatewayAttachWS_SubscribeOutput(t *testing.T) {
 	if arr[0].(float64) != 0.5 {
 		t.Errorf("TimeSec = %v, want 0.5", arr[0])
 	}
-	if arr[2].(string) != "hi" {
-		t.Errorf("data = %q, want \"hi\"", arr[2])
+	// Wire-binary safety: the third element carries the base64 string as
+	// emitted by the daemon, NOT the decoded bytes. The browser TerminalPane
+	// atobs it back into a Uint8Array. See wire.go::outputFrameFromSurface
+	// for the rationale.
+	if arr[2].(string) != encoded {
+		t.Errorf("data = %q, want %q (base64-encoded)", arr[2], encoded)
 	}
 }
 

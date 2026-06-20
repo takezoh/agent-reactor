@@ -64,7 +64,13 @@ export const useTranscriptStore = create<TranscriptsState>()((set) => ({
     set((s) => {
       const key = bufferKey(sessionId, kind);
       const existing = s.buffers[key];
-      const merged = existing ? [...existing.lines, ...lines] : [...lines];
+      // REST backfill is historically OLDER than anything already in the
+      // buffer: WebSocket tail frames may have arrived between the React
+      // session-select and the REST response. Put the backfill in front,
+      // not behind, so chronological order is preserved (and any duplicate
+      // lines straddling the WS-REST boundary fall in temporal order
+      // rather than appearing inverted to the user).
+      const merged = existing ? [...lines, ...existing.lines] : [...lines];
       while (merged.length > MAX_LINES_PER_BUFFER) {
         merged.shift();
       }

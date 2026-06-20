@@ -32,7 +32,12 @@ describe("useTranscriptStore", () => {
     expect(buf?.restOffset).toBe(42);
   });
 
-  it("TestAppendBackfillPreservesExistingTail: existing 5 lines + backfill 5 = 10 lines total", () => {
+  it("TestAppendBackfillPreservesExistingTail: existing 5 lines + backfill 5 = 10 lines total, REST first", () => {
+    // The WS tail can arrive before the REST response (the React session-
+    // select dispatches both in parallel). REST backfill is historically
+    // OLDER than anything already in the buffer, so appendBackfill prepends
+    // its lines to the buffer rather than appending — verifies the
+    // chronological order documented in transcripts.ts::appendBackfill.
     for (let i = 1; i <= 5; i++) {
       useTranscriptStore.getState().appendLine("s1", "transcript", `tail${i}`);
     }
@@ -41,8 +46,10 @@ describe("useTranscriptStore", () => {
       .appendBackfill("s1", "transcript", ["bf1", "bf2", "bf3", "bf4", "bf5"], 99);
     const buf = selectBuffer(useTranscriptStore.getState(), "s1", "transcript");
     expect(buf?.lines).toHaveLength(10);
-    expect(buf?.lines[0]).toBe("tail1");
-    expect(buf?.lines[9]).toBe("bf5");
+    expect(buf?.lines[0]).toBe("bf1");
+    expect(buf?.lines[4]).toBe("bf5");
+    expect(buf?.lines[5]).toBe("tail1");
+    expect(buf?.lines[9]).toBe("tail5");
     expect(buf?.restOffset).toBe(99);
   });
 

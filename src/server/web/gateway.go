@@ -51,11 +51,18 @@ func NewDaemonAdapter(d *DaemonClient) *DaemonAdapter { return &DaemonAdapter{d:
 // SubscribeSurface sends CmdSurfaceSubscribe and returns a per-call event
 // channel. The channel is auto-unregistered from the DaemonClient fan-out
 // when ctx is cancelled (browser disconnect / WS handler return).
+//
+// Register BEFORE send: any event the daemon emits as a direct consequence
+// of CmdSurfaceSubscribe — notably the snapshot output that termvt sends
+// to a brand-new subscriber — must arrive at a registered fan-out channel,
+// not into the empty subscriber map. The subscribe-then-send order would
+// drop the initial screen state silently.
 func (a *DaemonAdapter) SubscribeSurface(ctx context.Context, sid string) (<-chan proto.ServerEvent, error) {
+	ch := a.d.SubscribeEvents(ctx)
 	if _, err := a.d.SendCommand(ctx, proto.CmdSurfaceSubscribe{SessionID: sid}); err != nil {
 		return nil, err
 	}
-	return a.d.SubscribeEvents(ctx), nil
+	return ch, nil
 }
 
 // UnsubscribeSurface sends CmdSurfaceUnsubscribe to the daemon.
@@ -88,7 +95,13 @@ func (a *DaemonAdapter) Resize(ctx context.Context, sid string, cols, rows uint1
 // agent-notification, and surface-output events (the lifecycle WS multiplexes
 // surface output for any session the browser subscribed to via {k:"s"}). The
 // returned per-call event channel is auto-unregistered when ctx is cancelled.
+//
+// Register BEFORE send: the very first sessions-changed event arrives as a
+// direct daemon-side reaction to CmdSubscribe (see runtime.proto_bridge).
+// Registering after the send loses that hello-seeding payload to an empty
+// subscriber map and leaves the browser without a "h" frame forever.
 func (a *DaemonAdapter) SubscribeLifecycle(ctx context.Context) (<-chan proto.ServerEvent, error) {
+	ch := a.d.SubscribeEvents(ctx)
 	filters := []string{
 		proto.EvtNameSessionsChanged,
 		proto.EvtNameSessionFileLine,
@@ -98,7 +111,7 @@ func (a *DaemonAdapter) SubscribeLifecycle(ctx context.Context) (<-chan proto.Se
 	if _, err := a.d.SendCommand(ctx, proto.CmdSubscribe{Filters: filters}); err != nil {
 		return nil, err
 	}
-	return a.d.SubscribeEvents(ctx), nil
+	return ch, nil
 }
 
 // writeTypedClose sends a WebSocket StatusGoingAway typed close frame.
@@ -132,12 +145,16 @@ func AttachWS(ctx context.Context, sess Attacher, sessionID string, c *websocket
 // It seeds the browser with the current sessions / activeSessionID / features
 // / connectors so the React store can render the initial view before any
 // subsequent view-update arrives.
+//
+// Connectors deliberately has NO omitempty: a session with zero connectors
+// must still emit `"connectors":[]` so the browser store records the empty
+// set rather than leaving "connectors" undefined and skipping setConnectors.
 type helloFrame struct {
 	K               string                `json:"k"` // always "h"
 	Sessions        []proto.SessionInfo   `json:"sessions"`
 	ActiveSessionID string                `json:"activeSessionID,omitempty"`
 	Features        []string              `json:"features"`
-	Connectors      []proto.ConnectorInfo `json:"connectors,omitempty"`
+	Connectors      []proto.ConnectorInfo `json:"connectors"`
 	ServerTime      int64                 `json:"serverTime"`
 }
 
@@ -152,12 +169,16 @@ func encodeHelloFrame(sc proto.EvtSessionsChanged, serverTime int64) []byte {
 	if features == nil {
 		features = []string{}
 	}
+	connectors := sc.Connectors
+	if connectors == nil {
+		connectors = []proto.ConnectorInfo{}
+	}
 	h := helloFrame{
 		K:               "h",
 		Sessions:        sessions,
 		ActiveSessionID: sc.ActiveSessionID,
 		Features:        features,
-		Connectors:      sc.Connectors, // omitempty: nil/empty stays out of wire
+		Connectors:      connectors,
 		ServerTime:      serverTime,
 	}
 	b, err := json.Marshal(h)
@@ -337,19 +358,23 @@ func handleLifecycleSubscribe(ctx context.Context, sess Attacher, c *websocket.C
 }
 
 // handleLifecycleUnsubscribe processes one {k:"u"} frame symmetrically with
-// handleLifecycleSubscribe.
+// handleLifecycleSubscribe. Order matters: only remove the session from the
+// local subs set AFTER the daemon RPC succeeds. If the RPC fails the entry
+// stays in subs so the deferred subs.drain() teardown still issues the
+// matching CmdSurfaceUnsubscribe on WS close — otherwise the daemon would
+// leak the surface subscription resource until daemon restart.
 func handleLifecycleUnsubscribe(ctx context.Context, sess Attacher, c *websocket.Conn, msg *inbound, subs *lifecycleSubSet) {
 	if msg.SessionID == "" {
 		writeRespErrFrame(ctx, c, msg.ReqID, "invalid_argument", "sessionId required")
 		return
 	}
-	subs.remove(msg.SessionID)
 	if err := sess.UnsubscribeSurface(ctx, msg.SessionID); err != nil {
 		code, message := unwrapProtoError(err)
 		slog.Warn("server/web: lifecycle surface unsubscribe", "err", err, "sid", msg.SessionID)
 		writeRespErrFrame(ctx, c, msg.ReqID, code, message)
 		return
 	}
+	subs.remove(msg.SessionID)
 	writeRespOKFrame(ctx, c, msg.ReqID)
 }
 

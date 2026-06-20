@@ -180,10 +180,14 @@ func (tr *TerminalRelay) fanOut(key surfaceKey, sub *surfaceSub, ch <-chan termv
 			data := make([]byte, len(ev.Data))
 			copy(data, ev.Data)
 
-			tr.mu.Lock()
+			// sub.seq is owned exclusively by this fanOut goroutine — no
+			// other goroutine reads or writes it for the same key
+			// (Subscribe / Unsubscribe manage the map under tr.mu, but each
+			// fanOut owns its sub pointer for its lifetime). Taking tr.mu
+			// here serialised every output event against unrelated
+			// Subscribe / Unsubscribe traffic for no correctness benefit.
 			seq := sub.seq
 			sub.seq++
-			tr.mu.Unlock()
 
 			tr.send(internalBroadcastSurface{
 				ConnID:    key.connID,

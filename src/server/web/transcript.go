@@ -193,10 +193,13 @@ func matchLogTab(tabs []stateview.LogTab, kindMatch string) string {
 
 	labelTokens, pathSuffixes := logTabMatchers(lowerKind)
 
+	// The Kind filter is intentionally permissive: Claude drivers stamp
+	// LogTab.Kind = "transcript", Codex drivers stamp "codex_transcript",
+	// and EventLogTab stamps TabKindText for the .log path. Filtering on
+	// TabKindText alone would silently exclude every actual transcript tab.
+	// Match against label tokens first, then path suffix — the same
+	// table-driven logic works across all kinds.
 	for _, tab := range tabs {
-		if tab.Kind != stateview.TabKindText {
-			continue
-		}
 		label := strings.ToLower(tab.Label)
 		for _, tok := range labelTokens {
 			if strings.Contains(label, tok) {
@@ -205,9 +208,6 @@ func matchLogTab(tabs []stateview.LogTab, kindMatch string) string {
 		}
 	}
 	for _, tab := range tabs {
-		if tab.Kind != stateview.TabKindText {
-			continue
-		}
 		for _, suf := range pathSuffixes {
 			if strings.HasSuffix(tab.Path, suf) {
 				return tab.Path

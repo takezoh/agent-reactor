@@ -430,15 +430,21 @@ func TestMatchLogTab_NoMatch(t *testing.T) {
 	}
 }
 
-// TestMatchLogTab_SkipsNonTextKind verifies that non-text tabs are ignored.
-func TestMatchLogTab_SkipsNonTextKind(t *testing.T) {
+// TestMatchLogTab_NonTextKindStillMatched verifies that LogTab.Kind is
+// NOT used as a hard filter. Claude drivers stamp Kind="transcript" and
+// Codex drivers stamp Kind="codex_transcript"; both are non-"text" Kinds.
+// matchLogTab must locate the path by label/suffix regardless of Kind so
+// the REST handler can serve those drivers (otherwise GET
+// /api/sessions/{id}/transcript would 404 for every Claude/Codex session,
+// the round-3 review found this as a blocker).
+func TestMatchLogTab_NonTextKindStillMatched(t *testing.T) {
 	t.Parallel()
 	tabs := []stateview.LogTab{
-		{Label: "TRANSCRIPT", Path: "/a/b.transcript", Kind: "custom"},
+		{Label: "TRANSCRIPT", Path: "/a/b.transcript", Kind: "transcript"},
 	}
 	got := matchLogTab(tabs, "transcript")
-	if got != "" {
-		t.Errorf("got %q, want empty (non-text kind must be skipped)", got)
+	if got != "/a/b.transcript" {
+		t.Errorf("got %q, want %q (Kind must not exclude TRANSCRIPT tabs)", got, "/a/b.transcript")
 	}
 }
 

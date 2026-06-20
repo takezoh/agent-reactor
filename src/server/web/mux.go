@@ -164,6 +164,13 @@ func handleDeleteSession(d *DaemonClient) http.HandlerFunc {
 			return
 		}
 		id := r.PathValue("id")
+		// ADR 0026 mandates allowlist validation on every path-parameter
+		// session ID. Reject anything outside the daemon's
+		// alphanumeric/underscore/hyphen vocabulary before the daemon RPC.
+		if !sessionIDPattern.MatchString(id) {
+			http.Error(w, "invalid session id", http.StatusBadRequest)
+			return
+		}
 		payload, _ := json.Marshal(state.StopSessionParams{SessionID: id})
 		_, err := d.SendCommand(r.Context(), proto.CmdEvent{
 			Event:   state.EventStopSession,

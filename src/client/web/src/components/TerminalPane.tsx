@@ -4,6 +4,17 @@ import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 import type { Connection } from "../socket/connection";
 
+// b64ToBytes decodes a base64 string into a Uint8Array. atob() returns a
+// binary string whose char codes are the raw byte values; copying them into
+// a Uint8Array gives xterm.js the byte-faithful payload it needs (xterm
+// accepts string | Uint8Array; Uint8Array bypasses the UTF-8 decoder).
+function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 export function TerminalPane({
   conn,
   sessionId,
@@ -42,11 +53,12 @@ export function TerminalPane({
 
     conn.onOutput = (frame) => {
       // The Go wire (server/web/wire.go:outputFrameFromSurface) sends
-      // ["TimeSec", "o", string(base64.Decode(DataB64))] — frame[2] is already
-      // the decoded raw byte string. xterm.js .write() handles raw bytes
-      // (including ANSI escapes and non-ASCII UTF-8) directly. Do NOT
-      // atob() this string: any 0x1b / non-base64 byte throws InvalidCharacterError.
-      term.write(frame[2]);
+      // [TimeSec, "o", DataB64] where the third element is the base64
+      // STRING (NOT the decoded bytes). Decoding to a Go string and
+      // JSON-marshalling raw PTY bytes is unsafe — encoding/json silently
+      // replaces non-UTF-8 bytes with U+FFFD, garbling 256-color sequences
+      // and any non-ASCII output. atob → Uint8Array preserves every byte.
+      term.write(b64ToBytes(frame[2]));
     };
 
     const handleResize = () => fit.fit();

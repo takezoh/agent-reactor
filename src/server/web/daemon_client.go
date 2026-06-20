@@ -220,15 +220,18 @@ func (d *DaemonClient) broadcastEvent(ev proto.ServerEvent) {
 // closeAllSubs closes every active subscriber channel and forgets them.
 // Subscribers observe an immediate channel close (the documented disconnect
 // signal). Idempotent: safe under repeated invocation; obtaining the write
-// lock ensures no broadcastEvent is in flight when we close.
+// lock ensures no broadcastEvent is in flight when we close. The close()
+// calls happen WHILE the write lock is still held so that no SubscribeEvents
+// caller can slip a new subscriber into d.subs in between the map swap and
+// the close — otherwise that fresh subscriber would never see the
+// disconnect signal and would wait forever on a silent channel.
 func (d *DaemonClient) closeAllSubs() {
 	d.subsMu.Lock()
-	old := d.subs
-	d.subs = make(map[chan proto.ServerEvent]struct{})
-	d.subsMu.Unlock()
-	for ch := range old {
+	defer d.subsMu.Unlock()
+	for ch := range d.subs {
 		close(ch)
 	}
+	d.subs = make(map[chan proto.ServerEvent]struct{})
 }
 
 // tryDialOnce performs a single dial attempt and updates health/lastErr/lastAttempt.
