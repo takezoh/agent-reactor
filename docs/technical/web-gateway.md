@@ -74,7 +74,7 @@ and feature flags. Subsequent sessions-changed events use `"v"` instead.
 |---|---|---|
 | `k` | `"h"` | Frame kind |
 | `sessions` | `SessionInfo[]` | Current session list (never null — empty array when none) |
-| `activeSessionID` | `string` | Currently focused session ID, or `""` |
+| `activeSessionID` | `string \| null` | Currently focused session ID. Go emits `""` (`omitempty`); browser codec treats both `null` and `""` as "none active" (see `codec.ts:70` null-fallback) |
 | `features` | `string[]` | Server-advertised feature flags (never null — empty array when none) |
 | `serverTime` | `int64` | Unix seconds at frame creation (clock sync reference) |
 
@@ -175,6 +175,74 @@ Source event: `proto.EvtAgentNotification`. Defined by `notificationFrame` in
 > `controlFrameFromNotification` for backward compatibility with legacy UI
 > consumers. New code should use `"n"`.
 
+#### `"cu"` — connector update
+
+Delivers the current connector list whenever the set of available connectors
+changes. Allows the browser to refresh the connector panel without a full
+sessions-changed broadcast.
+
+```json
+{
+  "k": "cu",
+  "connectors": [
+    { "name": "github", "label": "GitHub", "summary": "connected", "available": true }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `k` | `"cu"` | Frame kind |
+| `connectors` | `ConnectorInfo[]` | Full current connector list (differential updates are not used) |
+
+`ConnectorInfo` shape: `{name, label, summary, available, sections?}`.
+Type definition: `src/client/web/src/wire/server.ts:ConnectorUpdateFrame`.
+
+#### `"r"` — WS response (RespOK)
+
+> **Direction-collision note**: the ASCII character `"r"` is used for two
+> completely different purposes depending on message direction. When the frame
+> travels **browser → server** it is a terminal resize (see the Browser →
+> server section below). When the frame travels **server → browser** it is a
+> request-response reply (RespOK). Parsers must gate on message direction, not
+> just on the `"k"` field.
+
+Sent by the server as a successful reply to a browser-initiated WS request
+(identified by `reqId`). Currently reserved for future WS-level request/reply
+flows (e.g. subscribe responses); not emitted by the current server-side
+Go implementation but consumed by the browser codec (`codec.ts:92`).
+
+```json
+{ "k": "r", "reqId": "req-001", "body": { ... } }
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `k` | `"r"` | Frame kind (server → browser only; see collision note above) |
+| `reqId` | `string` | Correlates to the browser request that triggered this reply |
+| `body` | `unknown` | Optional response payload; shape is request-specific |
+
+Type definition: `src/client/web/src/wire/server.ts:RespOKFrame`.
+
+#### `"e"` — WS response error (RespErr)
+
+Sent by the server as an error reply to a browser-initiated WS request.
+Pairs with `"r"` in the request/reply protocol; not emitted by the current
+server-side Go implementation but parsed by the browser codec (`codec.ts:96`).
+
+```json
+{ "k": "e", "reqId": "req-001", "code": "frame-not-ready", "message": "session not attached" }
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `k` | `"e"` | Frame kind |
+| `reqId` | `string` | Correlates to the browser request that triggered this error |
+| `code` | `string` | Machine-readable error code (e.g. `"frame-not-ready"`, `"unauthorized"`) |
+| `message` | `string` | Human-readable error description |
+
+Type definition: `src/client/web/src/wire/server.ts:RespErrFrame`.
+
 #### `"c"` — control / daemon disconnect
 
 A general-purpose control frame sent on exceptional conditions. Currently used
@@ -218,7 +286,12 @@ Forwards raw keyboard input to the PTY session.
 
 Dispatches to `Attacher.WriteRaw` → `proto.CmdSurfaceWriteRaw`.
 
-#### `"r"` — terminal resize
+#### `"r"` — terminal resize (browser → server)
+
+> **Direction-collision note**: `"k":"r"` also appears in **server → browser**
+> frames as the RespOK reply (see above). The shape is entirely different:
+> browser-to-server uses `cols`/`rows`; server-to-browser uses `reqId`/`body`.
+> Always check message direction before dispatching on `k`.
 
 Notifies the gateway of a terminal size change. Ignored unless both `cols` and
 `rows` are positive.
@@ -229,11 +302,24 @@ Notifies the gateway of a terminal size change. Ignored unless both `cols` and
 
 | Field | Type | Description |
 |---|---|---|
-| `k` | `"r"` | Frame kind |
+| `k` | `"r"` | Frame kind (browser → server only; see collision note above) |
 | `cols` | `int` | New terminal width in columns (must be > 0) |
 | `rows` | `int` | New terminal height in rows (must be > 0) |
 
 Dispatches to `Attacher.Resize` → `proto.CmdSurfaceResize`.
+
+#### `"s"` / `"u"` — subscribe / unsubscribe (client type definitions only)
+
+The client-side TypeScript (`src/client/web/src/wire/client.ts`) defines
+`SubscribeFrame` (`k:"s"`) and `UnsubscribeFrame` (`k:"u"`) with a `reqId`
+and `sessionId`. These are **not currently decoded by the Go server** (`wire.go`
+`inbound` struct and `applyInboundProto` handle only `"i"` and `"r"`).
+
+They are reserved for a future WS-level subscribe/unsubscribe flow that would
+complement or replace the current URL-query-based session selection, pairing
+with the `"r"` (RespOK) / `"e"` (RespErr) server→browser frames by `reqId`.
+Until that WS route is implemented, session subscription is established via
+the `/ws?session=<id>` URL at connect time (REST-level subscribe).
 
 ---
 
