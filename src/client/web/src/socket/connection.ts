@@ -1,10 +1,10 @@
-import { backoffDelay, exceededAttempts } from "./backoff";
-import { parseServerFrame, serializeClientFrame } from "../wire/codec";
-import type { ClientFrame } from "../wire/client";
-import type { ControlFrame, OutputFrame, RespErrFrame, RespOKFrame } from "../wire/server";
 import { useDaemonStore } from "../store/daemon";
+import type { ClientFrame } from "../wire/client";
+import { parseServerFrame, serializeClientFrame } from "../wire/codec";
+import type { ControlFrame, OutputFrame, RespErrFrame, RespOKFrame } from "../wire/server";
+import { backoffDelay, exceededAttempts } from "./backoff";
+import { type RetryDeps, subscribeWithRetry } from "./retry";
 import { SubscriptionRegistry } from "./subscribe";
-import { subscribeWithRetry, type RetryDeps } from "./retry";
 
 export type ConnectionConfig = {
   ticketEndpoint: string; // POST /api/ws-ticket

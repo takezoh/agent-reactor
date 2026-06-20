@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { subscribeWithRetry, type RetryDeps } from "./retry";
 import type { RespErrFrame, RespOKFrame } from "../wire/server";
+import { type RetryDeps, subscribeWithRetry } from "./retry";
 
 function makeDeps(responses: (RespOKFrame | RespErrFrame)[]): {
   deps: RetryDeps;
@@ -71,9 +71,7 @@ describe("subscribeWithRetry", () => {
   });
 
   it("does not retry on non-frame-not-ready error", async () => {
-    const { deps, sent } = makeDeps([
-      { k: "e", reqId: "x", code: "unauthorized", message: "no" },
-    ]);
+    const { deps, sent } = makeDeps([{ k: "e", reqId: "x", code: "unauthorized", message: "no" }]);
     const out = await subscribeWithRetry("s1", deps);
     expect(out.status).toBe("exhausted");
     if (out.status === "exhausted") expect(out.lastError).toBe("unauthorized");

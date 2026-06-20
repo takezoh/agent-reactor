@@ -1,6 +1,6 @@
-import { backoffDelay, exceededAttempts, type Rng } from "./backoff";
-import type { RespErrFrame, RespOKFrame, ServerFrame } from "../wire/server";
 import { serializeClientFrame } from "../wire/codec";
+import type { RespErrFrame, RespOKFrame, ServerFrame } from "../wire/server";
+import { type Rng, backoffDelay, exceededAttempts } from "./backoff";
 
 export type SubscribeOutcome =
   | { status: "confirmed"; reqId: string }

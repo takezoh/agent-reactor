@@ -1,5 +1,5 @@
-import type { ServerFrame, SessionInfo } from "./server";
 import type { ClientFrame } from "./client";
+import type { ServerFrame, SessionInfo } from "./server";
 
 export function parseServerFrame(raw: string): ServerFrame | null {
   let v: unknown;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backoffDelay, CAP_MS, exceededAttempts, INITIAL_MS, MAX_ATTEMPTS } from "./backoff";
+import { CAP_MS, INITIAL_MS, MAX_ATTEMPTS, backoffDelay, exceededAttempts } from "./backoff";
 
 describe("backoff", () => {
   it("attempt 0 returns 0..INITIAL_MS with seeded rng", () => {

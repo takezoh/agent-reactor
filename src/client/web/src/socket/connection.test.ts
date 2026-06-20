@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Connection } from "./connection";
 import { useDaemonStore } from "../store/daemon";
+import { Connection } from "./connection";
 
 class FakeWS {
   static instances: FakeWS[] = [];
