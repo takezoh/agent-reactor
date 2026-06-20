@@ -26,8 +26,13 @@ func Handler(backendURL string) (http.Handler, error) {
 	}
 	proxy := backendProxy(target)
 
+	distFS, err := DistFS()
+	if err != nil {
+		return nil, fmt.Errorf("web: embed sub-fs: %w", err)
+	}
+
 	mux := http.NewServeMux()
-	mux.Handle("/", staticHandler(Assets)) // static UI shell
+	mux.Handle("/", staticHandler(distFS)) // static UI shell
 	mux.Handle("/api/", proxy)             // REST: the backend authenticates the bearer token
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
 		// This host is the browser-facing CSWSH gate: enforce same-origin before

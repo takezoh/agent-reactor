@@ -66,8 +66,8 @@ func cspDirectives(csp string) map[string]string {
 	return out
 }
 
-// TestStaticServesShellHidesListing checks the embedded UI is served and the
-// /vendor/ directory autoindex is suppressed. backend is unused for static.
+// TestStaticServesShellHidesListing checks the embedded UI is served and that
+// directory autoindex is suppressed. backend is unused for static.
 func TestStaticServesShellHidesListing(t *testing.T) {
 	h, err := Handler("http://127.0.0.1:1")
 	if err != nil {
@@ -79,11 +79,10 @@ func TestStaticServesShellHidesListing(t *testing.T) {
 	if code, body := get(t, srv.URL+"/"); code != http.StatusOK || !strings.Contains(body, "<html") {
 		t.Fatalf("GET / = %d body %q, want 200 HTML shell", code, body)
 	}
-	if code, _ := get(t, srv.URL+"/app.js"); code != http.StatusOK {
-		t.Fatalf("GET /app.js = %d, want 200", code)
-	}
-	if code, _ := get(t, srv.URL+"/vendor/"); code != http.StatusNotFound {
-		t.Fatalf("GET /vendor/ = %d, want 404 (no directory listing)", code)
+	// Vite places bundled JS under /assets/; a trailing-slash request to that
+	// directory must return 404 (no directory listing).
+	if code, _ := get(t, srv.URL+"/assets/"); code != http.StatusNotFound {
+		t.Fatalf("GET /assets/ = %d, want 404 (no directory listing)", code)
 	}
 }
 
