@@ -60,8 +60,11 @@ export type SessionInfo = {
   is_active?: boolean;
 };
 
-// asciicast v2: 配列形式 [timeSec, type, data] — Go wire.go:18 と同順。
-// type は現状 "o"(output)のみ使用。
+// asciicast-style array [timeSec, type, dataB64] — Go wire.go と同順。
+// type は現状 "o"(output)のみ使用。dataB64 は base64 文字列(NOT raw bytes):
+// daemon の DataB64 をそのまま wire に乗せ、ブラウザ側 TerminalPane が atob
+// で復号して Uint8Array で xterm.write に渡す。json.Marshal が非 UTF-8 バイトを
+// U+FFFD で破壊する問題(2026-06-20 code-review round 3)の対策。
 export type OutputFrame = [number, "o", string];
 
 // ControlFrame mirrors Go controlMsg{K,Code int omitempty,Data string omitempty}.
