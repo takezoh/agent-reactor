@@ -10,7 +10,10 @@ describe("App", () => {
     useDaemonStore.getState().reset();
     // Stub fetch to hang forever so Connection.start() never rejects and
     // no unhandled rejection leaks out of the voided conn.start() in useEffect.
-    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise(() => {})),
+    );
     // hash token を仕込んで Connection を初期化させる
     window.location.hash = "#token=test";
   });
