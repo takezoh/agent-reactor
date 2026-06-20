@@ -3,9 +3,12 @@ package web
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/takezoh/agent-reactor/client/proto"
+	"github.com/takezoh/agent-reactor/client/state/view"
 )
 
 func TestWireEncodeServerEvent_SurfaceOutput(t *testing.T) {
@@ -82,10 +85,78 @@ func TestWireEncodeServerEvent_NotificationTitleOnly(t *testing.T) {
 }
 
 func TestWireEncodeServerEvent_UnknownEventReturnsNil(t *testing.T) {
-	ev := proto.EvtSessionsChanged{}
+	ev := proto.EvtProjectSelected{Project: "x"}
 	got := encodeServerEvent(ev)
 	if got != nil {
 		t.Errorf("expected nil for unknown event, got %s", got)
+	}
+}
+
+func TestWireEncodeServerEvent_SessionsChanged_ViewUpdate(t *testing.T) {
+	changedAt := time.Date(2026, 6, 20, 0, 0, 0, 0, time.UTC)
+	ev := proto.EvtSessionsChanged{
+		Sessions: []proto.SessionInfo{
+			{
+				ID:        "s1",
+				Project:   "p",
+				Command:   "claude",
+				CreatedAt: "2026-06-20T00:00:00Z",
+				View: view.View{
+					Card: view.Card{
+						Title:       "T",
+						Subtitle:    "S",
+						Tags:        []view.Tag{{Text: "tag"}},
+						BorderTitle: view.Tag{Text: "BT"},
+					},
+					StatusLine:      "line",
+					Status:          view.StatusWaiting,
+					StatusChangedAt: changedAt,
+				},
+			},
+		},
+		ActiveSessionID: "s1",
+	}
+	got := encodeServerEvent(ev)
+	if got == nil {
+		t.Fatal("expected non-nil frame for EvtSessionsChanged")
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m["k"] != "v" {
+		t.Errorf("k: got %v, want \"v\"", m["k"])
+	}
+	if m["activeSessionID"] != "s1" {
+		t.Errorf("activeSessionID: got %v, want \"s1\"", m["activeSessionID"])
+	}
+	sessions, ok := m["sessions"].([]any)
+	if !ok || len(sessions) != 1 {
+		t.Fatalf("sessions: expected []any of len 1, got %T %v", m["sessions"], m["sessions"])
+	}
+	sess := sessions[0].(map[string]any)
+	v := sess["view"].(map[string]any)
+	card := v["card"].(map[string]any)
+	if card["title"] != "T" {
+		t.Errorf("view.card.title: got %v, want \"T\"", card["title"])
+	}
+	if v["status"] != "waiting" {
+		t.Errorf("view.status: got %v, want \"waiting\"", v["status"])
+	}
+}
+
+func TestWireEncodeServerEvent_SessionsChanged_OmitsEmptyActiveID(t *testing.T) {
+	ev := proto.EvtSessionsChanged{
+		Sessions:        []proto.SessionInfo{{ID: "s1", CreatedAt: "2026-06-20T00:00:00Z"}},
+		ActiveSessionID: "",
+	}
+	got := encodeServerEvent(ev)
+	if got == nil {
+		t.Fatal("expected non-nil frame")
+	}
+	if strings.Contains(string(got), "activeSessionID") {
+		t.Errorf("expected activeSessionID to be omitted when empty, got: %s", got)
 	}
 }
 
