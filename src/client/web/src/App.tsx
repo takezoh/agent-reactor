@@ -1,8 +1,10 @@
 import { useEffect, useMemo } from "react";
 import { readBearerTokenFromHash } from "./auth";
+import { ConnectorPanel } from "./components/ConnectorPanel";
 import { CreateSessionForm } from "./components/CreateSessionForm";
 import { DriverViewPanel } from "./components/DriverViewPanel";
-import { LogTabSelector } from "./components/LogTabSelector";
+import { LogTabs } from "./components/LogTabs";
+import { NotificationToast } from "./components/NotificationToast";
 import { SessionList } from "./components/SessionList";
 import { StatusBanner } from "./components/StatusBanner";
 import { TerminalPane } from "./components/TerminalPane";
@@ -36,6 +38,7 @@ export function App() {
 
   return (
     <div className="app">
+      <NotificationToast />
       <StatusBanner />
       <aside className="sidebar">
         <CreateSessionForm conn={conn} />
@@ -46,12 +49,17 @@ export function App() {
           <>
             <DriverViewPanel view={activeSession.view} />
             {!activeSession.view.suppress_info && (
-              <LogTabSelector tabs={activeSession.view.log_tabs ?? []} />
+              <LogTabs
+                tabs={activeSession.view.log_tabs ?? []}
+                sessionId={activeSession.id}
+                bearerToken={token}
+              />
             )}
           </>
         )}
         <TerminalPane conn={conn} sessionId={activeSessionID} />
       </main>
+      <ConnectorPanel />
     </div>
   );
 }
