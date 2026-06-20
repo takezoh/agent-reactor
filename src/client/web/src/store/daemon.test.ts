@@ -1,6 +1,17 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { HelloFrame, ViewUpdateFrame } from "../wire/server";
+import type { HelloFrame, SessionInfo, ViewUpdateFrame } from "../wire/server";
 import { useDaemonStore } from "./daemon";
+
+function mkSession(id: string, overrides: Partial<SessionInfo> = {}): SessionInfo {
+  return {
+    id,
+    project: "p",
+    command: "claude",
+    created_at: "2026-06-20T00:00:00Z",
+    view: { card: { title: id }, status: "running" },
+    ...overrides,
+  };
+}
 
 describe("daemonStore", () => {
   beforeEach(() => {
@@ -73,5 +84,36 @@ describe("daemonStore", () => {
   it("setDaemonDisconnected toggles flag", () => {
     useDaemonStore.getState().setDaemonDisconnected(true);
     expect(useDaemonStore.getState().daemonDisconnected).toBe(true);
+  });
+
+  it("applyViewUpdate replaces sessions with view payload", () => {
+    useDaemonStore.setState({
+      sessions: [mkSession("s1", { view: { card: { title: "old" }, status: "idle" } })],
+    });
+    useDaemonStore.getState().applyViewUpdate({
+      k: "v",
+      sessions: [mkSession("s1", { view: { card: { title: "new" }, status: "running" } })],
+    });
+    expect(useDaemonStore.getState().sessions[0]?.view.card.title).toBe("new");
+  });
+
+  it("applyViewUpdate preserves identity of unchanged sessions", () => {
+    const session = mkSession("s1");
+    useDaemonStore.setState({ sessions: [session] });
+    useDaemonStore.getState().applyViewUpdate({
+      k: "v",
+      sessions: [mkSession("s1")],
+    });
+    expect(useDaemonStore.getState().sessions[0]).toBe(session);
+  });
+
+  it("applyViewUpdate produces new ref for changed session", () => {
+    const session = mkSession("s1", { view: { card: { title: "s1" }, status: "idle" } });
+    useDaemonStore.setState({ sessions: [session] });
+    useDaemonStore.getState().applyViewUpdate({
+      k: "v",
+      sessions: [mkSession("s1", { view: { card: { title: "s1" }, status: "running" } })],
+    });
+    expect(useDaemonStore.getState().sessions[0]).not.toBe(session);
   });
 });
