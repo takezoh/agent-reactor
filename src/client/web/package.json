@@ -5,9 +5,9 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "test": "vitest"
