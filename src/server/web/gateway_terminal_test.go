@@ -75,6 +75,13 @@ func (f *fakeSessionAttacher) Resize(_ context.Context, sessionID string, cols, 
 	return nil
 }
 
+// SubscribeLifecycle is a no-op stub — terminal tests use SubscribeSurface only.
+func (f *fakeSessionAttacher) SubscribeLifecycle(_ context.Context) (<-chan proto.ServerEvent, error) {
+	ch := make(chan proto.ServerEvent)
+	close(ch)
+	return ch, nil
+}
+
 func (f *fakeSessionAttacher) writeRawSnapshot() []writeRawCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()

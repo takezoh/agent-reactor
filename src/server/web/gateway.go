@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -27,6 +28,10 @@ type Attacher interface {
 	UnsubscribeSurface(ctx context.Context, sessionID string) error
 	WriteRaw(ctx context.Context, sessionID string, data []byte) error
 	Resize(ctx context.Context, sessionID string, cols, rows uint16) error
+	// SubscribeLifecycle subscribes to daemon-side lifecycle events
+	// (sessions-changed) and returns a channel of ServerEvent.
+	// The returned channel is closed on disconnect.
+	SubscribeLifecycle(ctx context.Context) (<-chan proto.ServerEvent, error)
 }
 
 // DaemonAdapter implements Attacher on top of DaemonClient.
@@ -63,9 +68,18 @@ func (a *DaemonAdapter) Resize(ctx context.Context, sid string, cols, rows uint1
 	return err
 }
 
-// writeTypedClose sends a WebSocket typed close frame.
-func writeTypedClose(c *websocket.Conn, status websocket.StatusCode, reason string) {
-	_ = c.Close(status, reason)
+// SubscribeLifecycle sends CmdSubscribe for sessions-changed and returns the
+// shared events channel. The caller reads EvtSessionsChanged values from it.
+func (a *DaemonAdapter) SubscribeLifecycle(ctx context.Context) (<-chan proto.ServerEvent, error) {
+	if _, err := a.d.SendCommand(ctx, proto.CmdSubscribe{Filters: []string{proto.EvtNameSessionsChanged}}); err != nil {
+		return nil, err
+	}
+	return a.d.SubscribeEvents(), nil
+}
+
+// writeTypedClose sends a WebSocket StatusGoingAway typed close frame.
+func writeTypedClose(c *websocket.Conn, reason string) {
+	_ = c.Close(websocket.StatusGoingAway, reason)
 }
 
 // AttachWS bridges one WebSocket connection to a session surface. It streams
@@ -81,13 +95,94 @@ func AttachWS(ctx context.Context, sess Attacher, sessionID string, c *websocket
 		if errors.As(err, &eb) {
 			_ = c.Write(ctx, websocket.MessageText, controlFrame("c", 0, string(eb.Code)))
 		}
-		writeTypedClose(c, websocket.StatusGoingAway, "subscribe-failed")
+		writeTypedClose(c, "subscribe-failed")
 		return err
 	}
 	defer func() { _ = sess.UnsubscribeSurface(context.Background(), sessionID) }()
 
 	go func() { readInbound(ctx, sess, sessionID, c); cancel() }()
 	return writeOutbound(ctx, sessionID, c, ch)
+}
+
+// helloFrame is the first server→browser frame for a lifecycle WebSocket.
+// It seeds the browser with the current sessions / activeSessionID / features.
+type helloFrame struct {
+	K               string              `json:"k"` // always "h"
+	Sessions        []proto.SessionInfo `json:"sessions"`
+	ActiveSessionID string              `json:"activeSessionID,omitempty"`
+	Features        []string            `json:"features"`
+	ServerTime      int64               `json:"serverTime"`
+}
+
+// encodeHelloFrame encodes EvtSessionsChanged as the initial hello frame.
+// nil slices are replaced with empty slices so the browser always gets arrays.
+func encodeHelloFrame(sc proto.EvtSessionsChanged, serverTime int64) []byte {
+	sessions := sc.Sessions
+	if sessions == nil {
+		sessions = []proto.SessionInfo{}
+	}
+	features := sc.Features
+	if features == nil {
+		features = []string{}
+	}
+	h := helloFrame{
+		K:               "h",
+		Sessions:        sessions,
+		ActiveSessionID: sc.ActiveSessionID,
+		Features:        features,
+		ServerTime:      serverTime,
+	}
+	b, err := json.Marshal(h)
+	if err != nil {
+		slog.Error("server/web: encode hello failed", "err", err)
+		return nil
+	}
+	return b
+}
+
+// AttachLifecycleWS bridges one WebSocket connection to daemon lifecycle
+// events. Used when the client connects without a ?session= query param.
+// Emits an initial "hello" frame (k:"h") seeded from the first
+// sessions-changed event, then streams subsequent ones as view-update frames
+// (k:"v"). Sends a 2-step close (ADR 0011) on daemon disconnect.
+func AttachLifecycleWS(ctx context.Context, sess Attacher, c *websocket.Conn) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ch, err := sess.SubscribeLifecycle(ctx)
+	if err != nil {
+		writeTypedClose(c, "lifecycle-subscribe-failed")
+		return err
+	}
+	helloSent := false
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case ev, ok := <-ch:
+			if !ok {
+				_ = c.Write(ctx, websocket.MessageText, controlFrame("c", 0, "daemon-disconnected"))
+				writeTypedClose(c, "daemon-disconnected")
+				return errDaemonGone
+			}
+			sc, ok2 := ev.(proto.EvtSessionsChanged)
+			if !ok2 {
+				continue
+			}
+			var frame []byte
+			if !helloSent {
+				frame = encodeHelloFrame(sc, time.Now().Unix())
+				helloSent = true
+			} else {
+				frame = encodeServerEvent(sc)
+			}
+			if frame == nil {
+				continue
+			}
+			if err := c.Write(ctx, websocket.MessageText, frame); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // writeOutbound reads proto.ServerEvent values from ch and encodes them as WS
@@ -102,7 +197,7 @@ func writeOutbound(ctx context.Context, sessionID string, c *websocket.Conn, ch 
 			if !ok {
 				// Daemon disconnected: 2-step close (ADR 0011).
 				_ = c.Write(ctx, websocket.MessageText, controlFrame("c", 0, "daemon-disconnected"))
-				writeTypedClose(c, websocket.StatusGoingAway, "daemon-disconnected")
+				writeTypedClose(c, "daemon-disconnected")
 				return errDaemonGone
 			}
 			// Filter: only forward events belonging to this session.

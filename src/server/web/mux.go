@@ -192,10 +192,6 @@ func handleProtoError(w http.ResponseWriter, err error) {
 
 func serveAttach(d *DaemonClient, w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("session")
-	if sessionID == "" {
-		http.Error(w, "missing session", http.StatusBadRequest)
-		return
-	}
 	// Leaving InsecureSkipVerify unset enforces the default origin check (the
 	// request Origin host must equal Host), which blocks cross-site WebSocket
 	// hijacking from a browser. Non-browser clients send no Origin and pass.
@@ -204,6 +200,10 @@ func serveAttach(d *DaemonClient, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = c.CloseNow() }()
+	if sessionID == "" {
+		_ = AttachLifecycleWS(r.Context(), NewDaemonAdapter(d), c)
+		return
+	}
 	_ = AttachWS(r.Context(), NewDaemonAdapter(d), sessionID, c)
 }
 
