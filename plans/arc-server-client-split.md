@@ -1,6 +1,6 @@
 # Plan: arc を「standalone server + remote client」に分割しきる
 
-> Status: **In progress** (更新 2026-06-19) · Branch: `feat/tmux-free-web-server`
+> Status: **A1 完了** (更新 2026-06-20) · Branch: `feat/tmux-free-web-server`
 > 設計(仮設計・根拠): [remote-client-design.md](remote-client-design.md) ·
 > 決定: [ADR 0004](../docs/adr/0004-ptybackend-reuses-pure-core.md)
 > この文書は元設計の phased plan を、**実コードの現状**と突き合わせて
@@ -14,6 +14,8 @@
 > 5 PR 段階分割(α/β/γ/δ/ε)。詳細は [A1 Master Plan](/home/ubuntu/.claude/plans/plans-cheerful-thompson.md)。
 > **A1-α 詳細計画確定**(2026-06-19): [`docs/specs/2026-06-19-a1-alpha-impl-plan.md`](../docs/specs/2026-06-19-a1-alpha-impl-plan.md) + ADR 0005-0018(14 件)。
 > α は更に 3 PR(PR-1: proto+codec / PR-2: state reducer / PR-3: runtime relay + server/web gateway)に細分化。次は A1-α PR-1 → … → C。
+> **A1 完了**(2026-06-20): A1-α/β/γ/δ/ε すべてマージ済み。`server/session/` 削除完了、
+> wire vocabulary を [`docs/technical/web-gateway.md`](../docs/technical/web-gateway.md) に集約。次は **C: tmux 実装の残り削除**(`tmux_real.go` / `tmux_pipe_tap.go` / `panetap.go` / `tmux_injector.go` ほか)。
 
 ## 1. ゴール(remote-client-design.md より)
 
@@ -271,12 +273,15 @@ PtyBackend を runtime に挿す上で出ていた 6 件:
    - 統合方針 W1(`cmd/server` を arc daemon の HTTP/WS gateway 化)
    - Frontend = React + TypeScript(vite + Zustand)
    - 5 PR 段階分割(A1-α/β/γ/δ/ε)
-7. **A1-α: `cmd/server` を arc daemon の gateway 化**
-   - 詳細計画 [`docs/specs/2026-06-19-a1-alpha-impl-plan.md`](../docs/specs/2026-06-19-a1-alpha-impl-plan.md) + [ADR 0005-0018](../docs/adr/) を 2026-06-19 commit。
-   - `server/session.Service` は build tag `legacy_session` で隔離(ε で `git rm`、ADR 0014)。
-   - 新 proto は Surface 接頭辞統一(`CmdSurfaceSubscribe`/`Unsubscribe`/`Resize`/`WriteRaw` + `EvtSurfaceOutput`/`PromptEvent`、ADR 0006)。
-   - `State.Subscribers.Surface[ConnID][SessionID]` で subscribe 関係を state に保持(ADR 0007)。
-   - PR-1/PR-2/PR-3 の 3 段階で実装(ADR 0015)。
-8. **A1-α PR-1: `client/proto` + codec + Fuzz** ← 次。/plan-impl で実装。
-9. C: tmux 実装の残りを削除(56 ファイルから漸減 — `cmd/arc/tmux_layout.go` は B1b で削除済み、
-   `tmux_pipe_tap.go` / `panetap.go` の旧 PaneTap 実装は A1 完了後に整理)
+7. **A1 完了**(2026-06-20):
+   - A1-α(`cmd/server` を arc daemon の gateway 化、ADR 0005-0018)
+   - A1-β(React + TypeScript frontend、ADR 0019-0022)
+   - A1-γ(view-update broadcast、ADR 0023-0024)
+   - A1-δ(persist + connector + notification、ADR 0025-0027)
+   - A1-ε(`server/session/` 削除 + wire doc 集約)
+   - wire vocabulary は [`docs/technical/web-gateway.md`](../docs/technical/web-gateway.md) に集約。
+   - `server/session/` ディレクトリと `legacy_session` build tag は ε で完全削除。
+8. **C: tmux 実装の残りを削除** ← 次。
+   - 対象: `client/runtime/tmux_real.go` / `tmux_pipe_tap.go` / `panetap.go` / `tmux_injector.go` ほか(56 ファイルから漸減 — `cmd/arc/tmux_layout.go` は B1b で削除済み)。
+   - 完了条件: `grep -ri tmux src/` = 0、全テスト緑。
+   - 詳細計画は別途 /plan-how で作成。
