@@ -81,9 +81,10 @@ func dialLifecycleWS(t *testing.T, srv *httptest.Server) *websocket.Conn {
 }
 
 // readJSONFrame reads one WS text frame and unmarshals it as a map.
-func readJSONFrame(t *testing.T, c *websocket.Conn, timeout time.Duration) map[string]any {
+// Uses a fixed 3-second deadline appropriate for protofake-driven tests.
+func readJSONFrame(t *testing.T, c *websocket.Conn) map[string]any {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_, data, err := c.Read(ctx)
 	if err != nil {
@@ -124,7 +125,7 @@ func TestGatewayLifecycle_EmitsHelloFirst(t *testing.T) {
 		Features:        []string{"surface"},
 	}
 
-	m := readJSONFrame(t, c, 3*time.Second)
+	m := readJSONFrame(t, c)
 
 	if m["k"] != "h" {
 		t.Errorf("first frame k = %q, want \"h\"", m["k"])
@@ -168,7 +169,7 @@ func TestGatewayLifecycle_BroadcastsViewUpdate(t *testing.T) {
 		ActiveSessionID: "s1",
 		Features:        []string{"surface"},
 	}
-	hello := readJSONFrame(t, c, 3*time.Second)
+	hello := readJSONFrame(t, c)
 	if hello["k"] != "h" {
 		t.Fatalf("expected hello frame, got k=%q", hello["k"])
 	}
@@ -178,7 +179,7 @@ func TestGatewayLifecycle_BroadcastsViewUpdate(t *testing.T) {
 		Sessions:        []proto.SessionInfo{sampleSession("s2", "U", stateview.StatusIdle)},
 		ActiveSessionID: "s2",
 	}
-	m := readJSONFrame(t, c, 3*time.Second)
+	m := readJSONFrame(t, c)
 
 	if m["k"] != "v" {
 		t.Errorf("second frame k = %q, want \"v\"", m["k"])

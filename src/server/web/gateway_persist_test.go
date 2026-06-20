@@ -23,7 +23,7 @@ func TestLifecycleForwardsSessionFileLine(t *testing.T) {
 
 	// Seed hello first so gateway progresses past helloSent=false.
 	fake.events <- proto.EvtSessionsChanged{}
-	hello := readJSONFrame(t, c, 3*time.Second)
+	hello := readJSONFrame(t, c)
 	if hello["k"] != "h" {
 		t.Fatalf("expected hello frame, got k=%q", hello["k"])
 	}
@@ -31,7 +31,7 @@ func TestLifecycleForwardsSessionFileLine(t *testing.T) {
 	// Now send the transcript line.
 	fake.events <- proto.EvtSessionFileLine{SessionID: "s1", Kind: "transcript", Line: "hello"}
 
-	m := readJSONFrame(t, c, 3*time.Second)
+	m := readJSONFrame(t, c)
 
 	if m["k"] != "tt" {
 		t.Errorf("frame k = %q, want \"tt\"", m["k"])
@@ -55,7 +55,7 @@ func TestLifecycleForwardsEventLogTail(t *testing.T) {
 
 	// Seed hello.
 	fake.events <- proto.EvtSessionsChanged{}
-	hello := readJSONFrame(t, c, 3*time.Second)
+	hello := readJSONFrame(t, c)
 	if hello["k"] != "h" {
 		t.Fatalf("expected hello frame, got k=%q", hello["k"])
 	}
@@ -63,7 +63,7 @@ func TestLifecycleForwardsEventLogTail(t *testing.T) {
 	// Send an event-log line.
 	fake.events <- proto.EvtSessionFileLine{SessionID: "s1", Kind: "event-log", Line: "log entry"}
 
-	m := readJSONFrame(t, c, 3*time.Second)
+	m := readJSONFrame(t, c)
 
 	if m["k"] != "et" {
 		t.Errorf("frame k = %q, want \"et\"", m["k"])
@@ -87,7 +87,7 @@ func TestLifecycleForwardsAgentNotification(t *testing.T) {
 
 	// Seed hello.
 	fake.events <- proto.EvtSessionsChanged{}
-	hello := readJSONFrame(t, c, 3*time.Second)
+	hello := readJSONFrame(t, c)
 	if hello["k"] != "h" {
 		t.Fatalf("expected hello frame, got k=%q", hello["k"])
 	}
@@ -95,7 +95,7 @@ func TestLifecycleForwardsAgentNotification(t *testing.T) {
 	// Send agent notification.
 	fake.events <- proto.EvtAgentNotification{SessionID: "s1", Cmd: 9, Title: "t"}
 
-	m := readJSONFrame(t, c, 3*time.Second)
+	m := readJSONFrame(t, c)
 
 	if m["k"] != "n" {
 		t.Errorf("frame k = %q, want \"n\"", m["k"])
@@ -148,7 +148,7 @@ func TestSurfaceForwardsOwnSessionFileLine(t *testing.T) {
 	// Push a file-line event for the subscribed session.
 	fake.events <- proto.EvtSessionFileLine{SessionID: "s1", Kind: "transcript", Line: "mine"}
 
-	m := readJSONFrame(t, c, 3*time.Second)
+	m := readJSONFrame(t, c)
 
 	if m["k"] != "tt" {
 		t.Errorf("frame k = %q, want \"tt\"", m["k"])
@@ -194,14 +194,14 @@ func TestGatewayPersist(t *testing.T) {
 
 	// Seed hello so gateway is past helloSent=false.
 	fake.events <- proto.EvtSessionsChanged{}
-	hello := readJSONFrame(t, c, 3*time.Second)
+	hello := readJSONFrame(t, c)
 	if hello["k"] != "h" {
 		t.Fatalf("expected hello, got k=%q", hello["k"])
 	}
 
 	// Broadcast a transcript line.
 	fake.events <- proto.EvtSessionFileLine{SessionID: "s1", Kind: "transcript", Line: "broadcast-line"}
-	ttFrame := readJSONFrame(t, c, 3*time.Second)
+	ttFrame := readJSONFrame(t, c)
 	if ttFrame["k"] != "tt" {
 		t.Errorf("transcript frame k = %q, want \"tt\"", ttFrame["k"])
 	}
@@ -211,7 +211,7 @@ func TestGatewayPersist(t *testing.T) {
 
 	// Broadcast an agent notification.
 	fake.events <- proto.EvtAgentNotification{SessionID: "s1", Cmd: 42, Title: "notify"}
-	nFrame := readJSONFrame(t, c, 3*time.Second)
+	nFrame := readJSONFrame(t, c)
 	if nFrame["k"] != "n" {
 		t.Errorf("notification frame k = %q, want \"n\"", nFrame["k"])
 	}
