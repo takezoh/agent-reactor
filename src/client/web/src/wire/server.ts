@@ -79,12 +79,62 @@ export type HelloFrame = {
   activeSessionID: string | null;
   features: string[];
   serverTime: number;
+  connectors?: ConnectorInfo[];
 };
 
 export type ViewUpdateFrame = {
   k: "v";
   sessions: SessionInfo[];
   activeSessionID?: string | null;
+  connectors?: ConnectorInfo[];
+};
+
+export type TranscriptTailFrame = {
+  k: "tt";
+  sessionId: string;
+  line: string;
+};
+
+export type EventLogTailFrame = {
+  k: "et";
+  sessionId: string;
+  line: string;
+};
+
+export type NotificationFrame = {
+  k: "n";
+  sessionId: string;
+  cmd: number;
+  title?: string;
+  body?: string;
+  nowMs: number;
+};
+
+// ConnectorItem mirrors view.ConnectorItem — one entry within a ConnectorSection.
+export type ConnectorItem = {
+  symbol: string;
+  title: string;
+  meta: string;
+};
+
+// ConnectorSection mirrors view.ConnectorSection — titled group of items.
+export type ConnectorSection = {
+  title: string;
+  items?: ConnectorItem[];
+};
+
+// ConnectorInfo mirrors proto.ConnectorInfo — per-connector wire payload.
+export type ConnectorInfo = {
+  name: string;
+  label: string;
+  summary: string;
+  available: boolean;
+  sections?: ConnectorSection[];
+};
+
+export type ConnectorUpdateFrame = {
+  k: "cu";
+  connectors: ConnectorInfo[];
 };
 
 export type RespOKFrame = {
@@ -105,5 +155,9 @@ export type ServerFrame =
   | ControlFrame
   | HelloFrame
   | ViewUpdateFrame
+  | TranscriptTailFrame
+  | EventLogTailFrame
+  | NotificationFrame
+  | ConnectorUpdateFrame
   | RespOKFrame
   | RespErrFrame;

@@ -13,4 +13,9 @@ export const fixtures = {
     '{"k":"v","sessions":[{"id":"s1","project":"p","command":"claude","created_at":"2026-06-20T00:00:00Z","view":{"card":{"title":"T2"},"status":"idle"}}],"activeSessionID":"s1"}',
   respOK: '{"k":"r","reqId":"req-1","body":{"ok":true}}',
   respErr: '{"k":"e","reqId":"req-2","code":"frame-not-ready","message":"not yet"}',
+  logTabsTranscriptFrame: '{"k":"tt","sessionId":"s1","line":"[claude] hello world"}',
+  notificationFrame:
+    '{"k":"n","sessionId":"s1","cmd":9,"title":"Task done","body":"Session finished","nowMs":1700000002000}',
+  connectorUpdateFrame:
+    '{"k":"cu","connectors":[{"name":"github","label":"GitHub","summary":"Connected","available":true,"sections":[{"title":"Repos","items":[{"symbol":"R","title":"my-repo","meta":"main"}]}]}]}',
 } as const;
