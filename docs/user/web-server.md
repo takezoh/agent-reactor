@@ -1,17 +1,22 @@
 # Web client⇄server (`server` + `web`)
 
-The tmux-free system is split into two processes:
+The tmux-free system is split into three processes:
 
-- **`server` (backend)** — a headless host: it runs agent sessions over pty (on
-  the host, or later in a devcontainer) and exposes them over a REST + WebSocket
-  API. Sessions are **host-owned**: they keep running when a client disconnects,
-  and **several clients can attach to and share one session** (one operator's
-  `claude-code` can be driven from another's browser). It serves no UI.
-- **`web` (web-client host)** — serves the browser UI (xterm.js) and
-  reverse-proxies `/api` and `/ws` to the backend, so the browser talks only to
-  this one origin. Future native clients connect to the backend directly instead.
+- **`arc daemon`** — the long-lived owner of all sessions. Each session is a pty
+  managed by the daemon (host or devcontainer launch), and the same daemon
+  serves the TUI (`arc`) and the browser via a typed proto over a Unix socket
+  (`-arc-sock`). Sessions outlive any single client and several clients can
+  attach to and share one session.
+- **`server`** — a stateless HTTP/WS gateway in front of the daemon. It owns no
+  sessions; it only translates browser REST/WebSocket traffic into daemon proto
+  calls. Restarting `server` does not lose sessions.
+- **`web` (web-client host)** — serves the browser UI (React + xterm.js) and
+  reverse-proxies `/api` and `/ws` to `server`, so the browser talks only to
+  this one origin. Future native clients connect to `server` directly.
 
-Architecture: [remote-client design](../../plans/remote-client-design.md).
+Wire-level detail and the full REST + WebSocket vocabulary live in
+[server gateway internals](../technical/web-gateway.md). Architecture context:
+[remote-client design](../../plans/remote-client-design.md).
 
 ## Build & run
 
