@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useDaemonStore } from "./daemon";
 import type { HelloFrame, ViewUpdateFrame } from "../wire/server";
+import { useDaemonStore } from "./daemon";
 
 describe("daemonStore", () => {
   beforeEach(() => {
