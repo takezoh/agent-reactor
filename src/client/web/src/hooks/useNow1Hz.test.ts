@@ -33,11 +33,15 @@ describe("useNow1Hz", () => {
     expect(vi.getTimerCount()).toBe(1);
 
     // Unmounting one hook leaves the timer running for the remaining subscriber.
-    act(() => { unmountA(); });
+    act(() => {
+      unmountA();
+    });
     expect(vi.getTimerCount()).toBe(1);
 
     // Unmounting the last subscriber clears the interval.
-    act(() => { unmountB(); });
+    act(() => {
+      unmountB();
+    });
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -46,7 +50,9 @@ describe("useNow1Hz", () => {
     const { result: resultB, unmount: unmountB } = renderHook(() => useNow1Hz());
     const t0 = resultA.current;
 
-    act(() => { vi.advanceTimersByTime(2000); });
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
 
     expect(resultA.current).toBeGreaterThanOrEqual(t0 + 2000);
     expect(resultB.current).toBeGreaterThanOrEqual(t0 + 2000);
@@ -60,10 +66,14 @@ describe("useNow1Hz", () => {
     const { result: resultB, unmount: unmountB } = renderHook(() => useNow1Hz());
     const t0 = resultB.current;
 
-    act(() => { unmountA(); });
+    act(() => {
+      unmountA();
+    });
 
     // After A is gone the single timer still drives B.
-    act(() => { vi.advanceTimersByTime(1000); });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
     expect(resultB.current).toBeGreaterThanOrEqual(t0 + 1000);
 
     unmountB();
@@ -71,13 +81,17 @@ describe("useNow1Hz", () => {
 
   it("restarts a new single timer after all subscribers have left", () => {
     const { unmount: unmountFirst } = renderHook(() => useNow1Hz());
-    act(() => { unmountFirst(); });
+    act(() => {
+      unmountFirst();
+    });
     expect(vi.getTimerCount()).toBe(0);
 
     // A fresh subscription should restart exactly one timer.
     const { unmount: unmountSecond } = renderHook(() => useNow1Hz());
     expect(vi.getTimerCount()).toBe(1);
-    act(() => { unmountSecond(); });
+    act(() => {
+      unmountSecond();
+    });
     expect(vi.getTimerCount()).toBe(0);
   });
 });

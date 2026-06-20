@@ -1,0 +1,140 @@
+/* view.css — component styles for RunStateBadge, DriverViewPanel, LogTabSelector */
+
+/* ─── RunStateBadge ─────────────────────────────────────────────────────── */
+.run-state-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+}
+.run-state-running {
+  background: #2c7a4d;
+  color: #fff;
+}
+.run-state-waiting {
+  background: #b59300;
+  color: #000;
+}
+.run-state-idle {
+  background: #555;
+  color: #fff;
+}
+.run-state-stopped {
+  background: #6e2222;
+  color: #fff;
+}
+.run-state-pending {
+  background: #2c4a8a;
+  color: #fff;
+}
+.run-state-unknown {
+  background: #333;
+  color: #aaa;
+}
+
+/* ─── DriverViewPanel ───────────────────────────────────────────────────── */
+.driver-view-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+.driver-view-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.driver-view-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.driver-view-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg, #e6e6e6);
+}
+.driver-view-subtitle {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.7;
+}
+.driver-view-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.driver-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: #333;
+  color: var(--fg, #e6e6e6);
+}
+.driver-view-border {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.border-title {
+  font-weight: 600;
+}
+.border-title-secondary {
+  font-style: italic;
+}
+.border-badge {
+  border: 1px solid #555;
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.driver-view-footer {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+.status-line {
+  flex: 1;
+}
+.status-elapsed {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── LogTabSelector ────────────────────────────────────────────────────── */
+.log-tab-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.log-tab-row {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid #333;
+}
+.log-tab {
+  padding: 4px 12px;
+  background: none;
+  color: var(--fg, #e6e6e6);
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  opacity: 0.6;
+}
+.log-tab.active {
+  opacity: 1;
+  border-bottom-color: var(--accent, #4a9eff);
+}
+.log-tab-placeholder {
+  padding: 12px 8px;
+  font-size: 12px;
+  opacity: 0.5;
+  font-style: italic;
+}

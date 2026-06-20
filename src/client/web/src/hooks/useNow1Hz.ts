@@ -29,7 +29,9 @@ let timerId: ReturnType<typeof setInterval> | null = null;
 
 function tick(): void {
   const now = Date.now();
-  subscribers.forEach((set) => set(now));
+  for (const set of subscribers) {
+    set(now);
+  }
 }
 
 function subscribe(setter: Setter): void {
