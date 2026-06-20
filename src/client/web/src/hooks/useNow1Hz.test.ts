@@ -12,7 +12,7 @@ describe("useNow1Hz", () => {
   });
 
   it("returns initial Date.now() then ticks every second", () => {
-    const { result } = renderHook(() => useNow1Hz());
+    const { result, unmount } = renderHook(() => useNow1Hz());
     const t0 = result.current;
     act(() => {
       vi.advanceTimersByTime(1000);
@@ -22,12 +22,62 @@ describe("useNow1Hz", () => {
       vi.advanceTimersByTime(3000);
     });
     expect(result.current).toBeGreaterThanOrEqual(t0 + 4000);
+    unmount();
   });
 
-  it("clears interval on unmount", () => {
-    const { unmount } = renderHook(() => useNow1Hz());
-    expect(vi.getTimerCount()).toBeGreaterThan(0);
-    unmount();
+  it("clears the shared interval only when the last subscriber unmounts", () => {
+    const { unmount: unmountA } = renderHook(() => useNow1Hz());
+    const { unmount: unmountB } = renderHook(() => useNow1Hz());
+
+    // Two hooks share a single timer.
+    expect(vi.getTimerCount()).toBe(1);
+
+    // Unmounting one hook leaves the timer running for the remaining subscriber.
+    act(() => { unmountA(); });
+    expect(vi.getTimerCount()).toBe(1);
+
+    // Unmounting the last subscriber clears the interval.
+    act(() => { unmountB(); });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("both hooks receive ticks from the single shared timer", () => {
+    const { result: resultA, unmount: unmountA } = renderHook(() => useNow1Hz());
+    const { result: resultB, unmount: unmountB } = renderHook(() => useNow1Hz());
+    const t0 = resultA.current;
+
+    act(() => { vi.advanceTimersByTime(2000); });
+
+    expect(resultA.current).toBeGreaterThanOrEqual(t0 + 2000);
+    expect(resultB.current).toBeGreaterThanOrEqual(t0 + 2000);
+
+    unmountA();
+    unmountB();
+  });
+
+  it("surviving subscriber still ticks after the other unmounts", () => {
+    const { unmount: unmountA } = renderHook(() => useNow1Hz());
+    const { result: resultB, unmount: unmountB } = renderHook(() => useNow1Hz());
+    const t0 = resultB.current;
+
+    act(() => { unmountA(); });
+
+    // After A is gone the single timer still drives B.
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(resultB.current).toBeGreaterThanOrEqual(t0 + 1000);
+
+    unmountB();
+  });
+
+  it("restarts a new single timer after all subscribers have left", () => {
+    const { unmount: unmountFirst } = renderHook(() => useNow1Hz());
+    act(() => { unmountFirst(); });
+    expect(vi.getTimerCount()).toBe(0);
+
+    // A fresh subscription should restart exactly one timer.
+    const { unmount: unmountSecond } = renderHook(() => useNow1Hz());
+    expect(vi.getTimerCount()).toBe(1);
+    act(() => { unmountSecond(); });
     expect(vi.getTimerCount()).toBe(0);
   });
 });
