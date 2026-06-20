@@ -31,15 +31,24 @@ type dialFunc func() (*proto.Client, error)
 // reconnects on disconnect using full-jitter exponential backoff.
 //
 // Callers obtain event notifications via SubscribeEvents; the returned channel
-// is closed on disconnect and replaced on reconnect, so callers should call
-// SubscribeEvents again after observing a closure.
+// is per-call (a fresh, independently-buffered chan) and is closed on disconnect
+// so callers should call SubscribeEvents again after observing a closure.
+//
+// Fan-out: every SubscribeEvents call registers a new subscriber. Each daemon
+// event is broadcast to every active subscriber (non-blocking; slow subscribers
+// have individual events dropped, never affecting other subscribers).
+// This is the structural fix for the prior bug where concurrent AttachWS /
+// AttachLifecycleWS handlers shared a single channel and stole each other's
+// events.
 type DaemonClient struct {
 	dial     dialFunc
 	sockPath string
 
-	mu     sync.RWMutex
-	cli    *proto.Client          // nil while disconnected
-	events chan proto.ServerEvent // closed and replaced on each reconnect
+	mu  sync.RWMutex
+	cli *proto.Client // nil while disconnected
+
+	subsMu sync.Mutex
+	subs   map[chan proto.ServerEvent]struct{}
 
 	health      atomic.Bool
 	lastErr     atomic.Pointer[error]
@@ -53,13 +62,18 @@ type DaemonClient struct {
 	maxDelay time.Duration
 }
 
+// perSubscriberBuf sizes each subscriber's outbox. Slow subscribers have
+// individual events dropped (logged at warn) rather than blocking the
+// daemon-side reader or other subscribers.
+const perSubscriberBuf = 64
+
 // NewDaemonClient eagerly dials sockPath then starts the supervisor goroutine
 // that watches the connection and reconnects on loss.
 func NewDaemonClient(sockPath string) *DaemonClient {
 	d := &DaemonClient{
 		sockPath: sockPath,
 		dial:     func() (*proto.Client, error) { return proto.Dial(sockPath) },
-		events:   make(chan proto.ServerEvent, 64),
+		subs:     make(map[chan proto.ServerEvent]struct{}),
 		stop:     make(chan struct{}),
 		minDelay: defaultMinDelay,
 		maxDelay: defaultMaxDelay,
@@ -76,7 +90,7 @@ func NewDaemonClientWithDialer(dialFn func() (*proto.Client, error), minDelay, m
 	d := &DaemonClient{
 		sockPath: "<dialer>",
 		dial:     dialFn,
-		events:   make(chan proto.ServerEvent, 64),
+		subs:     make(map[chan proto.ServerEvent]struct{}),
 		stop:     make(chan struct{}),
 		minDelay: minDelay,
 		maxDelay: maxDelay,
@@ -87,7 +101,8 @@ func NewDaemonClientWithDialer(dialFn func() (*proto.Client, error), minDelay, m
 }
 
 // Close shuts down the supervisor goroutine and the underlying connection.
-// Idempotent.
+// Idempotent. Closes every active subscriber channel so subscribers observe
+// EOF and tear down cleanly.
 func (d *DaemonClient) Close() {
 	d.once.Do(func() {
 		close(d.stop)
@@ -100,6 +115,7 @@ func (d *DaemonClient) Close() {
 		if cli != nil {
 			cli.Close()
 		}
+		d.closeAllSubs()
 	})
 }
 
@@ -137,14 +153,59 @@ func (d *DaemonClient) SendCommand(ctx context.Context, cmd proto.Command) (prot
 	return cli.Send(ctx, cmd)
 }
 
-// SubscribeEvents returns the current events channel. The channel is closed
-// when the daemon disconnects; callers should call SubscribeEvents again to
-// obtain the replacement channel after reconnection.
+// SubscribeEvents registers a fresh subscriber and returns its dedicated event
+// channel. The channel is closed when the daemon disconnects (or DaemonClient
+// is Closed); callers should call SubscribeEvents again to obtain a new
+// channel after observing closure. Events broadcast across all subscribers
+// are non-blocking per recipient — slow subscribers have individual events
+// dropped (logged) but do not block other subscribers or the daemon reader.
 func (d *DaemonClient) SubscribeEvents() <-chan proto.ServerEvent {
-	d.mu.RLock()
-	ch := d.events
-	d.mu.RUnlock()
+	ch := make(chan proto.ServerEvent, perSubscriberBuf)
+	d.subsMu.Lock()
+	// Reject new subscribers after Close to avoid handing out a channel that
+	// will never receive anything; the caller will observe an immediate close.
+	select {
+	case <-d.stop:
+		d.subsMu.Unlock()
+		close(ch)
+		return ch
+	default:
+	}
+	d.subs[ch] = struct{}{}
+	d.subsMu.Unlock()
 	return ch
+}
+
+// broadcastEvent fan-outs ev to every registered subscriber. Non-blocking per
+// subscriber: a slow subscriber has the event dropped (logged at warn).
+func (d *DaemonClient) broadcastEvent(ev proto.ServerEvent) {
+	d.subsMu.Lock()
+	snapshot := make([]chan proto.ServerEvent, 0, len(d.subs))
+	for ch := range d.subs {
+		snapshot = append(snapshot, ch)
+	}
+	d.subsMu.Unlock()
+	for _, ch := range snapshot {
+		select {
+		case ch <- ev:
+		default:
+			slog.Warn("server/web: daemon event fan-out outbox full, dropping",
+				"event", ev.EventName())
+		}
+	}
+}
+
+// closeAllSubs closes every active subscriber channel and forgets them.
+// Subscribers observe an immediate channel close (the documented disconnect
+// signal). Idempotent: safe under repeated invocation.
+func (d *DaemonClient) closeAllSubs() {
+	d.subsMu.Lock()
+	old := d.subs
+	d.subs = make(map[chan proto.ServerEvent]struct{})
+	d.subsMu.Unlock()
+	for ch := range old {
+		close(ch)
+	}
 }
 
 // tryDialOnce performs a single dial attempt and updates health/lastErr/lastAttempt.
@@ -207,8 +268,8 @@ func (d *DaemonClient) supervise() {
 			// Disconnect detected.
 		}
 
-		// markDown immediately closes the old events chan so subscribers
-		// observe a typed close rather than blocking on a silent channel.
+		// markDown closes every active subscriber channel so each WS handler
+		// observes a typed close rather than blocking silently.
 		d.markDown("events channel closed")
 		attempt = d.reconnectLoop(attempt)
 	}
@@ -241,10 +302,9 @@ func (d *DaemonClient) reconnectLoop(attempt int) int {
 		d.tryDialOnce(attempt)
 
 		if d.health.Load() {
-			// Reconnected: open a fresh events chan (old one was closed in markDown).
-			d.mu.Lock()
-			d.events = make(chan proto.ServerEvent, 64)
-			d.mu.Unlock()
+			// Reconnected: subscribers' channels were closed in markDown, so
+			// callers will obtain fresh per-call channels on their next
+			// SubscribeEvents.
 			return attempt
 		}
 
@@ -262,8 +322,9 @@ func (d *DaemonClient) reconnectLoop(attempt int) int {
 	}
 }
 
-// fanoutEvents drains cli.Events() into d.events until the source channel is
-// closed, then signals completion via done.
+// fanoutEvents drains cli.Events() and broadcasts each event to every active
+// SubscribeEvents subscriber. Exits when the source channel closes, signalling
+// completion via done.
 func (d *DaemonClient) fanoutEvents(cli *proto.Client, done chan<- struct{}) {
 	defer close(done)
 	src := cli.Events()
@@ -272,28 +333,19 @@ func (d *DaemonClient) fanoutEvents(cli *proto.Client, done chan<- struct{}) {
 		if !ok {
 			return
 		}
-		d.mu.RLock()
-		dst := d.events
-		d.mu.RUnlock()
-		select {
-		case dst <- ev:
-		default:
-			slog.Warn("server/web: daemon event fan-out outbox full, dropping",
-				"event", ev.EventName())
-		}
+		d.broadcastEvent(ev)
 	}
 }
 
-// markDown updates health state, closes the current events channel so that
-// all SubscribeEvents callers observe a typed close immediately, and logs the
+// markDown updates health state, closes every active subscriber channel so all
+// SubscribeEvents callers observe a typed close immediately, and logs the
 // disconnect event.
 func (d *DaemonClient) markDown(reason string) {
 	d.mu.Lock()
 	d.cli = nil
-	evCh := d.events
 	d.mu.Unlock()
 
 	d.health.Store(false)
-	close(evCh) // subscribers observe typed close immediately
+	d.closeAllSubs() // every subscriber observes typed close immediately
 	slog.Warn("server/web: daemon disconnected", "reason", reason)
 }

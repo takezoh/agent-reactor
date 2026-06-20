@@ -4,11 +4,6 @@ import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 import type { Connection } from "../socket/connection";
 
-function b64decode(d: string): string {
-  // browser native atob handles base64; xterm.write accepts string or Uint8Array
-  return atob(d);
-}
-
 export function TerminalPane({
   conn,
   sessionId,
@@ -36,9 +31,12 @@ export function TerminalPane({
     });
 
     conn.onOutput = (frame) => {
-      // frame = ["o", timeSec, dataB64]
-      const dataB64 = frame[2];
-      term.write(b64decode(dataB64));
+      // The Go wire (server/web/wire.go:outputFrameFromSurface) sends
+      // ["TimeSec", "o", string(base64.Decode(DataB64))] — frame[2] is already
+      // the decoded raw byte string. xterm.js .write() handles raw bytes
+      // (including ANSI escapes and non-ASCII UTF-8) directly. Do NOT
+      // atob() this string: any 0x1b / non-base64 byte throws InvalidCharacterError.
+      term.write(frame[2]);
     };
 
     const handleResize = () => fit.fit();

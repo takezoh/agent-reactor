@@ -20,7 +20,7 @@ describe("CreateSessionForm", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    render(<CreateSessionForm conn={fakeConn} />);
+    render(<CreateSessionForm conn={fakeConn} bearerToken="t" />);
     fireEvent.change(screen.getByPlaceholderText("New session title"), { target: { value: "x" } });
     fireEvent.click(screen.getByText("Create"));
     await waitFor(() => {
@@ -28,7 +28,10 @@ describe("CreateSessionForm", () => {
     });
     expect(fetchSpy).toHaveBeenCalledWith(
       "/api/sessions",
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer t" }),
+      }),
     );
   });
 });

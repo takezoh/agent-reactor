@@ -156,7 +156,18 @@ func (tr *TerminalRelay) fanOut(key surfaceKey, sub *surfaceSub, ch <-chan termv
 			return
 		case ev, ok := <-ch:
 			if !ok {
-				// termvt slow-closed the channel — notify state.
+				// termvt slow-closed the channel. Remove the entry from the
+				// local subs map BEFORE notifying the reducer so that even if
+				// the non-blocking send drops the internalSurfaceClosed event
+				// (when the runtime's internal queue is saturated), we do not
+				// leak tr.subs[key]. The reducer's SurfaceSubs reconciliation
+				// may then be slightly delayed but is not lost (a subsequent
+				// EvConnClosed for the daemon ConnID will clean state anyway).
+				tr.mu.Lock()
+				if cur, ok := tr.subs[key]; ok && cur == sub {
+					delete(tr.subs, key)
+				}
+				tr.mu.Unlock()
 				tr.send(internalSurfaceClosed{
 					ConnID:    key.connID,
 					SessionID: key.sessionID,

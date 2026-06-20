@@ -41,7 +41,7 @@ export function App() {
       <NotificationToast />
       <StatusBanner />
       <aside className="sidebar">
-        <CreateSessionForm conn={conn} />
+        <CreateSessionForm conn={conn} bearerToken={token} />
         <SessionList conn={conn} />
       </aside>
       <main className="terminal">

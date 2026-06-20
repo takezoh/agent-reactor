@@ -235,7 +235,7 @@ func TestDaemonClient_HealthInitiallyFalse(t *testing.T) {
 	d := &DaemonClient{
 		sockPath: "<test>",
 		dial:     errDialer(errors.New("no daemon")),
-		events:   make(chan proto.ServerEvent, 64),
+		subs:     make(map[chan proto.ServerEvent]struct{}),
 		stop:     make(chan struct{}),
 		minDelay: testMinDelay,
 		maxDelay: testMaxDelay,

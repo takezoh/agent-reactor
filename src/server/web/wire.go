@@ -38,19 +38,27 @@ func controlFrame(kind string, code int, data string) []byte {
 // viewUpdateFrame is the server→browser frame derived from
 // proto.EvtSessionsChanged. ADR 0023: 1:1 mirror.
 type viewUpdateFrame struct {
-	K               string              `json:"k"` // always "v"
-	Sessions        []proto.SessionInfo `json:"sessions"`
-	ActiveSessionID string              `json:"activeSessionID,omitempty"`
+	K               string                `json:"k"` // always "v"
+	Sessions        []proto.SessionInfo   `json:"sessions"`
+	ActiveSessionID string                `json:"activeSessionID,omitempty"`
+	Connectors      []proto.ConnectorInfo `json:"connectors,omitempty"`
 }
 
 // encodeFromSessionsChanged encodes EvtSessionsChanged as a view-update
-// frame {"k":"v","sessions":[…],"activeSessionID":"…"}.
+// frame {"k":"v","sessions":[…],"activeSessionID":"…","connectors":[…]}.
 // Returns nil on marshal error (gateway drops nil frames).
+// nil slices are normalised to empty arrays so the browser codec, which
+// requires `sessions` to be an array, never receives `"sessions":null`.
 func encodeFromSessionsChanged(ev proto.EvtSessionsChanged) []byte {
+	sessions := ev.Sessions
+	if sessions == nil {
+		sessions = []proto.SessionInfo{}
+	}
 	f := viewUpdateFrame{
 		K:               "v",
-		Sessions:        ev.Sessions,
+		Sessions:        sessions,
 		ActiveSessionID: ev.ActiveSessionID,
+		Connectors:      ev.Connectors, // omitempty: nil/empty stays out of wire
 	}
 	b, err := json.Marshal(f)
 	if err != nil {
@@ -144,10 +152,15 @@ func encodeFromAgentNotification(e proto.EvtAgentNotification) []byte {
 	return b
 }
 
-// inbound is a browser→server message (always a JSON object).
+// inbound is a browser→server message (always a JSON object). It carries the
+// union of fields used by per-session surface frames (AttachWS path: "i", "r")
+// and lifecycle-multiplexed frames (AttachLifecycleWS path: "s" subscribe,
+// "u" unsubscribe, "i"/"r" with sessionId). Unused fields decode to zero.
 type inbound struct {
-	K    string `json:"k"` // "i" input | "r" resize
-	D    string `json:"d"`
-	Cols int    `json:"cols"`
-	Rows int    `json:"rows"`
+	K         string `json:"k"` // "i" input | "r" resize | "s" subscribe | "u" unsubscribe
+	D         string `json:"d"`
+	Cols      int    `json:"cols"`
+	Rows      int    `json:"rows"`
+	SessionID string `json:"sessionId,omitempty"`
+	ReqID     string `json:"reqId,omitempty"`
 }

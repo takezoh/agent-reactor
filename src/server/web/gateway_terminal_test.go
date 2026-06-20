@@ -59,6 +59,10 @@ func (f *fakeSessionAttacher) UnsubscribeSurface(_ context.Context, _ string) er
 	return nil
 }
 
+func (f *fakeSessionAttacher) SendSurfaceSubscribe(_ context.Context, _ string) error {
+	return nil
+}
+
 func (f *fakeSessionAttacher) WriteRaw(_ context.Context, sessionID string, data []byte) error {
 	cp := make([]byte, len(data))
 	copy(cp, data)

@@ -43,6 +43,8 @@ func (f *fakeLifecycleAttacher) SubscribeSurface(_ context.Context, _ string) (<
 
 func (f *fakeLifecycleAttacher) UnsubscribeSurface(_ context.Context, _ string) error { return nil }
 
+func (f *fakeLifecycleAttacher) SendSurfaceSubscribe(_ context.Context, _ string) error { return nil }
+
 func (f *fakeLifecycleAttacher) WriteRaw(_ context.Context, _ string, _ []byte) error { return nil }
 
 func (f *fakeLifecycleAttacher) Resize(_ context.Context, _ string, _ uint16, _ uint16) error {
