@@ -93,9 +93,9 @@ xterm.js), and future native clients with consistent behaviour.
   `server/web.NewMux(daemon, token)` behind a bearer-token + ws-ticket gate
   (auth invariant unchanged from the previous in-process design;
   [ADR 0017](docs/adr/0017-platform-socketpath-helper.md)).
-- `server/session` is retained behind a `legacy_session` build tag for one
-  more release cycle ([ADR 0014](docs/adr/0014-server-session-legacy-build-tag.md));
-  a future ε PR removes the directory with `git rm`.
+- `server/session` was removed in A1-ε
+  ([ADR 0014](docs/adr/0014-server-session-legacy-build-tag.md), superseded);
+  the directory and its `legacy_session` build tag no longer exist.
 
 **Design invariant**: `server/*` never calls `platform/termvt`, `platform/agentlaunch`,
 or any other platform primitive that controls agent I/O directly. All session
