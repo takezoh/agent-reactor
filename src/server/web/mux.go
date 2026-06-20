@@ -68,6 +68,8 @@ func apiHandler(d *DaemonClient, tickets *ticketStore) http.Handler {
 	mux.HandleFunc("GET /api/sessions", handleListSessions(d))
 	mux.HandleFunc("POST /api/sessions", handleCreateSession(d))
 	mux.HandleFunc("DELETE /api/sessions/{id}", handleDeleteSession(d))
+	mux.HandleFunc("GET /api/sessions/{id}/transcript", handleGetTranscript(d))
+	mux.HandleFunc("GET /api/sessions/{id}/event-log", handleGetEventLog(d))
 	mux.HandleFunc("POST /api/ws-ticket", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"ticket": tickets.mint()})
 	})
