@@ -1,5 +1,5 @@
 import type { ClientFrame } from "./client";
-import type { ServerFrame, SessionInfo } from "./server";
+import type { ConnectorInfo, ServerFrame, SessionInfo } from "./server";
 
 // parseSessionInfoLoose validates that an object has at minimum the fields
 // required for a valid SessionInfo wire value: id string, view object with card object.
@@ -10,6 +10,17 @@ function parseSessionInfoLoose(obj: unknown): obj is SessionInfo {
   if (typeof sess.view !== "object" || sess.view === null) return false;
   const view = sess.view as Record<string, unknown>;
   if (typeof view.card !== "object" || view.card === null) return false;
+  return true;
+}
+
+function parseConnectorInfoLoose(v: unknown): v is ConnectorInfo {
+  if (typeof v !== "object" || v === null) return false;
+  const c = v as Record<string, unknown>;
+  if (typeof c.name !== "string") return false;
+  if (typeof c.label !== "string") return false;
+  if (typeof c.summary !== "string") return false;
+  if (typeof c.available !== "boolean") return false;
+  if (c.sections !== undefined && !Array.isArray(c.sections)) return false;
   return true;
 }
 
@@ -53,22 +64,30 @@ export function parseServerFrame(raw: string): ServerFrame | null {
         return null;
       }
       if (!obj.sessions.every(parseSessionInfoLoose)) return null;
-      return {
+      const hFrame: import("./server").HelloFrame = {
         k: "h",
         sessions: obj.sessions as SessionInfo[],
         activeSessionID: (obj.activeSessionID as string | null | undefined) ?? null,
         features: obj.features as string[],
         serverTime: obj.serverTime,
       };
+      if (Array.isArray(obj.connectors) && obj.connectors.every(parseConnectorInfoLoose)) {
+        hFrame.connectors = obj.connectors as ConnectorInfo[];
+      }
+      return hFrame;
     }
     case "v": {
       if (!Array.isArray(obj.sessions)) return null;
       if (!obj.sessions.every(parseSessionInfoLoose)) return null;
-      return {
+      const vFrame: import("./server").ViewUpdateFrame = {
         k: "v",
         sessions: obj.sessions as SessionInfo[],
         activeSessionID: (obj.activeSessionID as string | null | undefined) ?? null,
       };
+      if (Array.isArray(obj.connectors) && obj.connectors.every(parseConnectorInfoLoose)) {
+        vFrame.connectors = obj.connectors as ConnectorInfo[];
+      }
+      return vFrame;
     }
     case "r":
       if (typeof obj.reqId !== "string") return null;
@@ -82,6 +101,38 @@ export function parseServerFrame(raw: string): ServerFrame | null {
         return null;
       }
       return { k: "e", reqId: obj.reqId, code: obj.code, message: obj.message };
+    case "tt": {
+      if (typeof obj.sessionId !== "string" || typeof obj.line !== "string") return null;
+      return { k: "tt" as const, sessionId: obj.sessionId, line: obj.line };
+    }
+    case "et": {
+      if (typeof obj.sessionId !== "string" || typeof obj.line !== "string") return null;
+      return { k: "et" as const, sessionId: obj.sessionId, line: obj.line };
+    }
+    case "n": {
+      if (
+        typeof obj.sessionId !== "string" ||
+        typeof obj.cmd !== "number" ||
+        typeof obj.nowMs !== "number"
+      ) {
+        return null;
+      }
+      if (obj.title !== undefined && typeof obj.title !== "string") return null;
+      if (obj.body !== undefined && typeof obj.body !== "string") return null;
+      return {
+        k: "n" as const,
+        sessionId: obj.sessionId,
+        cmd: obj.cmd,
+        ...(typeof obj.title === "string" ? { title: obj.title } : {}),
+        ...(typeof obj.body === "string" ? { body: obj.body } : {}),
+        nowMs: obj.nowMs,
+      };
+    }
+    case "cu": {
+      if (!Array.isArray(obj.connectors)) return null;
+      if (!obj.connectors.every(parseConnectorInfoLoose)) return null;
+      return { k: "cu" as const, connectors: obj.connectors as ConnectorInfo[] };
+    }
     default:
       return null;
   }

@@ -52,6 +52,69 @@ describe("parseServerFrame", () => {
       parseServerFrame('{"k":"v","sessions":[{"id":"s1","view":{"status":"idle"}}]}'),
     ).toBeNull();
   });
+
+  it('parses "tt" round-trip', () => {
+    const raw = '{"k":"tt","sessionId":"s1","line":"hi"}';
+    const parsed = parseServerFrame(raw);
+    expect(parsed).not.toBeNull();
+    expect(parsed).toEqual({ k: "tt", sessionId: "s1", line: "hi" });
+    expect(parseServerFrame(JSON.stringify(parsed))).toEqual(parsed);
+  });
+
+  it('parses "et" round-trip', () => {
+    const raw = '{"k":"et","sessionId":"s1","line":"event line"}';
+    const parsed = parseServerFrame(raw);
+    expect(parsed).not.toBeNull();
+    expect(parsed).toEqual({ k: "et", sessionId: "s1", line: "event line" });
+    expect(parseServerFrame(JSON.stringify(parsed))).toEqual(parsed);
+  });
+
+  it('rejects "tt" missing sessionId', () => {
+    expect(parseServerFrame('{"k":"tt","line":"hi"}')).toBeNull();
+  });
+
+  it('parses "n" round-trip', () => {
+    const raw = '{"k":"n","sessionId":"s1","cmd":9,"title":"t","body":"b","nowMs":123}';
+    const parsed = parseServerFrame(raw);
+    expect(parsed).not.toBeNull();
+    expect(parsed).toEqual({ k: "n", sessionId: "s1", cmd: 9, title: "t", body: "b", nowMs: 123 });
+    expect(parseServerFrame(JSON.stringify(parsed))).toEqual(parsed);
+  });
+
+  it('rejects "n" missing nowMs', () => {
+    expect(parseServerFrame('{"k":"n","sessionId":"s1","cmd":9}')).toBeNull();
+  });
+
+  it('parses "cu" round-trip', () => {
+    const raw =
+      '{"k":"cu","connectors":[{"name":"github","label":"GitHub","summary":"","available":true}]}';
+    const parsed = parseServerFrame(raw);
+    expect(parsed).not.toBeNull();
+    expect(parsed).toEqual({
+      k: "cu",
+      connectors: [{ name: "github", label: "GitHub", summary: "", available: true }],
+    });
+    expect(parseServerFrame(JSON.stringify(parsed))).toEqual(parsed);
+  });
+
+  it('rejects "cu" with malformed connector (available not boolean)', () => {
+    expect(
+      parseServerFrame(
+        '{"k":"cu","connectors":[{"name":"github","label":"GitHub","summary":"","available":"yes"}]}',
+      ),
+    ).toBeNull();
+  });
+
+  it('parses "h" with connectors', () => {
+    const raw =
+      '{"k":"h","sessions":[],"activeSessionID":null,"features":[],"serverTime":1,"connectors":[{"name":"gh","label":"GitHub","summary":"ok","available":true}]}';
+    const parsed = parseServerFrame(raw);
+    expect(parsed).not.toBeNull();
+    if (!parsed || Array.isArray(parsed) || parsed.k !== "h") throw new Error("expected h frame");
+    expect(parsed.connectors).toEqual([
+      { name: "gh", label: "GitHub", summary: "ok", available: true },
+    ]);
+  });
 });
 
 describe("serializeClientFrame", () => {
