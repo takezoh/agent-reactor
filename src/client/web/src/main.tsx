@@ -1,11 +1,13 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { App } from "./App";
+import "./css/app.css";
 
 const root = document.getElementById("root");
 if (root) {
   createRoot(root).render(
     <StrictMode>
-      <div>agent-reactor loading…</div>
+      <App />
     </StrictMode>,
   );
 }
