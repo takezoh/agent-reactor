@@ -7,6 +7,7 @@ package web
 import (
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 
 	"github.com/takezoh/agent-reactor/client/proto"
 )
@@ -47,6 +48,31 @@ func controlFrameFromNotification(e proto.EvtAgentNotification) []byte {
 	return b
 }
 
+// viewUpdateFrame is the server→browser frame derived from
+// proto.EvtSessionsChanged. ADR 0023: 1:1 mirror.
+type viewUpdateFrame struct {
+	K               string              `json:"k"` // always "v"
+	Sessions        []proto.SessionInfo `json:"sessions"`
+	ActiveSessionID string              `json:"activeSessionID,omitempty"`
+}
+
+// encodeFromSessionsChanged encodes EvtSessionsChanged as a view-update
+// frame {"k":"v","sessions":[…],"activeSessionID":"…"}.
+// Returns nil on marshal error (gateway drops nil frames).
+func encodeFromSessionsChanged(ev proto.EvtSessionsChanged) []byte {
+	f := viewUpdateFrame{
+		K:               "v",
+		Sessions:        ev.Sessions,
+		ActiveSessionID: ev.ActiveSessionID,
+	}
+	b, err := json.Marshal(f)
+	if err != nil {
+		slog.Error("wire: failed to encode view-update frame", "err", err)
+		return nil
+	}
+	return b
+}
+
 // encodeServerEvent renders a proto.ServerEvent as one WebSocket text frame.
 // Returns nil for events the browser does not need (the gateway drops nil).
 func encodeServerEvent(ev proto.ServerEvent) []byte {
@@ -55,6 +81,8 @@ func encodeServerEvent(ev proto.ServerEvent) []byte {
 		return outputFrameFromSurface(e)
 	case proto.EvtAgentNotification:
 		return controlFrameFromNotification(e)
+	case proto.EvtSessionsChanged:
+		return encodeFromSessionsChanged(e)
 	}
 	return nil
 }
