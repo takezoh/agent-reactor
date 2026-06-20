@@ -68,10 +68,15 @@ func (a *DaemonAdapter) Resize(ctx context.Context, sid string, cols, rows uint1
 	return err
 }
 
-// SubscribeLifecycle sends CmdSubscribe for sessions-changed and returns the
-// shared events channel. The caller reads EvtSessionsChanged values from it.
+// SubscribeLifecycle sends CmdSubscribe for sessions-changed, session-file-line,
+// and agent-notification events, and returns the shared events channel.
 func (a *DaemonAdapter) SubscribeLifecycle(ctx context.Context) (<-chan proto.ServerEvent, error) {
-	if _, err := a.d.SendCommand(ctx, proto.CmdSubscribe{Filters: []string{proto.EvtNameSessionsChanged}}); err != nil {
+	filters := []string{
+		proto.EvtNameSessionsChanged,
+		proto.EvtNameSessionFileLine,
+		proto.EvtNameAgentNotification,
+	}
+	if _, err := a.d.SendCommand(ctx, proto.CmdSubscribe{Filters: filters}); err != nil {
 		return nil, err
 	}
 	return a.d.SubscribeEvents(), nil
@@ -164,16 +169,19 @@ func AttachLifecycleWS(ctx context.Context, sess Attacher, c *websocket.Conn) er
 				writeTypedClose(c, "daemon-disconnected")
 				return errDaemonGone
 			}
-			sc, ok2 := ev.(proto.EvtSessionsChanged)
-			if !ok2 {
-				continue
-			}
 			var frame []byte
-			if !helloSent {
-				frame = encodeHelloFrame(sc, time.Now().Unix())
-				helloSent = true
-			} else {
-				frame = encodeServerEvent(sc)
+			switch e := ev.(type) {
+			case proto.EvtSessionsChanged:
+				if !helloSent {
+					frame = encodeHelloFrame(e, time.Now().Unix())
+					helloSent = true
+				} else {
+					frame = encodeServerEvent(e)
+				}
+			case proto.EvtSessionFileLine, proto.EvtAgentNotification:
+				frame = encodeServerEvent(e)
+			default:
+				continue
 			}
 			if frame == nil {
 				continue
@@ -201,8 +209,19 @@ func writeOutbound(ctx context.Context, sessionID string, c *websocket.Conn, ch 
 				return errDaemonGone
 			}
 			// Filter: only forward events belonging to this session.
-			if out, ok2 := ev.(proto.EvtSurfaceOutput); ok2 && out.SessionID != sessionID {
-				continue
+			switch e := ev.(type) {
+			case proto.EvtSurfaceOutput:
+				if e.SessionID != sessionID {
+					continue
+				}
+			case proto.EvtSessionFileLine:
+				if e.SessionID != sessionID {
+					continue
+				}
+			case proto.EvtAgentNotification:
+				if e.SessionID != sessionID {
+					continue
+				}
 			}
 			frame := encodeServerEvent(ev)
 			if frame == nil {
