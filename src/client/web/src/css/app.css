@@ -36,6 +36,8 @@ body {
 .terminal {
   grid-row: 2;
   padding: 0;
+  display: flex;
+  flex-direction: column;
 }
 .terminal-host {
   width: 100%;

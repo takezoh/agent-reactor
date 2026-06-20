@@ -1,5 +1,6 @@
 import type { Connection } from "../socket/connection";
 import { useDaemonStore } from "../store/daemon";
+import { RunStateBadge } from "./RunStateBadge";
 
 export function SessionList({ conn }: { conn: Connection }) {
   const sessions = useDaemonStore((s) => s.sessions);
@@ -22,7 +23,7 @@ export function SessionList({ conn }: { conn: Connection }) {
             }}
           >
             <span className="title">{s.view.card.title ?? s.id}</span>
-            <span className="status">{s.view.status ?? ""}</span>
+            <RunStateBadge status={s.view.status} />
           </button>
         </li>
       ))}

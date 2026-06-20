@@ -1,6 +1,8 @@
 import { useEffect, useMemo } from "react";
 import { readBearerTokenFromHash } from "./auth";
 import { CreateSessionForm } from "./components/CreateSessionForm";
+import { DriverViewPanel } from "./components/DriverViewPanel";
+import { LogTabSelector } from "./components/LogTabSelector";
 import { SessionList } from "./components/SessionList";
 import { StatusBanner } from "./components/StatusBanner";
 import { TerminalPane } from "./components/TerminalPane";
@@ -28,6 +30,9 @@ export function App() {
   }, [conn]);
 
   const activeSessionID = useDaemonStore((s) => s.activeSessionID);
+  const activeSession = useDaemonStore((s) =>
+    s.activeSessionID ? (s.sessions.find((x) => x.id === s.activeSessionID) ?? null) : null,
+  );
 
   return (
     <div className="app">
@@ -37,6 +42,14 @@ export function App() {
         <SessionList conn={conn} />
       </aside>
       <main className="terminal">
+        {activeSession && (
+          <>
+            <DriverViewPanel view={activeSession.view} />
+            {!activeSession.view.suppress_info && (
+              <LogTabSelector tabs={activeSession.view.log_tabs ?? []} />
+            )}
+          </>
+        )}
         <TerminalPane conn={conn} sessionId={activeSessionID} />
       </main>
     </div>
