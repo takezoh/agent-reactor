@@ -1,6 +1,6 @@
 # ADR 0014 — Quarantine `server/session/` behind build tag `legacy_session`
 
-Status: Accepted
+Status: Superseded by removal in A1-ε (2026-06-20)
 
 ## Context
 
@@ -33,6 +33,9 @@ matching test file deletions — a single mechanical change.
 - A short-lived `legacy_session` tag exists between α and ε; build failures
   on the regular build path catch any forgotten tag immediately.
 - Documentation must note the tag is transient (removed in ε).
+- **2026-06-20 (A1-ε)**: 削除完了。`src/server/session/` ディレクトリと
+  `legacy_session` build tag を持つ test 3 ファイル(`gateway_test.go` / `inbound_test.go`
+  / `mux_test.go`)を `git rm` で削除。本 ADR の隔離戦略は当初の計画どおり寿命を終えた。
 
 ## Alternatives
 
