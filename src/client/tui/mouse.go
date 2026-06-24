@@ -75,12 +75,6 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.rebuildItems()
 		return m, nil
 	}
-	if m.hitTestConnectorSummary(mouse.Y) {
-		if m.active != "" {
-			return m, m.deactivateCmd()
-		}
-		return m, m.focusCmd(mainPane)
-	}
 	idx := m.rowToItemIndex(mouse.Y)
 	if idx < 0 {
 		return m, nil
@@ -130,17 +124,6 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, m.cursorPreviewCmd()
-}
-
-// hitTestConnectorSummary returns true when the given y coordinate
-// falls on the connector summary row. The summary row is the last
-// header row (headerRowCount()-1) and only exists when connectors
-// are present.
-func (m Model) hitTestConnectorSummary(y int) bool {
-	if !m.hasConnectorSummary() {
-		return false
-	}
-	return y == m.headerRowCount()-1
 }
 
 func (m Model) isMouseAtEdge() bool {

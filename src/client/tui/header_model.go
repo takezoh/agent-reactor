@@ -73,11 +73,11 @@ func (m HeaderModel) handleEvent(ev proto.ServerEvent) (tea.Model, tea.Cmd) {
 
 func (m HeaderModel) requestSessions() tea.Cmd {
 	return func() tea.Msg {
-		sessions, _, occupant, connectors, _, err := m.client.ListSessions()
+		sessions, _, occupant, _, err := m.client.ListSessions()
 		if err != nil {
 			return nil
 		}
-		return headerEventMsg{event: proto.EvtSessionsChanged{Sessions: sessions, ActiveOccupant: occupant, Connectors: connectors}}
+		return headerEventMsg{event: proto.EvtSessionsChanged{Sessions: sessions, ActiveOccupant: occupant}}
 	}
 }
 

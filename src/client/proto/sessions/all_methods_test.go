@@ -29,7 +29,7 @@ func TestListSessions(t *testing.T) {
 		ActiveOccupant:  "main",
 		Features:        []string{"f1"},
 	})
-	sessions, active, occ, _, features, err := c.ListSessions()
+	sessions, active, occ, features, err := c.ListSessions()
 	if err != nil {
 		t.Fatal(err)
 	}

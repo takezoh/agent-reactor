@@ -62,9 +62,6 @@ type State struct {
 	DefaultCommand   string            // fallback when session command is empty
 	SandboxedProject func(string) bool // nil = not configured; true when project runs in sandbox
 
-	Connectors      map[string]ConnectorState // connector name → state
-	ConnectorsReady bool                      // true after first initialization
-
 	// Features is the set of enabled runtime flags, built once at startup
 	// from the config file and never mutated. Reduce reads it as a
 	// read-only value, so it does not break pure-function semantics.
@@ -126,11 +123,10 @@ type Subscriber struct {
 
 // JobMeta is the in-flight worker bookkeeping for one async job. The
 // runtime worker pool reports back via EvJobResult, which the reducer
-// looks up here to find which session or connector the result belongs to.
+// looks up here to find which session the result belongs to.
 type JobMeta struct {
 	SessionID SessionID
 	FrameID   FrameID
-	Connector string // non-empty → route result to this connector
 	StartedAt time.Time
 }
 
@@ -142,7 +138,6 @@ func New() State {
 		Subscribers:    map[ConnID]Subscriber{},
 		SurfaceSubs:    map[ConnID]map[SessionID]struct{}{},
 		Jobs:           map[JobID]JobMeta{},
-		Connectors:     map[string]ConnectorState{},
 		ActiveOccupant: OccupantMain,
 	}
 }

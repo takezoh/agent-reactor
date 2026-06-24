@@ -1,12 +1,12 @@
 // Package runtime_test contains isolation enforcement tests that complement depguard.
 //
 // Enforcement split:
-//   - depguard (.golangci.yml): prevents driver/, connector/, and lib/<tool>/ packages
+//   - depguard (.golangci.yml): prevents driver/ and lib/<tool>/ packages
 //     from being imported by generic layers (state/, runtime/, tui/, proto/, sandbox/).
 //     This is the primary, zero-false-positive gate.
 //   - This file: catches cases that import-boundary checks cannot see — env variable
-//     name literals (e.g. "ANTHROPIC_API_KEY"), driver command strings (e.g. "claude"),
-//     and standalone connector name literals (e.g. "github") in generic layers.
+//     name literals (e.g. "ANTHROPIC_API_KEY") and driver command strings (e.g. "claude")
+//     in generic layers.
 package runtime_test
 
 import (
@@ -22,7 +22,7 @@ import (
 // names (AWS_*, ANTHROPIC_*, GOOGLE_*, OPENAI_*, etc.) appearing as string literals
 // in generic layers. These names must live exclusively in the credproxy module's
 // providers/<name>/ packages, the local hostexec/ package, or lib/<tool>/ —
-// see ARCHITECTURE.md "Driver/Connector isolation".
+// see ARCHITECTURE.md "Driver isolation".
 //
 // golangci-lint forbidigo cannot detect string literals (only call expressions),
 // so this test acts as the static enforcement gate.
@@ -54,7 +54,6 @@ func TestNoToolSpecificEnvLiterals(t *testing.T) {
 		filepath.Join(srcRoot, "state"),
 		filepath.Join(srcRoot, "tui"),
 		filepath.Join(srcRoot, "proto"),
-		filepath.Join(srcRoot, "connector"),
 	}
 
 	walkChecked(t, checkedDirs, func(t *testing.T, path string, data []byte) {
@@ -88,7 +87,6 @@ func TestNoDriverNameLiterals(t *testing.T) {
 		filepath.Join(srcRoot, "state"),
 		filepath.Join(srcRoot, "tui"),
 		filepath.Join(srcRoot, "proto"),
-		filepath.Join(srcRoot, "connector"),
 	}
 
 	walkChecked(t, checkedDirs, func(t *testing.T, path string, data []byte) {
@@ -113,45 +111,10 @@ func TestNoDriverNameLiterals(t *testing.T) {
 	})
 }
 
-// TestNoConnectorNameLiteralsInTUI guards against connector names ("github")
-// appearing in tui/ routing logic. TUI must not branch on connector identity
-// — see ARCHITECTURE.md "Driver/Connector isolation".
-//
-// connector/ itself is exempt (it is the implementation site).
-// Import paths containing the connector name are also exempt.
-func TestNoConnectorNameLiteralsInTUI(t *testing.T) {
-	connectorNames := []string{"github"}
-
-	srcRoot := ".."
-	// Only check presentation and protocol layers; connector/ is the
-	// canonical owner of connector names.
-	checkedDirs := []string{
-		filepath.Join(srcRoot, "tui"),
-		filepath.Join(srcRoot, "proto"),
-		filepath.Join(srcRoot, "state"),
-		filepath.Join(srcRoot, "runtime"),
-	}
-
-	walkChecked(t, checkedDirs, func(t *testing.T, path string, data []byte) {
-		for _, name := range connectorNames {
-			// Match the connector name as a standalone value (not part of a URL path).
-			// Skip occurrences that are clearly import paths (contain a dot after the name).
-			re := regexp.MustCompile(`"` + name + `"`)
-			if loc := re.Find(data); loc != nil {
-				t.Errorf(
-					"%s contains connector name %q as a standalone string literal: %s\n"+
-						"  → connector names must stay within connector/ (see ARCHITECTURE.md)",
-					path, name, bytes.TrimSpace(loc),
-				)
-			}
-		}
-	})
-}
-
 // TestNoDriverNameLiteralsMain guards the main package (coordinator.go,
 // subcommand.go, main.go) against tool-specific string literals. The main
 // package wires generic config values into runtime; it must not embed
-// driver/connector names as string literals — use constants from driver/.
+// driver names as string literals — use constants from driver/.
 func TestNoDriverNameLiteralsMain(t *testing.T) {
 	forbidden := []string{"claude", "gemini", "codex"}
 

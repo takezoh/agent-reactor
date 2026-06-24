@@ -40,12 +40,6 @@ body {
   flex-direction: column;
   min-height: 0;
 }
-.connector-panel {
-  grid-row: 2;
-  border-left: 1px solid #333;
-  overflow-y: auto;
-  min-width: 0;
-}
 /* ADR 0029: flex: 1 1 0 + min-height: 0 lets the flex parent distribute the
    remaining height to the terminal host. Without min-height: 0 the flex item
    defaults to min-height: auto which can cause the item to overflow its

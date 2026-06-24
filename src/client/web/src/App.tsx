@@ -1,6 +1,5 @@
 import { useEffect, useMemo } from "react";
 import { readBearerTokenFromHash } from "./auth";
-import { ConnectorPanel } from "./components/ConnectorPanel";
 import { CreateSessionForm } from "./components/CreateSessionForm";
 import { DriverViewPanel } from "./components/DriverViewPanel";
 import { MainTabs } from "./components/MainTabs";
@@ -60,7 +59,6 @@ export function App() {
           }
         />
       </main>
-      <ConnectorPanel />
     </div>
   );
 }

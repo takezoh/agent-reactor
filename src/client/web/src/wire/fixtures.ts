@@ -20,6 +20,4 @@ export const fixtures = {
   logTabsTranscriptFrame: '{"k":"tt","sessionId":"s1","line":"[claude] hello world"}',
   notificationFrame:
     '{"k":"n","sessionId":"s1","cmd":9,"title":"Task done","body":"Session finished","nowMs":1700000002000}',
-  connectorUpdateFrame:
-    '{"k":"cu","connectors":[{"name":"github","label":"GitHub","summary":"Connected","available":true,"sections":[{"title":"Repos","items":[{"symbol":"R","title":"my-repo","meta":"main"}]}]}]}',
 } as const;

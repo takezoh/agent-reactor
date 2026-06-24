@@ -307,7 +307,7 @@ sequenceDiagram
 - **Optional fields use `omitempty`; zero value means absent.** A zero value with distinct semantics belongs in a separate type.
 - **Names are client-agnostic.** No TUI- or GUI-specific terms in field or type names; both clients consume the same types.
 - **Every concrete type carries its marker methods** (`isCommand()` / `CommandName()`, `isEvent()` / `EventName()`, `isResponse()`).
-- **`state.View` is written by the driver only.** TUI and future GUI clients read state; neither branches on driver or connector name (see Driver/Connector isolation in `ARCHITECTURE.md`).
+- **`state.View` is written by the driver only.** TUI and future GUI clients read state; neither branches on driver name (see Driver isolation in `ARCHITECTURE.md`).
 
 Commands in the `surface.*` and `driver.*` namespaces use dotted names within the same `proto.Envelope` format — no protocol change is required to add new namespaces.
 

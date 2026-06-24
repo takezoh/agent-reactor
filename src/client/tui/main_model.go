@@ -16,7 +16,6 @@ type MainModel struct {
 	viewport        viewport.Model
 	spinner         spinner.Model
 	sessions        []proto.SessionInfo
-	connectors      []proto.ConnectorInfo
 	activeOccupant  string
 	selectedProject string
 	width           int
@@ -79,7 +78,6 @@ func (m MainModel) handleEvent(ev proto.ServerEvent) (tea.Model, tea.Cmd) {
 	switch e := ev.(type) {
 	case proto.EvtSessionsChanged:
 		m.sessions = e.Sessions
-		m.connectors = e.Connectors
 		m.activeOccupant = e.ActiveOccupant
 	case proto.EvtProjectSelected:
 		m.selectedProject = e.Project
@@ -90,11 +88,11 @@ func (m MainModel) handleEvent(ev proto.ServerEvent) (tea.Model, tea.Cmd) {
 
 func (m MainModel) requestSessions() tea.Cmd {
 	return func() tea.Msg {
-		sessions, _, occupant, connectors, _, err := m.client.ListSessions()
+		sessions, _, occupant, _, err := m.client.ListSessions()
 		if err != nil {
 			return nil
 		}
-		return mainEventMsg{event: proto.EvtSessionsChanged{Sessions: sessions, ActiveOccupant: occupant, Connectors: connectors}}
+		return mainEventMsg{event: proto.EvtSessionsChanged{Sessions: sessions, ActiveOccupant: occupant}}
 	}
 }
 

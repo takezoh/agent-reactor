@@ -2,7 +2,7 @@
 // sessions / palette) and produces the shell command to spawn them.
 //
 // No external imports: keeping this package stdlib-only allows state/ to
-// reference it without violating Driver/Connector isolation.
+// reference it without violating Driver isolation.
 package uiproc
 
 import (

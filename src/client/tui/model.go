@@ -22,7 +22,6 @@ type Model struct {
 	help     help.Model
 
 	sessions          []proto.SessionInfo
-	connectors        []proto.ConnectorInfo
 	activeOccupant    string
 	items             []listItem
 	cursor            int

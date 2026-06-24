@@ -1,4 +1,3 @@
-import { useConnectorsStore } from "../store/connectors";
 import { useDaemonStore } from "../store/daemon";
 import { useNotificationsStore } from "../store/notifications";
 import { useTranscriptStore } from "../store/transcripts";
@@ -143,15 +142,9 @@ export class Connection {
     switch (frame.k) {
       case "h":
         useDaemonStore.getState().seedHello(frame);
-        if (frame.connectors !== undefined) {
-          useConnectorsStore.getState().setConnectors(frame.connectors);
-        }
         break;
       case "v":
         useDaemonStore.getState().applyViewUpdate(frame);
-        if (frame.connectors !== undefined) {
-          useConnectorsStore.getState().setConnectors(frame.connectors);
-        }
         break;
       case "tt":
         useTranscriptStore.getState().appendLine(frame.sessionId, "transcript", frame.line);
@@ -161,9 +154,6 @@ export class Connection {
         break;
       case "n":
         useNotificationsStore.getState().addFromFrame(frame);
-        break;
-      case "cu":
-        useConnectorsStore.getState().setConnectors(frame.connectors);
         break;
       case "c":
         this.handleControl(frame);

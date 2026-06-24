@@ -18,7 +18,7 @@ flowchart TD
         TUI["tui/"]
         PROTO["proto/"]
         RT["runtime/"]
-        DRIVER["driver/ · connector/"]
+        DRIVER["driver/"]
     end
     subgraph platform["platform/"]
         PLAT["lib / sandbox / …"]
@@ -32,8 +32,8 @@ flowchart TD
     PLAT -. "✗" .-> ORCH
     CODEXC -. "✗ codexclient-isolation" .-> CLIENTBOX
 
-    STATE -. "✗ state-pure-core<br/>(no driver/connector/lib/runtime/tui/proto)" .-> DRIVER
-    TUI -. "✗ tui-no-driver-connector-lib" .-> DRIVER
+    STATE -. "✗ state-pure-core<br/>(no driver/lib/runtime/tui/proto)" .-> DRIVER
+    TUI -. "✗ tui-no-driver-lib" .-> DRIVER
     PROTO -. "✗ proto-isolation" .-> DRIVER
     RT -. "✗ runtime-no-driver (root only)" .-> DRIVER
 ```
@@ -42,13 +42,13 @@ flowchart TD
 |---|---|---|
 | `platform-no-client-or-orchestrator` | `platform/**` | `client/`, `orchestrator/` |
 | `client-no-orchestrator` | `client/**` | `orchestrator/` |
-| `state-pure-core` | `client/state/**` | `driver/`, `connector/`, `platform/lib`, `runtime/`, `tui/`, `proto/` |
-| `tui-no-driver-connector-lib` | `client/tui/**` | `driver/`, `connector/`, `platform/lib` |
-| `worker-no-driver-connector-lib` | `client/runtime/worker/**` | `driver/`, `connector/`, `platform/lib` |
-| `sandbox-tool-agnostic` | `platform/sandbox/**` | `driver/`, `connector/`, `platform/lib`, `runtime/` |
-| `proto-isolation` | `client/proto/**` | `driver/`, `connector/`, `platform/lib`, `runtime/`, `tui/` |
+| `state-pure-core` | `client/state/**` | `driver/`, `platform/lib`, `runtime/`, `tui/`, `proto/` |
+| `tui-no-driver-lib` | `client/tui/**` | `driver/`, `platform/lib` |
+| `worker-no-driver-lib` | `client/runtime/worker/**` | `driver/`, `platform/lib` |
+| `sandbox-tool-agnostic` | `platform/sandbox/**` | `driver/`, `platform/lib`, `runtime/` |
+| `proto-isolation` | `client/proto/**` | `driver/`, `platform/lib`, `runtime/`, `tui/` |
 | `runtime-no-driver` | `client/runtime/*.go` (root only) | `driver/` |
-| `subsystem-isolation` | `client/runtime/subsystem/**` | `tui/`, `connector/` |
+| `subsystem-isolation` | `client/runtime/subsystem/**` | `tui/` |
 | `codexclient-isolation` | `platform/agent/codexclient/**` | `client/`, `orchestrator/` |
 
 Key intents:
@@ -94,7 +94,7 @@ Exceptions are declared **by path pattern in `.golangci.yml`, not by an in-code 
 | runtime | `Flag` constant + injected `Set` | `~/.agent-reactor/settings.toml` `[features.enabled]` | both branches compiled | the user should opt in without rebuilding |
 | compile-time | top-level `const` bool guarded by a build tag | `go build -tags <tag>` (e.g. `make build-experimental`) | off-side removed by dead-code elimination | the code is unfinished / unsafe or must not enter release binaries |
 
-**Runtime — add:** declare a `Flag` constant and list it in `All()`; read it as `st.Features.On(features.Peers)` (`features.go:36`). Gating is allowed in `state/`, `runtime/`, `tui/` — **not** in `driver/` or `connector/`, where driver-specific gating uses `config.Drivers[name]` instead. Users opt in under `[features.enabled]`. `FromConfig` **silently ignores unknown keys** (`features.go:46`), so when a flag stabilises you delete the constant and inline the enabled branch with no config migration.
+**Runtime — add:** declare a `Flag` constant and list it in `All()`; read it as `st.Features.On(features.Peers)` (`features.go:36`). Gating is allowed in `state/`, `runtime/`, `tui/` — **not** in `driver/`, where driver-specific gating uses `config.Drivers[name]` instead. Users opt in under `[features.enabled]`. `FromConfig` **silently ignores unknown keys** (`features.go:46`), so when a flag stabilises you delete the constant and inline the enabled branch with no config migration.
 
 **Compile-time — add:** create a `//go:build <tag>` / `//go:build !<tag>` file pair exporting the same `const` bool, then gate code with `if features.MyFeat { ... }` — the off-side is removed because `MyFeat` is a `const`. For larger code, put the implementation behind the tag and provide a no-op stub on the `!tag` side so callers need no guarding. Add a Makefile target for first-class variants; CI builds both.
 

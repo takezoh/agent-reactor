@@ -27,22 +27,6 @@ func reduceTick(s State, e EvTick) (State, []Effect) {
 		return ev
 	})
 
-	// Initialize connectors (once).
-	if !s.ConnectorsReady && len(AllConnectors()) > 0 {
-		s.ConnectorsReady = true
-		s.Connectors = cloneConnectors(s.Connectors)
-		for _, c := range AllConnectors() {
-			s.Connectors[c.Name()] = c.NewState()
-		}
-	}
-
-	// Step all connectors.
-	s, connEffs := stepConnectors(s)
-	effs = append(effs, connEffs...)
-	if len(connEffs) > 0 {
-		changed = true
-	}
-
 	// Active-pane death check: every tick (covers the no-active-frame case
 	// where the fast ticker skips; fast ticker handles the active-frame case).
 	effs = append(effs, EffCheckPaneAlive{Pane: "{sessionName}:0.1"})
@@ -61,19 +45,6 @@ func reduceTick(s State, e EvTick) (State, []Effect) {
 
 	if changed {
 		effs = append(effs, EffPersistSnapshot{}, EffBroadcastSessionsChanged{})
-	}
-	return s, effs
-}
-
-func stepConnectors(s State) (State, []Effect) {
-	var effs []Effect
-	for _, c := range AllConnectors() {
-		next, cEffs, ok := stepConnector(s, c.Name(), CEvTick{Now: s.Now})
-		if !ok {
-			continue
-		}
-		s = next
-		effs = append(effs, cEffs...)
 	}
 	return s, effs
 }

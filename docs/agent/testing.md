@@ -78,7 +78,7 @@ Coverage targets are tiered by architectural blast radius. A regression in `stat
 | Tier | Target | Layer | Members |
 |------|--------|-------|---------|
 | **S** | ≥85% | Pure domain layer & wire types | `state`, `state/view`, `proto`, `features`, `orchestrator/scheduler` (pure `Reduce` + transitions) |
-| **A** | ≥75% | Core execution layer | `runtime`, `runtime/worker`, `runtime/subsystem/*`, `driver`, `driver/vt`, `connector`, `config`, `sandbox/devcontainer`, `platform/termvt`, `server/session`, `server/web` |
+| **A** | ≥75% | Core execution layer | `runtime`, `runtime/worker`, `runtime/subsystem/*`, `driver`, `driver/vt`, `config`, `sandbox/devcontainer`, `platform/termvt`, `server/session`, `server/web` |
 | **B** | ≥60% | Infrastructure integrations | `lib/*` (except thin CLI wrappers), `proto/sessions`, `hostexec`, `mcpproxy`, `tui`, `tools` |
 | **C** | ≥40% | Thin CLI & wiring | `main`, `cli`, `lib/tmux`, `lib/gemini`, `lib/notify` |
 | **D** | smoke tests minimum | Trivial packages | `event`, `internal/globutil`, `lib/wsl`, `runtime/subsystem` (shared utilities), `sandbox`, `cmd/bridge` |

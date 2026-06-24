@@ -79,45 +79,6 @@ func TestClickHeaderWithoutActiveSession(t *testing.T) {
 	}
 }
 
-func TestClickConnectorSummaryWithActiveSession(t *testing.T) {
-	m := Model{
-		active: "@1",
-		connectors: []proto.ConnectorInfo{
-			{Summary: "2 PRs"},
-		},
-		height: 20,
-		width:  80,
-		folded: make(map[string]bool),
-		filter: allOnFilter(),
-	}
-	// Connector summary is at row headerRowCount()-1 = 3 (with connector: 4-1=3)
-	summaryRow := m.headerRowCount() - 1
-	msg := tea.MouseClickMsg(tea.Mouse{X: 5, Y: summaryRow, Button: tea.MouseLeft})
-	_, cmd := m.handleMouseClick(msg)
-	if cmd == nil {
-		t.Fatal("expected deactivateCmd, got nil")
-	}
-}
-
-func TestClickConnectorSummaryWithoutActiveSession(t *testing.T) {
-	m := Model{
-		active: "",
-		connectors: []proto.ConnectorInfo{
-			{Summary: "2 PRs"},
-		},
-		height: 20,
-		width:  80,
-		folded: make(map[string]bool),
-		filter: allOnFilter(),
-	}
-	summaryRow := m.headerRowCount() - 1
-	msg := tea.MouseClickMsg(tea.Mouse{X: 5, Y: summaryRow, Button: tea.MouseLeft})
-	_, cmd := m.handleMouseClick(msg)
-	if cmd == nil {
-		t.Fatal("expected focusCmd, got nil")
-	}
-}
-
 func TestHandleServerEventClearsMissingActiveAndAnchor(t *testing.T) {
 	m := Model{
 		active:   "gone",

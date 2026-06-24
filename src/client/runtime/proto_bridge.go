@@ -71,7 +71,7 @@ func (r *Runtime) translateResponseBody(body any) proto.Response {
 		}
 	case state.SessionsReply:
 		infos, active, occupant := r.buildSessionInfos()
-		return proto.RespSessions{Sessions: infos, ActiveSessionID: active, ActiveOccupant: occupant, Connectors: r.buildConnectorInfos(), Features: r.buildFeatureList()}
+		return proto.RespSessions{Sessions: infos, ActiveSessionID: active, ActiveOccupant: occupant, Features: r.buildFeatureList()}
 	case state.ActiveSessionReply:
 		return proto.RespActiveSession{ActiveSessionID: b.ActiveSessionID}
 	case state.SurfaceReadTextReply:
@@ -137,7 +137,6 @@ func (r *Runtime) broadcastSessionsChanged(preview bool) {
 		ActiveSessionID: active,
 		ActiveOccupant:  occupant,
 		IsPreview:       preview,
-		Connectors:      r.buildConnectorInfos(),
 		Features:        r.buildFeatureList(),
 	}
 	wire, err := proto.EncodeEvent(ev)
@@ -333,35 +332,6 @@ func (r *Runtime) buildOneSessionInfo(sess state.Session) (proto.SessionInfo, bo
 		info.StateChangedAt = view.StatusChangedAt.Format("2006-01-02T15:04:05Z07:00")
 	}
 	return info, true
-}
-
-// buildConnectorInfos materializes the current connector states into
-// the proto.ConnectorInfo wire format. Calls each connector's View()
-// pure getter to fill the payload. Only includes available connectors.
-func (r *Runtime) buildConnectorInfos() []proto.ConnectorInfo {
-	connectors := state.AllConnectors()
-	if len(connectors) == 0 {
-		return nil
-	}
-	var infos []proto.ConnectorInfo
-	for _, c := range connectors {
-		cs := r.state.Connectors[c.Name()]
-		if cs == nil {
-			continue
-		}
-		view := c.View(cs)
-		if !view.Available {
-			continue
-		}
-		infos = append(infos, proto.ConnectorInfo{
-			Name:      c.Name(),
-			Label:     view.Label,
-			Summary:   view.Summary,
-			Available: view.Available,
-			Sections:  view.Sections,
-		})
-	}
-	return infos
 }
 
 // buildFeatureList converts the state's runtime feature set into the wire

@@ -6,7 +6,6 @@ export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "closed"
 export type DaemonState = {
   sessions: SessionInfo[];
   activeSessionID: string | null;
-  connectors: string[]; // β は空配列で seed のみ。δ で活用。
   features: string[];
   serverTime: number;
   status: ConnectionStatus;
@@ -25,7 +24,6 @@ export type DaemonState = {
 const initialState = {
   sessions: [] as SessionInfo[],
   activeSessionID: null as string | null,
-  connectors: [] as string[],
   features: [] as string[],
   serverTime: 0,
   status: "connecting" as ConnectionStatus,

@@ -17,7 +17,6 @@ type State struct {
     Now            time.Time
     Aliases        map[string]string
     DefaultCommand string
-    Connectors     map[string]ConnectorState
 }
 
 // Session owns a stack of SessionFrames. The active frame is always
@@ -275,12 +274,10 @@ src/
 │   │                    LaunchMode / LaunchOptions / LaunchPlan / CreateLaunch / CreatePlan
 │   ├── status.go        Re-exports state/view.Status, StatusInfo as type aliases
 │   ├── view.go          Re-exports state/view.View, Card, Tag, LogTab, InfoLine as type aliases
-│   ├── connector.go     Re-exports state/view.ConnectorSection, ConnectorItem as type aliases
 │   ├── clone.go         Copy-on-write helpers for State
 │   └── view/            Wire-safe view types (stdlib-only; no state import; safe for proto and reactor-bridge)
 │       ├── status.go    Status enum + StatusInfo — canonical definition (Running/Waiting/Idle/Stopped/Pending)
-│       ├── view.go      View / Card / Tag / LogTab / TabKind / InfoLine
-│       └── connector.go ConnectorSection / ConnectorItem
+│       └── view.go      View / Card / Tag / LogTab / TabKind / InfoLine
 ├── client/driver/              Driver implementations — value-type plugins (no goroutines, no I/O)
 │   ├── claude.go        claudeDriver — event-driven status + transcript job emit
 │   ├── claude_event.go  DEvHook dispatch (state-change, session-start, ...)
@@ -296,12 +293,6 @@ src/
 │   ├── runners.go       built-in runners (TranscriptParse, HaikuSummary, GitBranch)
 │   ├── tags.go          CommandTag helper
 │   └── register.go      init() registers with state.Register
-├── client/connector/           Connector plugin system (external service integration)
-│   ├── github.go        GitHub connector — issues, PRs, workflow runs
-│   ├── github_state.go  GitHub connector state types
-│   ├── jobs.go          Connector job input/output types
-│   ├── runners.go       Connector worker pool runners
-│   └── register.go      init() registers connectors
 ├── client/runtime/             Imperative shell — event loop + Effect interpreter
 │   ├── runtime.go       Runtime.Run() — single event loop (select)
 │   ├── interpret.go     execute(Effect) — interpreter for all side effects

@@ -67,24 +67,16 @@ func controlFrame(kind string, code int, data string) []byte {
 // click + CreateSessionForm post-create selectSession) and only need the
 // daemon's notion of activeSessionID as an initial seed via the hello
 // frame.
-//
-// Connectors deliberately has NO omitempty: an empty/nil slice must still
-// reach the wire as `"connectors":[]` so that the browser can observe
-// connector REMOVAL. The TS store guard `if (frame.connectors !== undefined)`
-// only fires when the field is present, so omitempty would leave a stale
-// connector visible after the daemon has cleared it.
 type viewUpdateFrame struct {
-	K          string                `json:"k"` // always "v"
-	Sessions   []proto.SessionInfo   `json:"sessions"`
-	Connectors []proto.ConnectorInfo `json:"connectors"`
+	K        string              `json:"k"` // always "v"
+	Sessions []proto.SessionInfo `json:"sessions"`
 }
 
 // encodeFromSessionsChanged encodes EvtSessionsChanged as a view-update
-// frame {"k":"v","sessions":[…],"connectors":[…]}.
+// frame {"k":"v","sessions":[…]}.
 // Returns nil on marshal error (gateway drops nil frames).
 // nil slices are normalised to empty arrays so the browser codec, which
-// requires `sessions` / `connectors` to be arrays, never receives
-// `"sessions":null` / `"connectors":null`.
+// requires `sessions` to be an array, never receives `"sessions":null`.
 //
 // ev.ActiveSessionID is intentionally dropped — see viewUpdateFrame doc.
 func encodeFromSessionsChanged(ev proto.EvtSessionsChanged) []byte {
@@ -92,14 +84,9 @@ func encodeFromSessionsChanged(ev proto.EvtSessionsChanged) []byte {
 	if sessions == nil {
 		sessions = []proto.SessionInfo{}
 	}
-	connectors := ev.Connectors
-	if connectors == nil {
-		connectors = []proto.ConnectorInfo{}
-	}
 	f := viewUpdateFrame{
-		K:          "v",
-		Sessions:   sessions,
-		Connectors: connectors,
+		K:        "v",
+		Sessions: sessions,
 	}
 	b, err := json.Marshal(f)
 	if err != nil {

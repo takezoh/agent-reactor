@@ -246,28 +246,5 @@ func (m Model) headerRowCount() int {
 	if m.workspaceBarVisible() {
 		n++ // workspace switcher bar
 	}
-	if m.hasConnectorSummary() {
-		n++
-	}
 	return n
-}
-
-func (m Model) hasConnectorSummary() bool {
-	return m.connectorSummaryLine() != ""
-}
-
-func (m Model) connectorSummaryLine() string {
-	if len(m.connectors) == 0 {
-		return ""
-	}
-	var parts []string
-	for _, c := range m.connectors {
-		if c.Summary != "" {
-			parts = append(parts, c.Summary)
-		}
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, " · ")
 }

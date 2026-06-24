@@ -35,9 +35,6 @@ func (m Model) View() tea.View {
 		parts = append(parts, workspaceBar)
 	}
 	parts = append(parts, filterBar, "")
-	if summary := m.connectorSummaryLine(); summary != "" {
-		parts = append(parts, "  "+mutedStyle.Render(summary))
-	}
 	parts = append(parts, body, hintBar)
 	screen := lipgloss.JoinVertical(lipgloss.Left, parts...)
 

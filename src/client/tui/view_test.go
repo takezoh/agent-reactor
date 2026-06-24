@@ -9,9 +9,9 @@ import (
 	"github.com/takezoh/agent-reactor/client/state"
 )
 
-// baseHeaderRows is the header row count when no connectors and no workspace bar
-// are present (title + filter bar + blank = 3). Test models have no connectors and
-// fewer than 2 workspaces, so the workspace bar is hidden.
+// baseHeaderRows is the header row count when no workspace bar is present
+// (title + filter bar + blank = 3). Test models have fewer than 2 workspaces,
+// so the workspace bar is hidden.
 const baseHeaderRows = 3
 
 func makeItems(rowCounts ...int) []listItem {

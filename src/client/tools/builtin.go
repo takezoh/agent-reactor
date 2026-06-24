@@ -134,7 +134,7 @@ func registerProjectTools(r *Registry, pc PaletteContext) {
 				Name:        "command: " + cmd,
 				Description: "Push " + cmd + " onto active session",
 				Run: func(ctx *ToolContext, _ map[string]string) (*ToolInvocation, error) {
-					_, activeID, _, _, _, err := ctx.Client.ListSessions()
+					_, activeID, _, _, err := ctx.Client.ListSessions()
 					if err != nil || activeID == "" {
 						return nil, fmt.Errorf("no active session")
 					}
@@ -148,7 +148,7 @@ func registerProjectTools(r *Registry, pc PaletteContext) {
 			Name:        "fork-session",
 			Description: "Fork active session (new branch)",
 			Run: func(ctx *ToolContext, _ map[string]string) (*ToolInvocation, error) {
-				_, activeID, _, _, _, err := ctx.Client.ListSessions()
+				_, activeID, _, _, err := ctx.Client.ListSessions()
 				if err != nil || activeID == "" {
 					return nil, fmt.Errorf("no active session")
 				}
@@ -167,7 +167,7 @@ func registerSendToSession(r *Registry) {
 			{
 				Name: "target",
 				Options: func(ctx *ToolContext) []string {
-					sessions, _, _, _, _, err := ctx.Client.ListSessions()
+					sessions, _, _, _, err := ctx.Client.ListSessions()
 					if err != nil {
 						return nil
 					}

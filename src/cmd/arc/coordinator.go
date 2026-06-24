@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/takezoh/agent-reactor/client/config"
-	"github.com/takezoh/agent-reactor/client/connector"
 	statedriver "github.com/takezoh/agent-reactor/client/driver"
 	"github.com/takezoh/agent-reactor/client/runtime"
 	"github.com/takezoh/agent-reactor/client/runtime/worker"
@@ -101,8 +100,6 @@ func registerDefaultDrivers(cfg *config.Config, dataDir string, idleThreshold ti
 		Pager:            cfg.Driver.Pager,
 	})
 	statedriver.RegisterRunners(cfg.Driver.SummarizeCommand)
-	connector.RegisterDefaults()
-	connector.RegisterRunners()
 }
 
 // buildRuntime constructs and configures the Runtime. Returns the Runtime,

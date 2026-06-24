@@ -175,29 +175,6 @@ Source event: `proto.EvtAgentNotification`. Defined by `notificationFrame` in
 > `controlFrameFromNotification` for backward compatibility with legacy UI
 > consumers. New code should use `"n"`.
 
-#### `"cu"` — connector update
-
-Delivers the current connector list whenever the set of available connectors
-changes. Allows the browser to refresh the connector panel without a full
-sessions-changed broadcast.
-
-```json
-{
-  "k": "cu",
-  "connectors": [
-    { "name": "github", "label": "GitHub", "summary": "connected", "available": true }
-  ]
-}
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `k` | `"cu"` | Frame kind |
-| `connectors` | `ConnectorInfo[]` | Full current connector list (differential updates are not used) |
-
-`ConnectorInfo` shape: `{name, label, summary, available, sections?}`.
-Type definition: `src/client/web/src/wire/server.ts:ConnectorUpdateFrame`.
-
 #### `"r"` — WS response (RespOK)
 
 > **Direction-collision note**: the ASCII character `"r"` is used for two

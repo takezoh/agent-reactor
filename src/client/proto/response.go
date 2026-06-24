@@ -33,11 +33,10 @@ func (RespCreateSession) isResponse() {}
 // EvtSessionsChanged. Carries the full session table + the active
 // session id.
 type RespSessions struct {
-	Sessions        []SessionInfo   `json:"sessions"`
-	ActiveSessionID string          `json:"active_session_id,omitempty"`
-	ActiveOccupant  string          `json:"active_occupant,omitempty"` // "main" | "log" | "frame"
-	Connectors      []ConnectorInfo `json:"connectors,omitempty"`
-	Features        []string        `json:"features,omitempty"`
+	Sessions        []SessionInfo `json:"sessions"`
+	ActiveSessionID string        `json:"active_session_id,omitempty"`
+	ActiveOccupant  string        `json:"active_occupant,omitempty"` // "main" | "log" | "frame"
+	Features        []string      `json:"features,omitempty"`
 }
 
 func (RespSessions) isResponse() {}
@@ -107,16 +106,6 @@ func (si SessionInfo) StateChangedAtTime() time.Time {
 	}
 	t, _ := time.Parse(time.RFC3339, si.StateChangedAt)
 	return t
-}
-
-// ConnectorInfo is the per-connector wire payload carried inside
-// EvtSessionsChanged. Mirrors state.ConnectorView for IPC transport.
-type ConnectorInfo struct {
-	Name      string                       `json:"name"`
-	Label     string                       `json:"label"`
-	Summary   string                       `json:"summary"`
-	Available bool                         `json:"available"`
-	Sections  []stateview.ConnectorSection `json:"sections,omitempty"`
 }
 
 // RespSurfaceText is the response to surface.read_text.

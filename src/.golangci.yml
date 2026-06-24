@@ -109,8 +109,6 @@ linters:
           deny:
             - pkg: github.com/takezoh/agent-reactor/client/driver
               desc: "state/ must not import driver (pure functional core)"
-            - pkg: github.com/takezoh/agent-reactor/client/connector
-              desc: "state/ must not import connector (pure functional core)"
             - pkg: github.com/takezoh/agent-reactor/platform/lib
               desc: "state/ must not import lib (pure functional core)"
             - pkg: github.com/takezoh/agent-reactor/client/runtime
@@ -119,24 +117,20 @@ linters:
               desc: "state/ must not import tui (pure functional core)"
             - pkg: github.com/takezoh/agent-reactor/client/proto
               desc: "state/ must not import proto (pure functional core)"
-        tui-no-driver-connector-lib:
+        tui-no-driver-lib:
           files:
             - "**/client/tui/**"
           deny:
             - pkg: github.com/takezoh/agent-reactor/client/driver
               desc: "tui/ must not import driver (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-reactor/client/connector
-              desc: "tui/ must not import connector (see ARCHITECTURE.md)"
             - pkg: github.com/takezoh/agent-reactor/platform/lib
               desc: "tui/ must not import lib (see ARCHITECTURE.md)"
-        worker-no-driver-connector-lib:
+        worker-no-driver-lib:
           files:
             - "**/client/runtime/worker/**"
           deny:
             - pkg: github.com/takezoh/agent-reactor/client/driver
               desc: "runtime/worker must not import driver (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-reactor/client/connector
-              desc: "runtime/worker must not import connector (see ARCHITECTURE.md)"
             - pkg: github.com/takezoh/agent-reactor/platform/lib
               desc: "runtime/worker must not import lib (see ARCHITECTURE.md)"
         sandbox-tool-agnostic:
@@ -145,8 +139,6 @@ linters:
           deny:
             - pkg: github.com/takezoh/agent-reactor/client/driver
               desc: "sandbox/ must be tool-agnostic — no driver/ imports (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-reactor/client/connector
-              desc: "sandbox/ must be tool-agnostic — no connector/ imports (see ARCHITECTURE.md)"
             - pkg: github.com/takezoh/agent-reactor/platform/lib
               desc: "sandbox/ must be tool-agnostic — no lib/ imports (see ARCHITECTURE.md)"
             - pkg: github.com/takezoh/agent-reactor/client/runtime
@@ -174,8 +166,6 @@ linters:
           deny:
             - pkg: github.com/takezoh/agent-reactor/client/driver
               desc: "proto/ must not import driver (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-reactor/client/connector
-              desc: "proto/ must not import connector (see ARCHITECTURE.md)"
             - pkg: github.com/takezoh/agent-reactor/platform/lib
               desc: "proto/ must not import lib (see ARCHITECTURE.md)"
             - pkg: github.com/takezoh/agent-reactor/client/runtime
@@ -190,15 +180,13 @@ linters:
             - "!**/*_test.go"
           deny:
             - pkg: github.com/takezoh/agent-reactor/client/driver
-              desc: "runtime/ root must not import driver/. Move tool-specific backend code to runtime/subsystem/<kind>/ (see ARCHITECTURE.md Driver/Connector/Subsystem isolation)"
+              desc: "runtime/ root must not import driver/. Move tool-specific backend code to runtime/subsystem/<kind>/ (see ARCHITECTURE.md Driver/Subsystem isolation)"
         subsystem-isolation:
           files:
             - "**/client/runtime/subsystem/**"
           deny:
             - pkg: github.com/takezoh/agent-reactor/client/tui
               desc: "runtime/subsystem/ must not import tui (see ARCHITECTURE.md)"
-            - pkg: github.com/takezoh/agent-reactor/client/connector
-              desc: "runtime/subsystem/ must not import connector (see ARCHITECTURE.md)"
         codexclient-isolation:
           # codexclient is a reusable platform transport — it must not reach into
           # client/ or orchestrator/.  codexschema and logger are the only

@@ -38,7 +38,6 @@ func (m Model) handleServerEvent(ev proto.ServerEvent) (tea.Model, tea.Cmd) {
 	switch e := ev.(type) {
 	case proto.EvtSessionsChanged:
 		m.sessions = e.Sessions
-		m.connectors = e.Connectors
 		m.activeOccupant = e.ActiveOccupant
 		if len(e.Features) > 0 {
 			next := features.FromConfig(stringSliceToMap(e.Features), features.All())

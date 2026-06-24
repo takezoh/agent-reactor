@@ -6,7 +6,7 @@ Internals organized by the three architecture layers. The canonical overview —
 
 ```
 platform/      Shared infrastructure — the client and orchestrator both depend on this
-client/        client-specific code — TUI, state machine, runtime, drivers, connectors
+client/        client-specific code — TUI, state machine, runtime, drivers
 orchestrator/  Symphony SPEC implementation — poll/dispatch/reconcile + observability HTTP
 cmd/           Binary entry points
 ```

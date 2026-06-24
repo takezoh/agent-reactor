@@ -8,7 +8,7 @@ import (
 
 func (m Model) requestSessions() tea.Cmd {
 	return func() tea.Msg {
-		sessions, activeID, activeOccupant, connectors, feats, err := m.client.ListSessions()
+		sessions, activeID, activeOccupant, feats, err := m.client.ListSessions()
 		if err != nil {
 			return nil
 		}
@@ -16,7 +16,6 @@ func (m Model) requestSessions() tea.Cmd {
 			Sessions:        sessions,
 			ActiveSessionID: activeID,
 			ActiveOccupant:  activeOccupant,
-			Connectors:      connectors,
 			Features:        feats,
 		}}
 	}

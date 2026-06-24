@@ -143,13 +143,6 @@ describe("App", () => {
     expect(tabs.map((t) => t.textContent)).toEqual(["TERMINAL", "EVENTS"]);
   });
 
-  it("renders ConnectorPanel container as null when connectors store is empty", () => {
-    useDaemonStore.setState({ sessions: [], activeSessionID: null });
-    render(<App />);
-    // ConnectorPanel returns null when connectors is empty
-    expect(screen.queryByLabelText("connectors")).toBeNull();
-  });
-
   it("renders NotificationToast aria-label container", () => {
     useDaemonStore.setState({ sessions: [], activeSessionID: null });
     render(<App />);

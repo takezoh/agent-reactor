@@ -116,17 +116,3 @@ func TestViewJSONStatusAlwaysEmitted(t *testing.T) {
 	}
 }
 
-func TestConnectorSection(t *testing.T) {
-	s := ConnectorSection{Title: "PRs", Items: []ConnectorItem{{Symbol: "*", Title: "t", Meta: "m"}}}
-	b, err := json.Marshal(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var back ConnectorSection
-	if err := json.Unmarshal(b, &back); err != nil {
-		t.Fatal(err)
-	}
-	if back.Title != "PRs" || len(back.Items) != 1 || back.Items[0].Title != "t" {
-		t.Errorf("round trip failed: %+v", back)
-	}
-}

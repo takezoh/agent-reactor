@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useConnectorsStore } from "../store/connectors";
 import { useDaemonStore } from "../store/daemon";
 import { useNotificationsStore } from "../store/notifications";
 import { useTranscriptStore } from "../store/transcripts";
@@ -37,7 +36,6 @@ describe("Connection", () => {
     useDaemonStore.getState().reset();
     useTranscriptStore.getState().reset();
     useNotificationsStore.getState().clear();
-    useConnectorsStore.getState().reset();
   });
 
   it("starts → fetches ticket → opens ws → sets status open", async () => {
@@ -262,48 +260,6 @@ describe("Connection", () => {
     ws.receive(JSON.stringify({ k: "n", sessionId: "s1", cmd: 9, title: "t", nowMs: 1 }));
     expect(useNotificationsStore.getState().items.length).toBe(1);
     expect(useNotificationsStore.getState().items[0]?.title).toBe("t");
-  });
-
-  it("TestDispatchesConnectorUpdate: cu frame updates connectors store", async () => {
-    const { ws } = await makeConnectedWS();
-    ws.receive(
-      JSON.stringify({
-        k: "cu",
-        connectors: [{ name: "x", label: "X", summary: "", available: true }],
-      }),
-    );
-    expect(useConnectorsStore.getState().connectors.length).toBe(1);
-    expect(useConnectorsStore.getState().connectors[0]?.name).toBe("x");
-  });
-
-  it("TestHelloWithConnectors: hello frame with connectors updates connectors store", async () => {
-    const { ws } = await makeConnectedWS();
-    ws.receive(
-      JSON.stringify({
-        k: "h",
-        sessions: [],
-        activeSessionID: null,
-        features: [],
-        serverTime: 0,
-        connectors: [{ name: "x", label: "X", summary: "", available: true }],
-      }),
-    );
-    expect(useConnectorsStore.getState().connectors.length).toBe(1);
-    expect(useConnectorsStore.getState().connectors[0]?.name).toBe("x");
-  });
-
-  it("TestViewUpdateWithConnectors: view-update frame with connectors updates connectors store", async () => {
-    const { ws } = await makeConnectedWS();
-    ws.receive(
-      JSON.stringify({
-        k: "v",
-        sessions: [],
-        activeSessionID: null,
-        connectors: [{ name: "y", label: "Y", summary: "", available: false }],
-      }),
-    );
-    expect(useConnectorsStore.getState().connectors.length).toBe(1);
-    expect(useConnectorsStore.getState().connectors[0]?.name).toBe("y");
   });
 
   it("TestUnsupportedKindIgnored: unknown frame kind does not throw", async () => {

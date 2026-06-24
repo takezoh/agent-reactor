@@ -1,6 +1,6 @@
 # client/ — agent-reactor client (Session Lifecycle Manager)
 
-`client/` is all of the client: the tmux TUI, the state machine, the runtime, drivers, and connectors. It depends on `platform/` but **must not** import `orchestrator/` (enforced by the `depguard` rule `client-no-orchestrator`).
+`client/` is all of the client: the tmux TUI, the state machine, the runtime, and drivers. It depends on `platform/` but **must not** import `orchestrator/` (enforced by the `depguard` rule `client-no-orchestrator`).
 
 The agent-reactor client is a *session lifecycle manager*, not an agent orchestrator. It gives you visibility and fast access to agents running across many projects; it does not decide what those agents do.
 
@@ -18,16 +18,15 @@ This split is why the core is testable without mocks: `Reduce` and `Driver.Step`
 | Package | Responsibility |
 |---|---|
 | `client/state/` | Pure domain layer — `State`, `Event`, `Effect`, `Reduce`. No I/O, no goroutines. Imports only stdlib + stdlib-only internal packages (`features`). |
-| `client/state/view/` | Wire-safe view types — `Status`, `View`, `Card`, `Tag`, `ConnectorSection`. Stdlib-only; no `state` import. |
+| `client/state/view/` | Wire-safe view types — `Status`, `View`, `Card`, `Tag`. Stdlib-only; no `state` import. |
 | `client/driver/` | Driver implementations — value-type plugins + per-frame `DriverState`. No I/O. |
-| `client/connector/` | Connector implementations — value-type plugins + per-daemon `ConnectorState`. No I/O. |
 | `client/runtime/` | Imperative shell — single event loop, Effect interpreter, backend abstraction. |
 | `client/runtime/worker/` | Worker pool — slow I/O jobs (summarize, transcript parse, git, github fetch). |
 | `client/runtime/subsystem/` | `Subsystem`/`Factory` interfaces + the `cli` and `stream` implementations. The only place in `runtime/` allowed to import `driver/<tool>`. |
 | `client/proto/` | Typed IPC wire layer — Command / Response / ServerEvent sum types + codec. Imports `state/view` only. |
 | `client/proto/sessions/` | Session-management helpers wrapping `proto.Client`. Imports `state`. |
 | `client/tools/` | Palette tools — Tool abstraction + DefaultRegistry. |
-| `client/tui/` | Presentation layer — Bubbletea UI, rendering, key input. Never branches on driver/connector name. |
+| `client/tui/` | Presentation layer — Bubbletea UI, rendering, key input. Never branches on driver name. |
 | `client/config/` | TOML loading, DataDir injection, SandboxResolver. |
 | `client/cli/` | Subcommand registry — tool-specific subcommands registered via `init()`. |
 | `client/lib/peers/` | Peers MCP server (IPC specific to the client). |
@@ -40,7 +39,6 @@ This split is why the core is testable without mocks: `Reduce` and `Driver.Step`
 | **Session** | A unit of work for an agent. `state.Session` owns a stack of execution **frames** (`[]SessionFrame`). The active frame is the stack tail; the root frame defines the session's existence — if it dies, the session is deleted. |
 | **Frame** | One execution context within a session, carrying its own `Command`, `LaunchOptions`, `DriverState`, `SubsystemID`, `TargetID`. Frame death truncates the stack from that frame onward; push-driver appends a new frame on top. |
 | **Subsystem** | Runtime-owned execution backend (`Start/BindFrame/ReleaseFrame/Stop`). `cli` manages single-process pane launch and worktree lifecycle; `stream` fronts long-lived structured backends (Codex App Server). The stream subsystem resolves the per-session UDS the app-server binds (`Factory.ResolveSockPath`) and derives the host-side dial path from the launch's bind mounts (`WrappedLaunch.HostPath`), but delegates exec wrapping (direct vs `docker exec`) to the `agentlaunch.Dispatcher` it holds. |
-| **Connector** | A per-daemon external service integration plugin (GitHub/Linear/Jira). One instance per daemon, vs Drivers which are per-frame. |
 | **Control Session** | The tmux session that houses all of the client. |
 | **Warm start** | Runtime startup while the tmux session is alive — restores the frame stack and rebinds to live panes; surviving containers are adopted. |
 | **Cold start** | Runtime startup when the tmux session is gone — respawns panes in root-to-tail order; surviving containers are discarded and provisioned fresh so `postCreate` daemons are guaranteed present. |
@@ -49,17 +47,17 @@ Hereafter "session" means a session managed by the client; tmux sessions are cal
 
 ## Code dependency direction
 
-- `main` → `runtime`, `driver`, `connector`, `proto`, `tools`, `tmux`, `config`, `logger`
+- `main` → `runtime`, `driver`, `proto`, `tools`, `tmux`, `config`, `logger`
 - `runtime` → `state` (calls `Reduce`), `proto` (wire codec), `runtime/worker`, `runtime/subsystem` (interface only — no concrete subsystem imports)
 - `runtime/subsystem/<kind>` → `state`, `driver/<tool>` (constants/socket paths only), `lib/*`, `sandbox/`
-- `runtime/worker` → `state` only (JobID, JobInput, EvJobResult); not driver/connector/lib
+- `runtime/worker` → `state` only (JobID, JobInput, EvJobResult); not driver/lib
 - `state` is self-contained — stdlib + stdlib-only internal packages (`features`) only
 - `state/view` → stdlib only; `state` re-exports its types as aliases
-- `driver` / `connector` → `state` (embed base types), `runtime/worker` (RegisterRunner), `lib/*`
+- `driver` → `state` (embed base types), `runtime/worker` (RegisterRunner), `lib/*`
 - `proto` → `state/view` only (does **not** import `state`)
-- `tui` → `proto/sessions`, `proto`, `state` (types), `tools`; not driver/connector/lib
+- `tui` → `proto/sessions`, `proto`, `state` (types), `tools`; not driver/lib
 
-Frames route events: `Reduce` routes session-level events by sessionID and frame-level events (hooks, subsystem events, lifecycle) by frameID to the owning frame's `Driver.Step`. `state.State.Connectors` routes by connector name to `Connector.Step`.
+Frames route events: `Reduce` routes session-level events by sessionID and frame-level events (hooks, subsystem events, lifecycle) by frameID to the owning frame's `Driver.Step`.
 
 ## Daemon ↔ TUI processes
 
@@ -82,7 +80,6 @@ The daemon and TUI are separate processes communicating via typed IPC (`proto`) 
 | Hook payload abstraction | `CmdEvent.Payload` as opaque `json.RawMessage` | Driver-specific fields need no state/runtime/proto changes. |
 | Agent hook integration | `arc event <eventType>` → `proto.CmdEvent`/`CmdHookEvent` → `EvDriverEvent` → `reduceDriverHook` → `Driver.Step(DEvHook)` | Used by hook-driven agents (Claude, Gemini). Host-side events carry `SenderID`; sandboxed events resolve the frame via bearer token. Hooks for truncated frames are dropped. |
 | Structured stream integration | `codex app-server` → `proto.CmdSubsystemEvent` → `EvSubsystem` → `reduceSubsystem` → `Driver.Step(DEvSubsystem)` | Used by Codex. **Exactly one `codex app-server` runs per session managed by the client** (`stream:session:<id>`). All frames within the same Session share one app-server; different Sessions get separate processes. The app-server is launched via `agentlaunch.Dispatcher.Wrap` + `agentlaunch.Spawn` (argv-direct; no bespoke `docker exec` construction in the stream backend) and binds a per-session UDS (`codex-<sessionID>.sock`). Frames join via `BindFrame` → `bindThread`. The daemon dials that UDS directly (host-side path resolved from the launch's bind mounts via `WrappedLaunch.HostPath`); each pane TUI attaches over the same socket with `codex --remote unix://<sock>` — no TCP routing bridge. The stream layer emits structured tool/approval/plan/diff/message/thread-lifecycle events; `TargetID` carries the logical thread identity. When a session's last frame is released, the app-server is reaped. |
-| Connector scope | Per-daemon (one instance each), no state persistence (TTL-based), initialization on first `EvTick` | External service info is tied to the whole user account; embedding in Driver would duplicate fetching. Initializing inside the reducer keeps it pure-function testable. |
 | Container egress restriction | Delegate to host (`docker network` + iptables) via `extra_create_args` | Hostname allowlists cannot be expressed by `docker create` flags alone. |
 | Sandbox launcher abstraction | `runtime.AgentLauncher` wraps each `LaunchPlan`; `SandboxDispatcher` resolves direct vs devcontainer per project. The stream daemon holds a separate `runtime.Config.StreamDispatcher` backed by a non-TTY `DevcontainerLauncher` (`docker exec -i`) that shares the same `sandbox.Manager` as the TUI-pane launcher (`-it`) | Keeps sandbox rewriting out of the reducer; one daemon mixes sandboxed and direct projects. TUI vs daemon consumers require different TTY settings but must share the same container lifecycle. |
 | Container↔host path translation | `lib/pathmap` rewrites IPC payload paths using the frame's mounts. Per-frame bearer token and mounts are held together in a single `framereg.Registry` (one RWMutex), written atomically (`RegisterWithMounts`) by the event loop and read by the container endpoint's per-connection goroutines. | `state/`, `runtime/` (above the launcher), and `tui/` stay unaware of container layout. The registry's RWMutex is the **one sanctioned lock** in the runtime root: container hook handlers read off-loop, so token/mounts cannot be plain loop-owned maps — and writing token+mounts under one lock closes the window where a hook could resolve a token but miss its mounts. |

@@ -38,8 +38,7 @@ func TestMainModel_EventUpdatesViewportContent(t *testing.T) {
 		{ID: "abcdef123456", Project: "proj1", View: state.View{DisplayName: "test-session"}},
 	}
 	model, _ = mm.handleEvent(proto.EvtSessionsChanged{
-		Sessions:   sessions,
-		Connectors: nil,
+		Sessions: sessions,
 	})
 	mm = model.(MainModel)
 
