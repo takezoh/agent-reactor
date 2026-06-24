@@ -91,13 +91,33 @@ type apiSessionConfig struct {
 	Projects       []string `json:"projects"`
 }
 
-// apiCreateReq is the POST /api/sessions body: project (optional), command,
-// and optional terminal cols/rows packed into state.LaunchOptions.
+// apiCreateReq is the POST /api/sessions body. Required: project (absolute
+// path) and command. Optional: terminal cols/rows hint, worktree (create a
+// git worktree before launch), and sandbox ("" / "auto" → follow project
+// config, "host" → force direct/host launch, same vocabulary the TUI
+// palette uses).
 type apiCreateReq struct {
-	Project string `json:"project"`
-	Command string `json:"command"`
-	Cols    int    `json:"cols,omitempty"`
-	Rows    int    `json:"rows,omitempty"`
+	Project  string `json:"project"`
+	Command  string `json:"command"`
+	Cols     int    `json:"cols,omitempty"`
+	Rows     int    `json:"rows,omitempty"`
+	Worktree bool   `json:"worktree,omitempty"`
+	Sandbox  string `json:"sandbox,omitempty"`
+}
+
+// parseSandbox maps the apiCreateReq sandbox field to the daemon's
+// SandboxOverride enum. "" and "auto" both mean "follow project config"
+// (SandboxOverrideAuto). "host" forces SandboxOverrideHost (the TUI
+// palette's "host" / sandbox=direct toggle). Anything else returns ok=false
+// so the gateway can 400 the request rather than silently degrading.
+func parseSandbox(v string) (state.SandboxOverride, bool) {
+	switch v {
+	case "", "auto":
+		return state.SandboxOverrideAuto, true
+	case "host":
+		return state.SandboxOverrideHost, true
+	}
+	return 0, false
 }
 
 // NewMux builds the backend HTTP handler. DaemonClient replaces the old
@@ -286,12 +306,21 @@ func handleCreateSession(d *DaemonClient) http.HandlerFunc {
 				"project", req.Project)
 			return
 		}
+		sandbox, ok := parseSandbox(req.Sandbox)
+		if !ok {
+			gatewayError(w, r, http.StatusBadRequest, "invalid_sandbox",
+				"sandbox must be one of \"\"/\"auto\"/\"host\"; got "+strconv.Quote(req.Sandbox),
+				"sandbox", req.Sandbox)
+			return
+		}
 		params := state.CreateSessionParams{
 			Project: req.Project,
 			Command: req.Command,
+			Sandbox: sandbox,
 			Options: state.LaunchOptions{
-				Cols: uint16(req.Cols),
-				Rows: uint16(req.Rows),
+				Cols:     uint16(req.Cols),
+				Rows:     uint16(req.Rows),
+				Worktree: state.WorktreeOption{Enabled: req.Worktree},
 			},
 		}
 		payload, err := json.Marshal(params)

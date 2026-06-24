@@ -47,6 +47,14 @@ function CreateSessionDialog({
 }) {
   const [project, setProject] = useState("");
   const [command, setCommand] = useState("");
+  // worktree and host mirror the TUI palette's Tab / Shift-Tab toggles:
+  // worktree=true asks the daemon to create a git worktree (LaunchOptions.
+  // Worktree.Enabled), host=true forces sandbox="host" (SandboxOverrideHost,
+  // bypassing the per-project sandbox config). Both default off, and we only
+  // include them in the POST body when truthy so the legacy minimal-body
+  // wire shape is preserved for the default path.
+  const [worktree, setWorktree] = useState(false);
+  const [host, setHost] = useState(false);
   const [cfg, setCfg] = useState<SessionConfig | null>(null);
   const [cfgErr, setCfgErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -136,13 +144,21 @@ function CreateSessionDialog({
     setBusy(true);
     setErr(null);
     try {
+      const reqBody: {
+        project: string;
+        command: string;
+        worktree?: boolean;
+        sandbox?: "host";
+      } = { project: projectTrimmed, command: commandTrimmed };
+      if (worktree) reqBody.worktree = true;
+      if (host) reqBody.sandbox = "host";
       const resp = await fetch("/api/sessions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${bearerToken}`,
         },
-        body: JSON.stringify({ project: projectTrimmed, command: commandTrimmed }),
+        body: JSON.stringify(reqBody),
       });
       if (!resp.ok) {
         // Surface the gateway's body verbatim — it carries the reason and
@@ -209,6 +225,28 @@ function CreateSessionDialog({
             ))}
           </datalist>
         </label>
+        <div className="create-session-toggles">
+          <label className="create-session-toggle">
+            <input
+              type="checkbox"
+              checked={worktree}
+              onChange={(e) => setWorktree(e.target.checked)}
+              disabled={busy}
+              aria-label="Create git worktree"
+            />
+            <span>Worktree (git)</span>
+          </label>
+          <label className="create-session-toggle">
+            <input
+              type="checkbox"
+              checked={host}
+              onChange={(e) => setHost(e.target.checked)}
+              disabled={busy}
+              aria-label="Run on host (skip sandbox)"
+            />
+            <span>Run on host (skip sandbox)</span>
+          </label>
+        </div>
         {cfgErr && <span className="error">session-config: {cfgErr}</span>}
         {err && <span className="error">{err}</span>}
         <div className="create-session-actions">

@@ -144,6 +144,23 @@ body {
   color: #ff6b6b;
   font-size: 0.85em;
 }
+.create-session-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.create-session label.create-session-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.95;
+  cursor: pointer;
+}
+.create-session label.create-session-toggle input {
+  margin: 0;
+  width: auto;
+  cursor: pointer;
+}
 .create-session-actions {
   display: flex;
   justify-content: flex-end;

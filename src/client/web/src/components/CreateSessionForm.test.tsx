@@ -153,6 +153,78 @@ describe("CreateSessionForm", () => {
     expect(valuesFrom(commandOptions)).toEqual(["shell", "claude", "claude --resume"]);
   });
 
+  it("sends worktree:true and sandbox:'host' when the toggles are on", async () => {
+    const fetchSpy = stubFetch({
+      "/api/session-config": () =>
+        sessionConfigResponse({
+          default_command: "shell",
+          commands: ["shell"],
+          projects: ["/home/me/repo-a"],
+        }),
+      "/api/sessions": () =>
+        new Response(JSON.stringify({ id: "new" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+    });
+    render(<CreateSessionForm conn={fakeConn} bearerToken="t" />);
+
+    openDialog();
+    await waitForDialogReady();
+
+    fireEvent.change(projectInput(), { target: { value: "/home/me/repo-a" } });
+    fireEvent.change(commandInput(), { target: { value: "shell" } });
+    // Aria labels expose the two toggles without coupling to visible copy.
+    fireEvent.click(screen.getByLabelText(/Create git worktree/i));
+    fireEvent.click(screen.getByLabelText(/Run on host/i));
+    fireEvent.click(screen.getByRole("button", { name: /create/i, hidden: true }));
+
+    await waitFor(() => {
+      expect(useDaemonStore.getState().activeSessionID).toBe("new");
+    });
+    const sessionsCall = fetchSpy.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "/api/sessions",
+    );
+    expect(JSON.parse((sessionsCall?.[1] as RequestInit).body as string)).toEqual({
+      project: "/home/me/repo-a",
+      command: "shell",
+      worktree: true,
+      sandbox: "host",
+    });
+  });
+
+  it("omits worktree and sandbox from the body when the toggles are off (legacy wire shape)", async () => {
+    const fetchSpy = stubFetch({
+      "/api/session-config": () =>
+        sessionConfigResponse({ default_command: "shell", commands: ["shell"] }),
+      "/api/sessions": () =>
+        new Response(JSON.stringify({ id: "new" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+    });
+    render(<CreateSessionForm conn={fakeConn} bearerToken="t" />);
+
+    openDialog();
+    await waitForDialogReady();
+
+    fireEvent.change(projectInput(), { target: { value: "/abs/path" } });
+    fireEvent.click(screen.getByRole("button", { name: /create/i, hidden: true }));
+
+    await waitFor(() => {
+      expect(useDaemonStore.getState().activeSessionID).toBe("new");
+    });
+    const sessionsCall = fetchSpy.mock.calls.find(
+      ([url]) => typeof url === "string" && url === "/api/sessions",
+    );
+    const parsed = JSON.parse((sessionsCall?.[1] as RequestInit).body as string);
+    // Default path must keep the minimal {project,command} shape so the
+    // gateway-side default (Worktree.Enabled=false, Sandbox=Auto) is reached.
+    expect(parsed).toEqual({ project: "/abs/path", command: "shell" });
+    expect(parsed).not.toHaveProperty("worktree");
+    expect(parsed).not.toHaveProperty("sandbox");
+  });
+
   it("accepts a custom command not present in the suggestions", async () => {
     const fetchSpy = stubFetch({
       "/api/session-config": () =>

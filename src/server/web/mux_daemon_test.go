@@ -308,6 +308,124 @@ func TestMux_CreateForwardsCmdEvent(t *testing.T) {
 	}
 }
 
+// TestMux_CreateForwardsWorktreeAndSandbox verifies that worktree=true and
+// sandbox="host" in the REST body reach the daemon as
+// CreateSessionParams.Options.Worktree.Enabled and Sandbox=SandboxOverrideHost
+// (the same vocabulary the TUI palette's worktree/host toggles use).
+func TestMux_CreateForwardsWorktreeAndSandbox(t *testing.T) {
+	t.Parallel()
+	d, daemon := newDaemonPair(t)
+	mux := NewMux(d, "tok")
+
+	done := make(chan state.CreateSessionParams, 1)
+	go func() {
+		env := daemon.recv()
+		var cmd struct {
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(env.Data, &cmd); err != nil {
+			t.Errorf("unmarshal CmdEvent: %v", err)
+			close(done)
+			return
+		}
+		var params state.CreateSessionParams
+		if err := json.Unmarshal(cmd.Payload, &params); err != nil {
+			t.Errorf("unmarshal params: %v", err)
+			close(done)
+			return
+		}
+		done <- params
+		daemon.sendResp(env.ReqID, proto.RespCreateSession{SessionID: "abc"})
+	}()
+
+	r := httptest.NewRequest(http.MethodPost, "/api/sessions",
+		strings.NewReader(`{"project":"/p","command":"sh","worktree":true,"sandbox":"host"}`))
+	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body %q)", w.Code, w.Body.String())
+	}
+
+	params := <-done
+	if !params.Options.Worktree.Enabled {
+		t.Error("Options.Worktree.Enabled = false, want true")
+	}
+	if params.Sandbox != state.SandboxOverrideHost {
+		t.Errorf("Sandbox = %v, want SandboxOverrideHost", params.Sandbox)
+	}
+}
+
+// TestMux_CreateDefaultsWorktreeAndSandbox verifies that omitting the new
+// fields keeps the legacy wire shape: worktree disabled, sandbox=Auto.
+func TestMux_CreateDefaultsWorktreeAndSandbox(t *testing.T) {
+	t.Parallel()
+	d, daemon := newDaemonPair(t)
+	mux := NewMux(d, "tok")
+
+	done := make(chan state.CreateSessionParams, 1)
+	go func() {
+		env := daemon.recv()
+		var cmd struct {
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(env.Data, &cmd); err != nil {
+			t.Errorf("unmarshal CmdEvent: %v", err)
+			close(done)
+			return
+		}
+		var params state.CreateSessionParams
+		if err := json.Unmarshal(cmd.Payload, &params); err != nil {
+			t.Errorf("unmarshal params: %v", err)
+			close(done)
+			return
+		}
+		done <- params
+		daemon.sendResp(env.ReqID, proto.RespCreateSession{SessionID: "abc"})
+	}()
+
+	r := httptest.NewRequest(http.MethodPost, "/api/sessions",
+		strings.NewReader(`{"project":"/p","command":"sh"}`))
+	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body %q)", w.Code, w.Body.String())
+	}
+
+	params := <-done
+	if params.Options.Worktree.Enabled {
+		t.Error("Options.Worktree.Enabled = true, want false (default)")
+	}
+	if params.Sandbox != state.SandboxOverrideAuto {
+		t.Errorf("Sandbox = %v, want SandboxOverrideAuto", params.Sandbox)
+	}
+}
+
+// TestMux_CreateRejectsUnknownSandbox verifies that a sandbox value outside
+// the {"", "auto", "host"} vocabulary is rejected at the gateway with 400
+// rather than silently dropped or forwarded.
+func TestMux_CreateRejectsUnknownSandbox(t *testing.T) {
+	t.Parallel()
+	d, _ := newDaemonPair(t)
+	mux := NewMux(d, "tok")
+
+	r := httptest.NewRequest(http.MethodPost, "/api/sessions",
+		strings.NewReader(`{"project":"/p","command":"sh","sandbox":"docker"}`))
+	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body %q)", w.Code, w.Body.String())
+	}
+}
+
 // --- list sessions ---
 
 // TestMux_ListMapsRespSessions verifies that GET /api/sessions maps
