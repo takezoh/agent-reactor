@@ -88,8 +88,17 @@ export function parseServerFrame(raw: string): ServerFrame | null {
       const vFrame: import("./server").ViewUpdateFrame = {
         k: "v",
         sessions: obj.sessions as SessionInfo[],
-        activeSessionID: (obj.activeSessionID as string | null | undefined) ?? null,
       };
+      // Preserve undefined when the wire omits activeSessionID (Go omitempty
+      // strips empty strings). The store's applyViewUpdate distinguishes
+      // undefined ("no change, keep current selection") from null/string
+      // ("override"). Coercing undefined→null here would clobber the user's
+      // selection on every daemon broadcast because the daemon does not
+      // track per-web-client selection — its EvtSessionsChanged carries
+      // ActiveSessionID="" for web-only deployments.
+      if (obj.activeSessionID !== undefined) {
+        vFrame.activeSessionID = obj.activeSessionID as string | null;
+      }
       if (Array.isArray(obj.connectors) && obj.connectors.every(parseConnectorInfoLoose)) {
         vFrame.connectors = obj.connectors as ConnectorInfo[];
       }

@@ -71,6 +71,16 @@ describe("daemonStore", () => {
     expect(useDaemonStore.getState().activeSessionID).toBe("new");
   });
 
+  it("applyViewUpdate clears activeSessionID when explicit null is provided", () => {
+    useDaemonStore.setState({ activeSessionID: "old" });
+    useDaemonStore.getState().applyViewUpdate({
+      k: "v",
+      sessions: [],
+      activeSessionID: null,
+    });
+    expect(useDaemonStore.getState().activeSessionID).toBeNull();
+  });
+
   it("selectSession updates activeSessionID", () => {
     useDaemonStore.getState().selectSession("x");
     expect(useDaemonStore.getState().activeSessionID).toBe("x");

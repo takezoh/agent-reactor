@@ -52,6 +52,35 @@ describe("parseServerFrame", () => {
     expect(parseServerFrame('{"k":"v","sessions":[{"id":"s1"}]}')).toBeNull();
   });
 
+  it("view-update without activeSessionID leaves field undefined (preserve semantics)", () => {
+    // Go's omitempty strips empty active_session_id from the wire. The store
+    // relies on `activeSessionID === undefined` to mean "no change" — coercing
+    // to null would clobber the web client's local selection on every daemon
+    // broadcast.
+    const raw =
+      '{"k":"v","sessions":[{"id":"s1","view":{"card":{"title":"T"},"status":"idle"}}]}';
+    const parsed = parseServerFrame(raw);
+    if (!parsed || Array.isArray(parsed) || parsed.k !== "v") throw new Error("expected v frame");
+    expect(parsed.activeSessionID).toBeUndefined();
+    expect("activeSessionID" in parsed).toBe(false);
+  });
+
+  it("view-update with explicit null activeSessionID forwards null (override)", () => {
+    const raw =
+      '{"k":"v","sessions":[{"id":"s1","view":{"card":{"title":"T"},"status":"idle"}}],"activeSessionID":null}';
+    const parsed = parseServerFrame(raw);
+    if (!parsed || Array.isArray(parsed) || parsed.k !== "v") throw new Error("expected v frame");
+    expect(parsed.activeSessionID).toBeNull();
+  });
+
+  it("view-update with string activeSessionID forwards string", () => {
+    const raw =
+      '{"k":"v","sessions":[{"id":"s1","view":{"card":{"title":"T"},"status":"idle"}}],"activeSessionID":"s1"}';
+    const parsed = parseServerFrame(raw);
+    if (!parsed || Array.isArray(parsed) || parsed.k !== "v") throw new Error("expected v frame");
+    expect(parsed.activeSessionID).toBe("s1");
+  });
+
   it("returns null when sessions[].view.card is missing", () => {
     expect(
       parseServerFrame('{"k":"v","sessions":[{"id":"s1","view":{"status":"idle"}}]}'),
