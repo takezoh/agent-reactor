@@ -51,6 +51,21 @@ pids=()
 cleanup() {
   kill "${pids[@]}" 2>/dev/null || true
   if [ "$KEEP_DATA_DIR" != "1" ]; then
+    # Remove docker containers this daemon spawned BEFORE deleting the data
+    # dir. Otherwise the container outlives the daemon with a bind mount
+    # pointing at the now-deleted $ARC_DATA_DIR/run/<projectHash>/, and any
+    # Claude session re-attached to it sees an empty /opt/agent-reactor/run/
+    # (no reactor-bridge, no arc.sock) — every hook → bridge call then dies
+    # with `/bin/sh: ... reactor-bridge: not found`.
+    #
+    # Label filter is prefix-scoped (see platform/sandbox/devcontainer/
+    # docker.go), so peer daemons under a different ROOST_DEVCONTAINER_PREFIX
+    # — including the user's TUI daemon at prefix `reactor` — are invisible.
+    local containers
+    containers=$(docker ps -aq --filter "label=${ROOST_DEVCONTAINER_PREFIX}-managed=1" 2>/dev/null || true)
+    if [ -n "$containers" ]; then
+      docker rm -f $containers >/dev/null 2>&1 || true
+    fi
     rm -rf "$ARC_DATA_DIR"
   fi
 }
