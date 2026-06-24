@@ -167,3 +167,16 @@ func (c *Config) ResolveDataDir() string {
 	}
 	return ConfigDirPath()
 }
+
+// ResolveDevcontainerPrefix returns the docker container/label prefix used by
+// this daemon. Resolution order: env ROOST_DEVCONTAINER_PREFIX → config
+// sandbox.devcontainer.name_prefix → "" (the devcontainer package falls back
+// to its DefaultNamePrefix). Use this when constructing the devcontainer
+// Manager so a peer daemon (e.g. scripts/run-dev.sh) can isolate its docker
+// namespace from the user's TUI daemon without editing the TOML.
+func (c *Config) ResolveDevcontainerPrefix() string {
+	if v := os.Getenv("ROOST_DEVCONTAINER_PREFIX"); v != "" {
+		return v
+	}
+	return c.Sandbox.Devcontainer.NamePrefix
+}

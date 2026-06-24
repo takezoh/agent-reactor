@@ -15,12 +15,28 @@ import (
 type ContainerInfo struct {
 	ID        string
 	State     string // "running", "exited", "created", etc.
-	MountHash string // reactor-mount-hash label; "" for containers created before the label existed
+	MountHash string // <prefix>-mount-hash label; "" for containers created before the label existed
 }
 
-const psFormat = "{{.ID}}\t{{.State}}\t{{.Label \"reactor-mount-hash\"}}"
+// effectivePrefix returns prefix when non-empty or DefaultNamePrefix otherwise.
+// Keeps docker.go independent of the Manager's NamePrefix-resolution path while
+// preserving the legacy "reactor" prefix as the default.
+func effectivePrefix(prefix string) string {
+	if prefix == "" {
+		return DefaultNamePrefix
+	}
+	return prefix
+}
 
-// parsePsLine parses one line of "docker ps" output in psFormat.
+// psFormatFor returns the docker ps --format string for the given prefix.
+// The mount-hash label key is prefix-scoped so containers created by a peer
+// daemon under a different prefix report MountHash="" here and never match
+// this daemon's --filter, keeping the two name-spaces fully separate.
+func psFormatFor(prefix string) string {
+	return "{{.ID}}\t{{.State}}\t{{.Label \"" + effectivePrefix(prefix) + "-mount-hash\"}}"
+}
+
+// parsePsLine parses one line of "docker ps" output produced by psFormatFor.
 func parsePsLine(line string) (*ContainerInfo, error) {
 	parts := strings.SplitN(line, "\t", 3)
 	if len(parts) < 2 {
@@ -33,12 +49,14 @@ func parsePsLine(line string) (*ContainerInfo, error) {
 	return info, nil
 }
 
-// FindSharedContainer returns the reactor-shared container, or nil if not found.
-func FindSharedContainer(ctx context.Context) (*ContainerInfo, error) {
+// FindSharedContainer returns the shared container owned by `prefix`, or nil.
+// Containers carrying a different prefix's labels are invisible.
+func FindSharedContainer(ctx context.Context, prefix string) (*ContainerInfo, error) {
+	p := effectivePrefix(prefix)
 	out, err := exec.CommandContext(ctx, "docker", "ps", "-a",
-		"--filter", "label=reactor-managed=1",
-		"--filter", "label=reactor-isolation=shared",
-		"--format", psFormat,
+		"--filter", "label="+p+"-managed=1",
+		"--filter", "label="+p+"-isolation=shared",
+		"--format", psFormatFor(p),
 	).Output()
 	if err != nil {
 		return nil, fmt.Errorf("docker ps (shared): %w", err)
@@ -54,12 +72,14 @@ func FindSharedContainer(ctx context.Context) (*ContainerInfo, error) {
 	return info, nil
 }
 
-// FindContainer returns the first reactor-managed container for projectPath, or nil.
-func FindContainer(ctx context.Context, projectPath string) (*ContainerInfo, error) {
+// FindContainer returns the first container for projectPath owned by `prefix`,
+// or nil. Containers carrying a different prefix's labels are invisible.
+func FindContainer(ctx context.Context, prefix, projectPath string) (*ContainerInfo, error) {
+	p := effectivePrefix(prefix)
 	out, err := exec.CommandContext(ctx, "docker", "ps", "-a",
-		"--filter", "label=reactor-managed=1",
-		"--filter", "label=reactor-project="+projectPath,
-		"--format", psFormat,
+		"--filter", "label="+p+"-managed=1",
+		"--filter", "label="+p+"-project="+projectPath,
+		"--format", psFormatFor(p),
 	).Output()
 	if err != nil {
 		return nil, fmt.Errorf("docker ps: %w", err)

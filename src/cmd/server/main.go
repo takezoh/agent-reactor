@@ -36,6 +36,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -76,10 +77,13 @@ const daemonShutdownTimeout = 5 * time.Second
 
 func run() error {
 	addr := flag.String("addr", ":8443", "listen address")
-	tokenFlag := flag.String("token", "", "bearer token (generated and printed if empty)")
+	tokenFlag := flag.String("token", "", "bearer token (generated and printed if empty); ignored with -no-auth")
 	certFile := flag.String("tls-cert", "", "TLS certificate file (self-signed if empty)")
 	keyFile := flag.String("tls-key", "", "TLS key file")
 	insecure := flag.Bool("insecure", false, "serve plain HTTP (no TLS) — local dev only")
+	noAuth := flag.Bool("no-auth", false,
+		"disable bearer-token AND WS-ticket auth — local dev only (loopback only). "+
+			"Bind MUST be 127.0.0.1/localhost; refuses non-loopback addrs.")
 	arcSock := flag.String("arc-sock", "",
 		"ATTACH MODE: path to an existing arc daemon Unix socket. "+
 			"Mutually exclusive with -data-dir. Refuses $HOME/.agent-reactor/arc.sock "+
@@ -94,9 +98,9 @@ func run() error {
 			"binary, falling back to PATH lookup. Only consulted with -data-dir.")
 	flag.Parse()
 
-	token := *tokenFlag
-	if token == "" {
-		token = randToken()
+	token, err := resolveAuth(*tokenFlag, *noAuth, *addr)
+	if err != nil {
+		return err
 	}
 
 	sockPath, child, err := resolveDaemon(*arcSock, *dataDir, *arcBin, os.Getenv("ARC_SOCKET"))
@@ -109,13 +113,11 @@ func run() error {
 	daemon := serverweb.NewDaemonClient(sockPath)
 	defer daemon.Close()
 
-	mux := http.NewServeMux()
-	mux.Handle("/", serverweb.NewMux(daemon, token))
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeHealth(w, daemon)
-	})
-
-	srv := &http.Server{Addr: *addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:           buildHTTPHandler(daemon, token, *noAuth),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -125,20 +127,69 @@ func run() error {
 		_ = srv.Shutdown(shutCtx)
 	}()
 
-	scheme := "https"
-	if *insecure {
-		scheme = "http"
-	}
-	log.Printf("agent-reactor backend on %s://%s  arc-sock=%s  token=%s  mode=%s",
-		scheme, *addr, sockPath, token, child.mode())
-	if os.Getenv("ARC_ALLOW_SHARED_DAEMON") == "1" {
-		log.Printf("WARNING: ARC_ALLOW_SHARED_DAEMON=1 — gateway is attached to a shared daemon; " +
-			"a gateway-induced wedge will affect every session inside it.")
-	}
+	logStartup(*addr, *insecure, *noAuth, sockPath, token, child.mode())
 	if err := tlsdev.Serve(srv, *insecure, *certFile, *keyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
+}
+
+// resolveAuth materializes the effective bearer token. -no-auth wins and
+// forces the token to "" (the gateway-side TokenAuth contract treats "" as
+// "reject everything", which is why no-auth mounts the API handler directly
+// instead of routing it through TokenAuth). Without -no-auth, an empty user
+// token is replaced with a freshly minted random one. -no-auth additionally
+// refuses non-loopback binds to keep the unauthenticated REST surface
+// off-network.
+func resolveAuth(tokenFlag string, noAuth bool, addr string) (string, error) {
+	if noAuth {
+		if !isLoopbackAddr(addr) {
+			return "", fmt.Errorf("-no-auth refuses non-loopback bind %q (use 127.0.0.1:<port> or localhost:<port>)", addr)
+		}
+		return "", nil
+	}
+	if tokenFlag == "" {
+		return randToken(), nil
+	}
+	return tokenFlag, nil
+}
+
+// buildHTTPHandler picks the appropriate mux variant and bolts on /healthz.
+// no-auth mode goes through NewMuxNoAuth, which mounts apiHandler directly
+// (no TokenAuth wrap) and skips the WS-ticket consume check.
+func buildHTTPHandler(daemon *serverweb.DaemonClient, token string, noAuth bool) http.Handler {
+	mux := http.NewServeMux()
+	if noAuth {
+		mux.Handle("/", serverweb.NewMuxNoAuth(daemon))
+	} else {
+		mux.Handle("/", serverweb.NewMux(daemon, token))
+	}
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		writeHealth(w, daemon)
+	})
+	return mux
+}
+
+func logStartup(addr string, insecure, noAuth bool, sockPath, token, mode string) {
+	scheme := "https"
+	if insecure {
+		scheme = "http"
+	}
+	authDesc := "token=" + token
+	if noAuth {
+		authDesc = "auth=disabled"
+	}
+	log.Printf("agent-reactor backend on %s://%s  arc-sock=%s  %s  mode=%s",
+		scheme, addr, sockPath, authDesc, mode)
+	if noAuth {
+		log.Printf("WARNING: -no-auth — bearer-token and WS-ticket checks are disabled. " +
+			"Anyone reaching this loopback port can drive every arc session. " +
+			"Local dev only; never expose this listener off-host.")
+	}
+	if os.Getenv("ARC_ALLOW_SHARED_DAEMON") == "1" {
+		log.Printf("WARNING: ARC_ALLOW_SHARED_DAEMON=1 — gateway is attached to a shared daemon; " +
+			"a gateway-induced wedge will affect every session inside it.")
+	}
 }
 
 func writeHealth(w http.ResponseWriter, d *serverweb.DaemonClient) {
@@ -164,6 +215,28 @@ func randToken() string {
 	b := make([]byte, 24)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// isLoopbackAddr reports whether listenAddr binds to a loopback interface.
+// Used as a guardrail for -no-auth: a non-loopback bind would expose the
+// authenticated REST surface to anyone on the network.
+// Accepts:  "127.0.0.1:8443", "[::1]:8443", "localhost:8443", "127.0.0.1"
+// Rejects:  ":8443" (wildcard), "0.0.0.0:8443", "192.168.1.5:8443"
+func isLoopbackAddr(listenAddr string) bool {
+	host, _, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		// SplitHostPort fails on a bare host with no port. Treat the input as
+		// a host literal in that case.
+		host = listenAddr
+	}
+	if host == "" {
+		return false // ":8443" form binds the wildcard — explicitly unsafe.
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // daemonHandle owns the spawned arc child (if any) so the gateway can reap

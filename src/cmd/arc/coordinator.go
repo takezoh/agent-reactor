@@ -129,7 +129,7 @@ func buildRuntime(ctx context.Context, cfg *config.Config, loginShell string, da
 
 	featureSet := features.FromConfig(cfg.Features.Enabled, features.All())
 	sbResolver := platformconfig.NewSandboxResolver(cfg.Sandbox)
-	agentLauncher, streamDispatcher, err := newAgentLauncher(ctx, cfg.Sandbox, sbResolver, cfg.Projects, dataDir, sockPath)
+	agentLauncher, streamDispatcher, err := newAgentLauncher(ctx, cfg.Sandbox, sbResolver, cfg.Projects, dataDir, sockPath, cfg.ResolveDevcontainerPrefix())
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -303,8 +303,11 @@ func runAndWait(ctx context.Context, cancel context.CancelFunc, rt *runtime.Runt
 // newAgentLauncher returns the AgentLauncher (TTY, for tmux panes) and
 // StreamDispatcher (non-TTY, for codex app-server stdio) for the configured
 // sandbox mode. Both dispatchers share the same devcontainer manager so
-// container provisioning is consistent.
-func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, resolver *platformconfig.SandboxResolver, projects platformconfig.ProjectsConfig, dataDir, sockPath string) (runtime.AgentLauncher, agentlaunch.Dispatcher, error) {
+// container provisioning is consistent. namePrefix is propagated to the
+// devcontainer Manager and ultimately to ContainerName + label keys, so two
+// peer daemons (TUI vs. run-dev gateway) under distinct prefixes never compete
+// for the same docker container name.
+func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, resolver *platformconfig.SandboxResolver, projects platformconfig.ProjectsConfig, dataDir, sockPath, namePrefix string) (runtime.AgentLauncher, agentlaunch.Dispatcher, error) {
 	d := &agentlaunch.SandboxDispatcher{
 		Resolver: resolver,
 		Direct:   agentlaunch.DirectDispatcher{SockPath: sockPath},
@@ -343,7 +346,8 @@ func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, reso
 		overlayFn := agentlaunch.BuildContainerOverlay(func(project string) platformconfig.SandboxConfig {
 			return resolver.Resolve(project)
 		}, projects, runner, dataDir, statedriver.SetupSubcmds())
-		mgr := sandboxdc.New(overlayFn)
+		mgr := sandboxdc.NewWithPrefix(overlayFn, namePrefix)
+		slog.Info("sandbox: devcontainer prefix", "prefix", mgr.NamePrefix())
 		d.Devcontainer = agentlaunch.NewDevcontainerLauncher(mgr,
 			func(project string) platformconfig.SandboxConfig { return resolver.Resolve(project) },
 			func(project string) *platformconfig.SandboxConfig { return resolver.ResolveProjectScope(project) },

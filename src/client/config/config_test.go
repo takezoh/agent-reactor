@@ -407,3 +407,37 @@ func TestSandboxConfig_Validate_Isolation(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveDevcontainerPrefix pins the resolution order env →
+// sandbox.devcontainer.name_prefix → "" so scripts/run-dev.sh can isolate its
+// docker namespace from the user's TUI daemon purely via env, while a config
+// override is honored when env is unset.
+func TestResolveDevcontainerPrefix(t *testing.T) {
+	const envVar = "ROOST_DEVCONTAINER_PREFIX"
+
+	t.Run("env wins over config", func(t *testing.T) {
+		t.Setenv(envVar, "reactor-dev")
+		cfg := DefaultConfig()
+		cfg.Sandbox.Devcontainer.NamePrefix = "configured"
+		if got := cfg.ResolveDevcontainerPrefix(); got != "reactor-dev" {
+			t.Errorf("ResolveDevcontainerPrefix = %q, want reactor-dev (env)", got)
+		}
+	})
+
+	t.Run("config used when env empty", func(t *testing.T) {
+		t.Setenv(envVar, "")
+		cfg := DefaultConfig()
+		cfg.Sandbox.Devcontainer.NamePrefix = "configured"
+		if got := cfg.ResolveDevcontainerPrefix(); got != "configured" {
+			t.Errorf("ResolveDevcontainerPrefix = %q, want configured", got)
+		}
+	})
+
+	t.Run("empty when neither set", func(t *testing.T) {
+		t.Setenv(envVar, "")
+		cfg := DefaultConfig()
+		if got := cfg.ResolveDevcontainerPrefix(); got != "" {
+			t.Errorf("ResolveDevcontainerPrefix = %q, want \"\" (devcontainer pkg applies its own default)", got)
+		}
+	})
+}

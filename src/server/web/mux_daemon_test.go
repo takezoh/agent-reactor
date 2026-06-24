@@ -493,3 +493,47 @@ func TestMux_AuthInvariant(t *testing.T) {
 		t.Fatalf("want 401, got %d", w.Code)
 	}
 }
+
+// TestMuxNoAuth_AllowsUnauthenticated verifies that NewMuxNoAuth lets a
+// request through with no Authorization header — the local-dev contract
+// scripts/run-dev.sh relies on. We exercise both the REST path (would 401
+// under NewMux) and a WS-ticket consumption (would 401 under NewMux).
+//
+// We do NOT assert WS handshake success: a real WS upgrade needs a daemon-
+// backed terminal. Reaching the daemon-health check (503 in this test, since
+// the dialer always errors) instead of the 401 ticket-rejection path is
+// sufficient — it proves the ticket gate was skipped.
+func TestMuxNoAuth_AllowsUnauthenticated(t *testing.T) {
+	t.Parallel()
+	d := NewDaemonClientWithDialer(
+		func() (*proto.Client, error) { return nil, errors.New("unused") },
+		time.Millisecond, 2*time.Millisecond,
+	)
+	defer d.Close()
+
+	mux := NewMuxNoAuth(d)
+
+	t.Run("REST passes without bearer", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		// Daemon dial fails in this test, so the handler reaches the daemon
+		// path and produces a non-401 error (503/504/500). The point is that
+		// 401 is NOT returned — TokenAuth was bypassed.
+		if w.Code == http.StatusUnauthorized {
+			t.Fatalf("no-auth mux still returned 401 on /api/sessions; body=%q", w.Body.String())
+		}
+	})
+
+	t.Run("WS without ticket reaches daemon health check", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/ws", nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		// Under NewMux this would be 401 (ticket missing); under NewMuxNoAuth
+		// the handler proceeds to the daemon-health check, which returns 503
+		// because the dialer errors.
+		if w.Code == http.StatusUnauthorized {
+			t.Fatalf("no-auth mux still returned 401 on /ws; body=%q", w.Body.String())
+		}
+	})
+}

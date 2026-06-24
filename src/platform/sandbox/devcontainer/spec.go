@@ -37,12 +37,21 @@ var localEnvRe = regexp.MustCompile(`\$\{localEnv:([A-Za-z_][A-Za-z0-9_]*)\}`)
 // Capture groups: [1]=containerEnv form, [2]=${VAR} form, [3]=$VAR form.
 var envVarRe = regexp.MustCompile(`\$(?:\{containerEnv:([A-Za-z_][A-Za-z0-9_]*)\}|\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))`)
 
+// DefaultNamePrefix is the legacy/backwards-compatible container & label prefix
+// used when NamePrefix is empty. Daemons that want process-isolation from a
+// peer arc daemon (e.g. scripts/run-dev.sh side-by-side with the user's TUI
+// daemon) MUST configure a distinct prefix — otherwise both daemons compete
+// for the same container name and the mount-hash recreate path will rm each
+// other's containers (see web-gateway-isolation memory).
+const DefaultNamePrefix = "reactor"
+
 // DevcontainerSpec holds the resolved container configuration for a project,
 // derived from devcontainer.json with roost overlay applied.
 type DevcontainerSpec struct {
 	ProjectPath             string
 	Image                   string // resolved from devcontainer.json image: or build.name
 	Isolation               Isolation
+	NamePrefix              string // container-name & label prefix; empty → DefaultNamePrefix
 	ContainerEnv            map[string]string
 	RemoteEnv               map[string]string // applied via docker exec -e (like VS Code remote processes)
 	Mounts                  []string          // docker --mount or -v format
@@ -57,6 +66,17 @@ type DevcontainerSpec struct {
 	PostCreate              []string          // nil = no postCreateCommand; else exec argv
 	ExtraPostCreate         [][]string        // reactor-injected extra postCreateCommands, run after PostCreate
 	PreExec                 string            // roost extension: shell command run before each docker exec (preExecCommand)
+}
+
+// EffectiveNamePrefix returns NamePrefix or DefaultNamePrefix when empty.
+// Use this in code paths that build container names, --label keys, or docker
+// ps --filter expressions, so a Manager configured with a custom prefix is
+// invisible to a peer daemon using the default.
+func (s *DevcontainerSpec) EffectiveNamePrefix() string {
+	if s == nil || s.NamePrefix == "" {
+		return DefaultNamePrefix
+	}
+	return s.NamePrefix
 }
 
 // SpecOverlay carries reactor-injected env/mounts merged on top of base devcontainer.json.
@@ -369,30 +389,32 @@ func (s *DevcontainerSpec) EffectiveUser() string {
 }
 
 // ContainerName returns the stable docker container name.
-// In shared mode returns the fixed name "reactor-shared"; otherwise a per-project hash.
+// In shared mode returns "<prefix>-shared"; otherwise "<prefix>-<projectHash>".
 func (s *DevcontainerSpec) ContainerName() string {
+	p := s.EffectiveNamePrefix()
 	if s.Isolation == IsolationShared {
-		return "reactor-shared"
+		return p + "-shared"
 	}
-	return "reactor-" + projectHash(s.ProjectPath)
+	return p + "-" + projectHash(s.ProjectPath)
 }
 
 // BuildCreateArgs returns the argument list for "docker create <args>".
 // The returned slice does NOT include "create" itself.
 func (s *DevcontainerSpec) BuildCreateArgs(image string) []string {
+	p := s.EffectiveNamePrefix()
 	args := []string{
 		"--name", s.ContainerName(),
-		"--label", "reactor-managed=1",
-		// reactor-mount-hash is stamped for BOTH isolation kinds so ensureContainer
+		"--label", p + "-managed=1",
+		// <prefix>-mount-hash is stamped for BOTH isolation kinds so ensureContainer
 		// can detect mount drift and auto-recreate. Project containers historically
 		// omitted it, which silently stranded project-scope sandbox changes (e.g. a
 		// newly added host_exec overlay mount) on a reused pre-change container.
-		"--label", "reactor-mount-hash=" + s.MountConfigurationHash(),
+		"--label", p + "-mount-hash=" + s.MountConfigurationHash(),
 	}
 	if s.Isolation == IsolationShared {
-		args = append(args, "--label", "reactor-isolation=shared")
+		args = append(args, "--label", p+"-isolation=shared")
 	} else {
-		args = append(args, "--label", "reactor-project="+s.ProjectPath)
+		args = append(args, "--label", p+"-project="+s.ProjectPath)
 	}
 	if s.ContainerUser != "" {
 		args = append(args, "-u", s.ContainerUser)

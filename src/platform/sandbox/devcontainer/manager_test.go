@@ -814,6 +814,94 @@ func TestContainerName_shared(t *testing.T) {
 	}
 }
 
+// TestContainerName_customPrefix pins the cross-daemon isolation invariant:
+// a non-default NamePrefix MUST flow through ContainerName for both isolation
+// kinds. Two arc daemons configured under distinct prefixes (e.g. the user's
+// "reactor" TUI daemon and scripts/run-dev.sh's "reactor-dev" gateway) must
+// produce non-overlapping container names per project, otherwise the
+// mount-hash drift recreate path would docker rm -f the peer's container.
+func TestContainerName_customPrefix(t *testing.T) {
+	t.Run("project", func(t *testing.T) {
+		s := &DevcontainerSpec{ProjectPath: "/workspace/myapp", Isolation: IsolationProject, NamePrefix: "reactor-dev"}
+		got := s.ContainerName()
+		if !strings.HasPrefix(got, "reactor-dev-") {
+			t.Errorf("ContainerName = %q, want reactor-dev-<hash>", got)
+		}
+		// Must NOT collide with the default-prefix peer's name.
+		def := (&DevcontainerSpec{ProjectPath: "/workspace/myapp", Isolation: IsolationProject}).ContainerName()
+		if got == def {
+			t.Errorf("custom-prefix ContainerName %q collides with default-prefix peer %q", got, def)
+		}
+	})
+	t.Run("shared", func(t *testing.T) {
+		s := &DevcontainerSpec{Isolation: IsolationShared, NamePrefix: "reactor-dev"}
+		if got := s.ContainerName(); got != "reactor-dev-shared" {
+			t.Errorf("ContainerName = %q, want reactor-dev-shared", got)
+		}
+	})
+}
+
+// TestBuildCreateArgs_customPrefix_labelKeys pins that every reactor-* label
+// key (managed / mount-hash / project / isolation) is rewritten to the
+// configured prefix. The label keys are what docker ps --filter inside
+// FindContainer/FindSharedContainer match on, so a custom prefix must travel
+// to the labels too — otherwise a peer daemon would still find this container
+// despite the rename.
+func TestBuildCreateArgs_customPrefix_labelKeys(t *testing.T) {
+	t.Run("project", func(t *testing.T) {
+		s := &DevcontainerSpec{ProjectPath: "/workspace/myapp", Isolation: IsolationProject, NamePrefix: "reactor-dev"}
+		args := s.BuildCreateArgs("test:latest")
+		joined := strings.Join(args, " ")
+		for _, want := range []string{
+			"reactor-dev-managed=1",
+			"reactor-dev-mount-hash=",
+			"reactor-dev-project=/workspace/myapp",
+		} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("BuildCreateArgs missing %q in %v", want, args)
+			}
+		}
+		for _, banned := range []string{
+			"reactor-managed=1",
+			"reactor-project=/workspace/myapp",
+		} {
+			if strings.Contains(joined, banned) {
+				t.Errorf("BuildCreateArgs leaked default-prefix label %q in %v", banned, args)
+			}
+		}
+	})
+	t.Run("shared", func(t *testing.T) {
+		s := &DevcontainerSpec{ProjectPath: "/workspace/myapp", Isolation: IsolationShared, NamePrefix: "reactor-dev"}
+		args := s.BuildCreateArgs("test:latest")
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "reactor-dev-isolation=shared") {
+			t.Errorf("shared mode missing reactor-dev-isolation=shared in %v", args)
+		}
+		if strings.Contains(joined, "reactor-isolation=shared") {
+			t.Errorf("shared mode leaked default-prefix isolation label in %v", args)
+		}
+	})
+}
+
+// TestManager_NamePrefix_InjectedIntoSpec verifies the inject point inside
+// loadSpec: the Manager's prefix lands on every spec returned by loadSpec, so
+// callers of ContainerName / BuildCreateArgs naturally produce prefix-scoped
+// names without each call site having to remember to set it.
+func TestManager_NamePrefix_InjectedIntoSpec(t *testing.T) {
+	project := setupTestSpec(t)
+	m := NewWithPrefix(nil, "reactor-dev")
+	spec, err := m.loadSpec(sandbox.IsolationPlan{Kind: IsolationProject}, project, filepath.Join(project, ".devcontainer"))
+	if err != nil {
+		t.Fatalf("loadSpec: %v", err)
+	}
+	if spec.NamePrefix != "reactor-dev" {
+		t.Errorf("loadSpec did not inject prefix: spec.NamePrefix = %q, want reactor-dev", spec.NamePrefix)
+	}
+	if got := spec.ContainerName(); !strings.HasPrefix(got, "reactor-dev-") {
+		t.Errorf("post-inject ContainerName = %q, want reactor-dev-<hash>", got)
+	}
+}
+
 func TestIsShared(t *testing.T) {
 	t.Run("shared", func(t *testing.T) {
 		cs := &ContainerState{spec: &DevcontainerSpec{Isolation: IsolationShared}}
@@ -847,8 +935,8 @@ func withMockDockerStack(t *testing.T, m dockerStackMocks) {
 		stop   func(context.Context, string) error
 		rm     func(context.Context, string) error
 		create func(context.Context, []string) (string, error)
-		find   func(context.Context, string) (*ContainerInfo, error)
-		shared func(context.Context) (*ContainerInfo, error)
+		find   func(context.Context, string, string) (*ContainerInfo, error)
+		shared func(context.Context, string) (*ContainerInfo, error)
 		image  func(context.Context, string) (map[string]string, error)
 		post   func(context.Context, string, string, []string)
 	}{
@@ -897,8 +985,8 @@ type dockerStackMocks struct {
 	stop       func(context.Context, string) error
 	remove     func(context.Context, string) error
 	create     func(context.Context, []string) (string, error)
-	find       func(context.Context, string) (*ContainerInfo, error)
-	findShared func(context.Context) (*ContainerInfo, error)
+	find       func(context.Context, string, string) (*ContainerInfo, error)
+	findShared func(context.Context, string) (*ContainerInfo, error)
 	imageEnv   func(context.Context, string) (map[string]string, error)
 	postCreate func(context.Context, string, string, []string)
 }
@@ -922,7 +1010,7 @@ func TestEnsureInstance_CreateNew_ProjectMode(t *testing.T) {
 	project := setupTestSpec(t)
 	created := false
 	withMockDockerStack(t, dockerStackMocks{
-		find: func(_ context.Context, _ string) (*ContainerInfo, error) {
+		find: func(_ context.Context, _, _ string) (*ContainerInfo, error) {
 			return nil, nil // no existing container
 		},
 		imageEnv: func(_ context.Context, _ string) (map[string]string, error) {
@@ -955,7 +1043,7 @@ func TestEnsureInstance_ReuseExisting_ProjectMode(t *testing.T) {
 	project := setupTestSpec(t)
 	startCalled := false
 	withMockDockerStack(t, dockerStackMocks{
-		find: func(_ context.Context, _ string) (*ContainerInfo, error) {
+		find: func(_ context.Context, _, _ string) (*ContainerInfo, error) {
 			// MountHash "none" matches a nil-overlay spec (no mounts) so the
 			// mount-drift check passes and the container is reused.
 			return &ContainerInfo{ID: "existing", State: "exited", MountHash: "none"}, nil
@@ -992,7 +1080,7 @@ func TestEnsureInstance_ColdStartDiscardsExistingContainer(t *testing.T) {
 	var removed string
 	var created bool
 	withMockDockerStack(t, dockerStackMocks{
-		find: func(_ context.Context, _ string) (*ContainerInfo, error) {
+		find: func(_ context.Context, _, _ string) (*ContainerInfo, error) {
 			return &ContainerInfo{ID: "stale", State: "running"}, nil
 		},
 		imageEnv: func(_ context.Context, _ string) (map[string]string, error) {
@@ -1027,7 +1115,7 @@ func TestEnsureInstance_ColdStartNoExistingGoesStraightToCreate(t *testing.T) {
 	var removeCalled bool
 	var created bool
 	withMockDockerStack(t, dockerStackMocks{
-		find: func(_ context.Context, _ string) (*ContainerInfo, error) { return nil, nil },
+		find: func(_ context.Context, _, _ string) (*ContainerInfo, error) { return nil, nil },
 		imageEnv: func(_ context.Context, _ string) (map[string]string, error) {
 			return map[string]string{}, nil
 		},
@@ -1059,7 +1147,7 @@ func TestEnsureInstance_WarmStartReusesExistingContainer(t *testing.T) {
 	project := setupTestSpec(t)
 	var removeCalled, createCalled bool
 	withMockDockerStack(t, dockerStackMocks{
-		find: func(_ context.Context, _ string) (*ContainerInfo, error) {
+		find: func(_ context.Context, _, _ string) (*ContainerInfo, error) {
 			// MountHash "none" matches a nil-overlay spec, so warm reuse is not
 			// blocked by the mount-drift check.
 			return &ContainerInfo{ID: "warm-ctr", State: "running", MountHash: "none"}, nil
@@ -1102,7 +1190,7 @@ func TestEnsureInstance_ProjectMode_MountDriftRecreates(t *testing.T) {
 	}
 	var removed, created bool
 	withMockDockerStack(t, dockerStackMocks{
-		find: func(_ context.Context, _ string) (*ContainerInfo, error) {
+		find: func(_ context.Context, _, _ string) (*ContainerInfo, error) {
 			// Leftover project container from before host_exec existed: its
 			// mount-hash predates the overlay mount (here "" — a pre-label container).
 			return &ContainerInfo{ID: "stale-proj", State: "running", MountHash: ""}, nil
@@ -1143,7 +1231,7 @@ func TestEnsureInstance_ProjectMode_MountMatchReuses(t *testing.T) {
 
 	var createCalled, startCalled bool
 	withMockDockerStack(t, dockerStackMocks{
-		find: func(_ context.Context, _ string) (*ContainerInfo, error) {
+		find: func(_ context.Context, _, _ string) (*ContainerInfo, error) {
 			return &ContainerInfo{ID: "warm-proj", State: "exited", MountHash: expected}, nil
 		},
 		imageEnv: func(_ context.Context, _ string) (map[string]string, error) { return map[string]string{}, nil },
@@ -1169,7 +1257,7 @@ func TestEnsureInstance_ProjectMode_MountMatchReuses(t *testing.T) {
 func TestEnsureInstance_ImageEnvFailureIsNonFatal(t *testing.T) {
 	project := setupTestSpec(t)
 	withMockDockerStack(t, dockerStackMocks{
-		find: func(_ context.Context, _ string) (*ContainerInfo, error) { return nil, nil },
+		find: func(_ context.Context, _, _ string) (*ContainerInfo, error) { return nil, nil },
 		imageEnv: func(_ context.Context, _ string) (map[string]string, error) {
 			return nil, fmt.Errorf("image not found locally")
 		},
@@ -1186,7 +1274,7 @@ func TestEnsureInstance_ImageEnvFailureIsNonFatal(t *testing.T) {
 func TestEnsureInstance_FindContainerError(t *testing.T) {
 	project := setupTestSpec(t)
 	withMockDockerStack(t, dockerStackMocks{
-		find: func(_ context.Context, _ string) (*ContainerInfo, error) {
+		find: func(_ context.Context, _, _ string) (*ContainerInfo, error) {
 			return nil, fmt.Errorf("docker daemon not running")
 		},
 	})
@@ -1201,7 +1289,7 @@ func TestEnsureInstance_CachedSecondCall(t *testing.T) {
 	project := setupTestSpec(t)
 	createCalls := 0
 	withMockDockerStack(t, dockerStackMocks{
-		find:     func(_ context.Context, _ string) (*ContainerInfo, error) { return nil, nil },
+		find:     func(_ context.Context, _, _ string) (*ContainerInfo, error) { return nil, nil },
 		imageEnv: func(_ context.Context, _ string) (map[string]string, error) { return map[string]string{}, nil },
 		create: func(_ context.Context, _ []string) (string, error) {
 			createCalls++

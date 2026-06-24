@@ -27,6 +27,10 @@ const SharedContainerKey = sandbox.SharedInstanceKey
 // Docker call indirections. Tests override these to drive Manager scenarios
 // that would otherwise require a real docker daemon (the stale-bind-mount
 // recreate path, the shared-vs-project destroy split, …).
+//
+// findContainerFn / findSharedContainerFn take the Manager's NamePrefix as
+// first argument so peer daemons running under a different prefix never see
+// each other's containers in `docker ps --filter`.
 var (
 	startContainerFn      = StartContainer
 	stopContainerFn       = StopContainer
@@ -123,17 +127,38 @@ func (cs *ContainerState) EffectiveUser() string {
 // Reactor does not build images; the image name is read from devcontainer.json (image: or build.name).
 type Manager struct {
 	overlayFn  OverlayFunc
+	namePrefix string // injected into every spec; "" → DefaultNamePrefix
 	mu         sync.Mutex
 	inflight   singleflight.Group
 	containers map[string]*ContainerState // key = projectPath
 }
 
-// New returns a Manager. overlayFn may be nil.
+// New returns a Manager whose containers and labels use the default prefix.
+// overlayFn may be nil. Equivalent to NewWithPrefix(overlayFn, "").
 func New(overlayFn OverlayFunc) *Manager {
+	return NewWithPrefix(overlayFn, "")
+}
+
+// NewWithPrefix returns a Manager that uses `namePrefix` for container names
+// and label keys. An empty prefix falls back to DefaultNamePrefix. A daemon
+// running side-by-side with another arc daemon (e.g. scripts/run-dev.sh next
+// to the user's TUI daemon) MUST configure a distinct prefix here; otherwise
+// the docker container namespace collides across data dirs and mount-hash
+// drift detection silently rm's the peer's containers.
+func NewWithPrefix(overlayFn OverlayFunc, namePrefix string) *Manager {
 	return &Manager{
 		overlayFn:  overlayFn,
+		namePrefix: namePrefix,
 		containers: make(map[string]*ContainerState),
 	}
+}
+
+// NamePrefix returns the configured prefix, falling back to DefaultNamePrefix.
+func (m *Manager) NamePrefix() string {
+	if m == nil || m.namePrefix == "" {
+		return DefaultNamePrefix
+	}
+	return m.namePrefix
 }
 
 // EnsureInstance ensures the devcontainer for projectPath is running.
@@ -178,13 +203,14 @@ func (m *Manager) ensureContainer(ctx context.Context, instanceKey, projectPath 
 
 	t := time.Now()
 	findCtx, findCancel := context.WithTimeout(ctx, 5*time.Second)
+	prefix := m.NamePrefix()
 	if opts.Isolation.IsShared() {
-		ctr, err = findSharedContainerFn(findCtx)
+		ctr, err = findSharedContainerFn(findCtx, prefix)
 	} else {
-		ctr, err = findContainerFn(findCtx, projectPath)
+		ctr, err = findContainerFn(findCtx, prefix, projectPath)
 	}
 	findCancel()
-	slog.Info("devcontainer: stage", "name", "find", "elapsed", time.Since(t), "project", projectPath, "shared", opts.Isolation.IsShared())
+	slog.Info("devcontainer: stage", "name", "find", "elapsed", time.Since(t), "project", projectPath, "shared", opts.Isolation.IsShared(), "prefix", prefix)
 	if err != nil {
 		return fmt.Errorf("devcontainer: find container: %w", err)
 	}
@@ -350,6 +376,10 @@ func (m *Manager) loadSpec(plan sandbox.IsolationPlan, projectPath, dcDir string
 		}
 		spec.Apply(overlay)
 	}
+	// Inject the Manager's prefix so ContainerName / BuildCreateArgs and the
+	// label keys stamped on the new container all come out under this daemon's
+	// namespace, never the legacy default.
+	spec.NamePrefix = m.namePrefix
 	return spec, nil
 }
 

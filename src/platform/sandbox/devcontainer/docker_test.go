@@ -66,16 +66,23 @@ func TestParsePsLine(t *testing.T) {
 	}
 }
 
-// psFormat is the --format string we hand to "docker ps". Drift would silently
-// break parsePsLine; pin it so a re-order shows up in review.
+// psFormatFor is the --format string we hand to "docker ps". Drift would silently
+// break parsePsLine; pin it so a re-order shows up in review. The mount-hash
+// label key is prefix-scoped: default ("") falls back to DefaultNamePrefix,
+// and a custom prefix is reflected in the label key so peer daemons under
+// different prefixes never observe each other's mount hash.
 func TestPsFormat_StableContract(t *testing.T) {
-	want := "{{.ID}}\t{{.State}}\t{{.Label \"reactor-mount-hash\"}}"
-	if psFormat != want {
-		t.Errorf("psFormat = %q\nwant      %q\n(parsePsLine assumes this exact column order)", psFormat, want)
+	wantDefault := "{{.ID}}\t{{.State}}\t{{.Label \"reactor-mount-hash\"}}"
+	gotDefault := psFormatFor("")
+	if gotDefault != wantDefault {
+		t.Errorf("psFormatFor(\"\") = %q\nwant                %q\n(parsePsLine assumes this exact column order)", gotDefault, wantDefault)
 	}
-	// Sanity: it should produce three tab-separated fields.
-	if strings.Count(psFormat, "\t") != 2 {
-		t.Errorf("psFormat must have exactly 2 tab separators, got %d in %q",
-			strings.Count(psFormat, "\t"), psFormat)
+	if strings.Count(gotDefault, "\t") != 2 {
+		t.Errorf("psFormatFor must have exactly 2 tab separators, got %d in %q",
+			strings.Count(gotDefault, "\t"), gotDefault)
+	}
+	wantCustom := "{{.ID}}\t{{.State}}\t{{.Label \"reactor-dev-mount-hash\"}}"
+	if got := psFormatFor("reactor-dev"); got != wantCustom {
+		t.Errorf("psFormatFor(\"reactor-dev\") = %q\nwant                          %q", got, wantCustom)
 	}
 }

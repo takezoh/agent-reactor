@@ -108,11 +108,29 @@ type apiCreateReq struct {
 // endpoint, which a browser cannot send headers on, is guarded by a short-lived
 // single-use ticket minted over the token-authenticated API.
 func NewMux(d *DaemonClient, token string) http.Handler {
+	return newMux(d, token, false)
+}
+
+// NewMuxNoAuth builds the backend HTTP handler with bearer-token AND WS-ticket
+// checks disabled. Intended for local dev only (scripts/run-dev.sh) on a
+// loopback bind. Production callers MUST use NewMux.
+func NewMuxNoAuth(d *DaemonClient) http.Handler {
+	return newMux(d, "", true)
+}
+
+func newMux(d *DaemonClient, token string, noAuth bool) http.Handler {
 	tickets := newTicketStore()
 	mux := http.NewServeMux()
 
 	// REST API: bearer token via Authorization header (never a query param).
-	mux.Handle("/api/", TokenAuth(token, apiHandler(d, tickets)))
+	// In no-auth mode the API handler is mounted directly — the TokenAuth
+	// "empty want rejects everything" contract is preserved on the path that
+	// still uses it.
+	if noAuth {
+		mux.Handle("/api/", apiHandler(d, tickets))
+	} else {
+		mux.Handle("/api/", TokenAuth(token, apiHandler(d, tickets)))
+	}
 
 	// The WebSocket attach endpoint authenticates with a single-use ticket (a
 	// browser WebSocket cannot carry an Authorization header), never the bearer
@@ -122,7 +140,7 @@ func NewMux(d *DaemonClient, token string) http.Handler {
 			http.Error(w, "daemon unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		if !tickets.consume(r.URL.Query().Get("ticket")) {
+		if !noAuth && !tickets.consume(r.URL.Query().Get("ticket")) {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return

@@ -15,7 +15,7 @@ import (
 func TestNewAgentLauncher_direct(t *testing.T) {
 	for _, mode := range []string{"", "direct"} {
 		resolver := config.NewSandboxResolver(config.SandboxConfig{Mode: mode})
-		l, _, err := newAgentLauncher(context.Background(), config.SandboxConfig{Mode: mode}, resolver, config.ProjectsConfig{}, t.TempDir(), "")
+		l, _, err := newAgentLauncher(context.Background(), config.SandboxConfig{Mode: mode}, resolver, config.ProjectsConfig{}, t.TempDir(), "", "")
 		if err != nil {
 			t.Errorf("mode=%q: unexpected error: %v", mode, err)
 			continue
@@ -29,7 +29,7 @@ func TestNewAgentLauncher_direct(t *testing.T) {
 func TestNewAgentLauncher_devcontainer_missing(t *testing.T) {
 	t.Setenv("PATH", "")
 	resolver := config.NewSandboxResolver(config.SandboxConfig{Mode: "devcontainer"})
-	_, _, err := newAgentLauncher(context.Background(), config.SandboxConfig{Mode: "devcontainer"}, resolver, config.ProjectsConfig{}, t.TempDir(), "")
+	_, _, err := newAgentLauncher(context.Background(), config.SandboxConfig{Mode: "devcontainer"}, resolver, config.ProjectsConfig{}, t.TempDir(), "", "")
 	if err == nil {
 		t.Error("expected error when devcontainer CLI is not in PATH, got nil")
 	}
