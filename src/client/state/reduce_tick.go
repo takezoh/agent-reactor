@@ -185,24 +185,32 @@ func isIntentionalExit(code int) bool {
 // and the dead pane is left attached so the tail output (stack trace,
 // error message) remains visible.
 //
-// The reducer is idempotent — reconcileWindows may re-detect the
-// same dead pane on subsequent ticks. Once a frame's driver reports
-// StatusStopped, we treat the exit as already handled and emit no
-// further effects.
+// Intentional eviction runs first because the driver may have already
+// transitioned to StatusStopped via its own hook stream (e.g. claude's
+// SessionEnd hook sets status=stopped before the pty actually closes).
+// If the idempotency guard below ran first, a hook-driven Stopped state
+// would suppress eviction every subsequent tick and the session would
+// stick around forever as "Stopped" — the bug reproduced when the
+// tmux-free web server detected dead panes only via reconcileWindows.
+//
+// The remaining idempotency check protects the crash path:
+// reconcileWindows may re-detect the same dead pane on subsequent
+// ticks, and once stepDriver has already advanced the driver to
+// StatusStopped we must not re-emit further effects.
 func reduceFrameCommandExited(s State, e EvFrameCommandExited) (State, []Effect) {
 	_, sess, idx, ok := findFrame(s, e.FrameID)
 	if !ok {
 		return s, nil
 	}
+	if isIntentionalExit(e.ExitCode) {
+		next, effs, _ := evictFrame(s, e.FrameID, true)
+		return next, effs
+	}
+
 	frame := sess.Frames[idx]
 	drv := GetDriver(frame.Command)
 	if drv != nil && frame.Driver != nil && drv.Status(frame.Driver) == StatusStopped {
 		return s, nil
-	}
-
-	if isIntentionalExit(e.ExitCode) {
-		next, effs, _ := evictFrame(s, e.FrameID, true)
-		return next, effs
 	}
 
 	next, rawEffs, _ := stepDriver(s, e.FrameID, DEvCommandExited{

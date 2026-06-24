@@ -154,6 +154,36 @@ func TestReduceFrameCommandExited_IdempotentAfterStopped(t *testing.T) {
 	}
 }
 
+// A driver can reach StatusStopped via its own hook stream — claude
+// fires SessionEnd → status=stopped before the pty actually closes.
+// When the pane subsequently exits cleanly (code 0/129/130/137/143),
+// the reducer must still evict the frame. Otherwise the session
+// sticks in the list forever (the tmux-free web server has no fast
+// EvPaneDied path and relies entirely on reconcileWindows →
+// EvFrameCommandExited for eviction).
+func TestReduceFrameCommandExited_IntentionalExitEvictsEvenWhenDriverStopped(t *testing.T) {
+	intentional := []int{0, 129, 130, 137, 143}
+	for _, code := range intentional {
+		t.Run(exitCodeName(code), func(t *testing.T) {
+			s := New()
+			id := SessionID("hook-stopped")
+			sess := newExitSession(id)
+			// Simulate a driver that already transitioned to Stopped via
+			// its own hook (e.g. claude SessionEnd) before the pty died.
+			sess.Frames[0].Driver = frameExitState{status: StatusStopped}
+			s.Sessions[id] = sess
+
+			next, effs := Reduce(s, EvFrameCommandExited{FrameID: FrameID(id), ExitCode: code})
+			if _, ok := next.Sessions[id]; ok {
+				t.Errorf("intentional exit %d on hook-stopped frame must still evict from state", code)
+			}
+			if _, ok := findEff[EffKillSessionWindow](effs); !ok {
+				t.Errorf("intentional exit %d on hook-stopped frame must still request EffKillSessionWindow", code)
+			}
+		})
+	}
+}
+
 func exitCodeName(code int) string {
 	switch code {
 	case 0:
