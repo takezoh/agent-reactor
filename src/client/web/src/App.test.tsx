@@ -56,7 +56,7 @@ describe("App", () => {
     expect(screen.queryByLabelText("driver view")).toBeNull();
   });
 
-  it("renders LogTabs tablist when active session has log_tabs", () => {
+  it("renders MainTabs tablist when active session has log_tabs", () => {
     useDaemonStore.setState({
       sessions: [
         {
@@ -75,6 +75,9 @@ describe("App", () => {
     });
     render(<App />);
     expect(screen.getByRole("tablist")).toBeTruthy();
+    // TERMINAL is prepended as a synthetic tab in front of driver log_tabs.
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["TERMINAL", "Output"]);
   });
 
   // Regression 2026-06-24: 実 driver (claude_view.go 等) は log_tabs に
@@ -83,7 +86,7 @@ describe("App", () => {
   // を確保する。CSS で潰されたケースは vitest では検知できないが、
   // 「App が LogTabs を render し、tablist に 2 個の [role=tab] が含まれる」
   // ロジック契約はここで永続化する (driver / wire / 描画分岐の regression を防ぐ)。
-  it("driver-shaped log_tabs (TRANSCRIPT + EVENTS) renders both tabs visible to user", () => {
+  it("driver-shaped log_tabs (TRANSCRIPT + EVENTS) renders TERMINAL + both tabs visible to user", () => {
     useDaemonStore.setState({
       sessions: [
         {
@@ -109,12 +112,13 @@ describe("App", () => {
     });
     render(<App />);
     const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(2);
-    expect(tabs.map((t) => t.textContent)).toEqual(["TRANSCRIPT", "EVENTS"]);
+    expect(tabs).toHaveLength(3);
+    expect(tabs.map((t) => t.textContent)).toEqual(["TERMINAL", "TRANSCRIPT", "EVENTS"]);
   });
 
   // Regression 2026-06-24: suppress_info が真でないとき、空でない log_tabs は
-  // 必ず render されること (App.tsx の条件分岐回帰防止)。
+  // 必ず render されること (App.tsx の条件分岐回帰防止)。MainTabs 化以後は
+  // 常に TERMINAL タブが先頭に乗るため tab 数 = 1 + driver log_tabs.length。
   it("does NOT hide LogTabs when suppress_info is unset/false", () => {
     useDaemonStore.setState({
       sessions: [
@@ -135,7 +139,8 @@ describe("App", () => {
     });
     render(<App />);
     expect(screen.queryByRole("tablist")).not.toBeNull();
-    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["TERMINAL", "EVENTS"]);
   });
 
   it("renders ConnectorPanel container as null when connectors store is empty", () => {

@@ -42,14 +42,14 @@ export function kindOfTab(tab: LogTab): TranscriptKindParam | null {
   return null;
 }
 
-type ContentAreaProps = {
+export type ContentAreaProps = {
   sessionId: string;
   kind: TranscriptKindParam;
   bearerToken: string;
   fetchFn?: typeof fetch;
 };
 
-function ContentArea({ sessionId, kind, bearerToken, fetchFn }: ContentAreaProps) {
+export function ContentArea({ sessionId, kind, bearerToken, fetchFn }: ContentAreaProps) {
   useTranscript({ sessionId, kind, bearerToken, fetchFn });
 
   const buffer = useTranscriptStore((s) => s.buffers[bufferKey(sessionId, kind)]);
@@ -72,7 +72,7 @@ function ContentArea({ sessionId, kind, bearerToken, fetchFn }: ContentAreaProps
 }
 
 /** Returns true when this tab's content should be suppressed by suppressInfo. */
-function isSuppressed(tab: LogTab, suppressInfo: boolean): boolean {
+export function isSuppressed(tab: LogTab, suppressInfo: boolean): boolean {
   return suppressInfo && tab.label.toUpperCase() === "INFO";
 }
 

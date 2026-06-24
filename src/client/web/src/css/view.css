@@ -126,6 +126,53 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ─── MainTabs ─────────────────────────────────────────────────────────── */
+/* MainTabs は .terminal (flex column) の flex:1 child として、自分の中で
+   ヘッダ (.log-tab-row) + body (.main-tabs-body, flex:1) に分割する。body は
+   TERMINAL スロットと log タブ ContentArea の同居コンテナ。TERMINAL スロット
+   は ADR 0030 の subscribe 所有権を守るため常時 mount し、display 切替で
+   隠す。 */
+.main-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.main-tabs-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+}
+/* terminal-slot は TerminalPane (.terminal-host, flex:1 1 0) をラップする
+   flex item。inactive 時は display:none で完全に消し、ResizeObserver が
+   復帰時の display:flex 遷移を捕捉して fit() を再実行する (ADR 0034)。 */
+.terminal-slot {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.terminal-slot.hidden {
+  display: none;
+}
+/* .log-tab-content は TRANSCRIPT/EVENTS 選択時の <pre> 描画コンテナ。
+   MainTabs body (flex column, flex:1) の子として残余高さを取り、内容が
+   溢れたら垂直スクロールできるようにする。pre は monospace の生ログを
+   折り返さず横スクロールさせる。 */
+.log-tab-content {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+.log-tab-content pre {
+  margin: 0;
+  white-space: pre;
+  font-family: inherit;
+  font-size: 12px;
+}
+
 /* ─── LogTabSelector ────────────────────────────────────────────────────── */
 /* flex-shrink: 0 を入れないと、兄弟の .terminal-host (flex:1 1 0, ADR 0029)
    が flex 残余を貪欲に取った結果、basis:auto のこの要素が 0 高さに潰され

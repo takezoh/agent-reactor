@@ -3,7 +3,7 @@ import { readBearerTokenFromHash } from "./auth";
 import { ConnectorPanel } from "./components/ConnectorPanel";
 import { CreateSessionForm } from "./components/CreateSessionForm";
 import { DriverViewPanel } from "./components/DriverViewPanel";
-import { LogTabs } from "./components/LogTabs";
+import { MainTabs } from "./components/MainTabs";
 import { NotificationToast } from "./components/NotificationToast";
 import { SessionList } from "./components/SessionList";
 import { StatusBanner } from "./components/StatusBanner";
@@ -45,19 +45,20 @@ export function App() {
         <SessionList conn={conn} />
       </aside>
       <main className="terminal">
-        {activeSession && (
-          <>
-            <DriverViewPanel view={activeSession.view} />
-            {!activeSession.view.suppress_info && (
-              <LogTabs
-                tabs={activeSession.view.log_tabs ?? []}
-                sessionId={activeSession.id}
-                bearerToken={token}
-              />
-            )}
-          </>
-        )}
-        <TerminalPane key={activeSessionID ?? "__none__"} conn={conn} sessionId={activeSessionID} />
+        {activeSession && <DriverViewPanel view={activeSession.view} />}
+        <MainTabs
+          tabs={activeSession?.view.log_tabs ?? []}
+          sessionId={activeSession?.id}
+          bearerToken={token}
+          suppressInfo={activeSession?.view.suppress_info ?? false}
+          terminalSlot={
+            <TerminalPane
+              key={activeSessionID ?? "__none__"}
+              conn={conn}
+              sessionId={activeSessionID}
+            />
+          }
+        />
       </main>
       <ConnectorPanel />
     </div>
