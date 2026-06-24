@@ -68,14 +68,17 @@ body {
   color: var(--fg);
   border: 1px solid transparent;
   cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
 }
 .session-list button.active {
   border-color: var(--accent);
 }
-.session-list .status {
-  float: right;
-  opacity: 0.6;
-  font-size: 0.85em;
+.session-list .title {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
 }
 .create-session-trigger {
   margin-bottom: 8px;

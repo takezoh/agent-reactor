@@ -133,6 +133,118 @@ describe("SessionList rendering", () => {
   });
 });
 
+describe("SessionList status indicator", () => {
+  beforeEach(() => {
+    useDaemonStore.getState().reset();
+    vi.clearAllMocks();
+  });
+
+  it("renders a spinning indicator only for active (running) sessions", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "p",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "running" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const spinners = container.querySelectorAll(".session-status-spinner");
+    expect(spinners.length).toBe(1);
+  });
+
+  it("renders a spinning indicator for waiting sessions", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "p",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "waiting" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelectorAll(".session-status-spinner").length).toBe(1);
+  });
+
+  it.each(["idle", "stopped", "pending", undefined] as (string | undefined)[])(
+    "renders NO spinner for inactive status=%s",
+    (status) => {
+      useDaemonStore.setState({
+        sessions: [
+          {
+            id: "s1",
+            project: "p",
+            command: "claude",
+            created_at: "2026-06-20T00:00:00Z",
+            view: { card: { title: "alpha" }, status },
+          },
+        ],
+      });
+      const { container } = render(<SessionList conn={fakeConn} />);
+      expect(container.querySelectorAll(".session-status-spinner").length).toBe(0);
+    },
+  );
+
+  it("status slot precedes the title (top-left placement)", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "p",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "running" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const button = container.querySelector(".session-list button");
+    expect(button).not.toBeNull();
+    const children = button ? Array.from(button.children) : [];
+    expect(children[0]?.className).toMatch(/session-status-slot/);
+    expect(children[1]?.className).toMatch(/title/);
+  });
+
+  it("status slot exposes the status name via aria-label even when inactive", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "p",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "stopped" },
+        },
+      ],
+    });
+    render(<SessionList conn={fakeConn} />);
+    expect(screen.getByLabelText("status: stopped")).toBeDefined();
+  });
+
+  it("does NOT render the textual status label inside the list item", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "p",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "running" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const li = container.querySelector(".session-list li");
+    expect(li?.textContent).toBe("alpha");
+  });
+});
+
 describe("SessionList onClick", () => {
   beforeEach(() => {
     useDaemonStore.getState().reset();

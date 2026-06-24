@@ -51,6 +51,45 @@
   color: #aaa;
 }
 
+/* ─── SessionList status slot (compact, spinner-only) ────────────────────── */
+/* 1em 幅の固定スロット。active 時のみ Spinner が描画され、inactive 時は
+   位置が動かないよう空のスロットが残る (タイトル位置のジッタ防止)。 */
+.session-status-slot {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  margin-top: 0.2em;
+}
+.session-status-spinner {
+  display: block;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: run-state-spin 0.8s linear infinite;
+}
+.session-status-running {
+  color: #4cc586;
+}
+.session-status-waiting {
+  color: #f0c14b;
+}
+.session-status-idle {
+  color: #888;
+}
+.session-status-stopped {
+  color: #b35858;
+}
+.session-status-pending {
+  color: #6b9bff;
+}
+.session-status-unknown {
+  color: #555;
+}
+
 /* ─── DriverViewPanel ───────────────────────────────────────────────────── */
 /* flex-shrink: 0 同じ理由: .terminal-host (flex:1 1 0) と並ぶ flex 兄弟が
    潰されないよう content height を保証する。詳細は .log-tab-selector のコメント参照。 */
