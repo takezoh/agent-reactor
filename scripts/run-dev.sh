@@ -45,6 +45,16 @@ ARC_LOG="$ARC_DATA_DIR/arc.log"
 # binary from a previous checkout/branch run against today's source, which is
 # how `flag provided but not defined: -no-auth` surfaced. `go build` is a
 # no-op when nothing changed, so the cost of always running it is negligible.
+#
+# The web frontend (src/client/web/dist) is embedded into ./web at link time
+# via embed.go. Without rebuilding the frontend first, ./web would serve a
+# stale React bundle from the previous `npm run build` — TS/TSX edits in
+# src/client/web/src/ would not surface in the browser even after restart.
+# Skip when node_modules is missing so first-run instructions stay simple
+# (`npm ci` is left to the dev to run explicitly once).
+if [ -d src/client/web/node_modules ]; then
+  (cd src/client/web && npm run build)
+fi
 make build
 make build-server
 make build-web
