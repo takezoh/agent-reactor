@@ -21,10 +21,13 @@
 // and JSX text are not distinguished — the scan is purely line-based —
 // so files that intentionally keep Japanese comments must be allowlisted.
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const ROOT = resolve(__dirname, "..");
+// ESM-safe __dirname replacement; `module: ESNext` doesn't expose __dirname.
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = resolve(HERE, "..");
 
 // Hiragana + Katakana (U+3040-U+30FF) + CJK Unified Ideographs
 // (U+4E00-U+9FFF). Written with \u escapes so this regex literal itself
@@ -87,7 +90,7 @@ describe("no Japanese in web client source", () => {
       const lines = content.split("\n");
       const allow = ALLOWLIST[rel] ?? [];
       const violations: string[] = [];
-      lines.forEach((line, i) => {
+      lines.forEach((line: string, i: number) => {
         if (!JAPANESE.test(line)) return;
         if (allow.some((rx) => rx.test(line))) return;
         violations.push(`${rel}:${i + 1}: ${line.trim()}`);
