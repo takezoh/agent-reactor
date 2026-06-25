@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync/atomic"
@@ -19,6 +21,7 @@ import (
 	"github.com/takezoh/agent-reactor/client/config"
 	"github.com/takezoh/agent-reactor/client/proto"
 	"github.com/takezoh/agent-reactor/client/state"
+	platformconfig "github.com/takezoh/agent-reactor/platform/config"
 )
 
 // isAbsoluteProjectPath reports whether p is suitable as a session project
@@ -77,18 +80,42 @@ type apiSessionInfo struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// apiProjectMeta is the per-project entry returned in apiSessionConfig.Projects
+// (ADR-0041). Path is the absolute project directory (same value the legacy
+// string[] shape carried); IsGit and IsSandboxed are derived flags the web UI
+// uses to gate the new-session palette toggles (worktree visibility depends on
+// IsGit; the "host" sandbox-bypass toggle on IsSandboxed). Computing the flags
+// here, on the gateway, keeps the browser from having to reach across the
+// daemon boundary for every project listing.
+type apiProjectMeta struct {
+	Path        string `json:"path"`
+	IsGit       bool   `json:"isGit"`
+	IsSandboxed bool   `json:"isSandboxed"`
+}
+
 // apiSessionConfig is the REST wire shape for GET /api/session-config. It
 // surfaces the subset of the user's settings.toml the create-session form
-// needs to render: the curated [session].commands list (the same picker the
-// TUI palette uses), the [session].default_command, and the resolved
-// [projects] list (project_roots fan-out + project_paths). Sourcing these
-// from config rather than hardcoding driver names in the UI keeps web and
-// TUI on the same source of truth and lets the user customize both without
-// rebuilding.
+// and the web UI palette need to render: the curated [session].commands list
+// (the same picker the TUI palette uses), the [session].default_command, the
+// resolved [projects] list (project_roots fan-out + project_paths) annotated
+// with isGit/isSandboxed flags, and the [session].push_commands list used by
+// the palette's push scope. Sourcing these from config rather than hardcoding
+// driver names in the UI keeps web and TUI on the same source of truth and
+// lets the user customize both without rebuilding.
+//
+// ProjectRoots and ProjectPaths are surfaced verbatim from settings.toml for
+// forward-compat with future UI hints; Projects is the resolved (existence-
+// checked) list of absolute paths the create-session datalist and palette
+// project listbox should actually display.
+//
+// ADR-0041 keeps this extension REST-only: WS frames are unchanged (ADR-0030).
 type apiSessionConfig struct {
-	DefaultCommand string   `json:"default_command"`
-	Commands       []string `json:"commands"`
-	Projects       []string `json:"projects"`
+	DefaultCommand string           `json:"default_command"`
+	Commands       []string         `json:"commands"`
+	PushCommands   []string         `json:"push_commands"`
+	ProjectRoots   []string         `json:"project_roots"`
+	ProjectPaths   []string         `json:"project_paths"`
+	Projects       []apiProjectMeta `json:"projects"`
 }
 
 // apiCreateReq is the POST /api/sessions body. Required: project (absolute
@@ -176,6 +203,7 @@ func apiHandler(d *DaemonClient, tickets *ticketStore) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/sessions", handleListSessions(d))
 	mux.HandleFunc("POST /api/sessions", handleCreateSession(d))
+	mux.HandleFunc("POST /api/sessions/{id}/push", handlePushCommand(d))
 	mux.HandleFunc("DELETE /api/sessions/{id}", handleDeleteSession(d))
 	mux.HandleFunc("GET /api/sessions/{id}/transcript", handleGetTranscript(d))
 	mux.HandleFunc("GET /api/sessions/{id}/event-log", handleGetEventLog(d))
@@ -232,16 +260,77 @@ func handleSessionConfig() http.HandlerFunc {
 		if commands == nil {
 			commands = []string{}
 		}
-		projects := cfg.ListProjects()
-		if projects == nil {
-			projects = []string{}
+		pushCommands := cfg.Session.PushCommands
+		if pushCommands == nil {
+			pushCommands = []string{}
+		}
+		projectRoots := cfg.Projects.ProjectRoots
+		if projectRoots == nil {
+			projectRoots = []string{}
+		}
+		projectPaths := cfg.Projects.ProjectPaths
+		if projectPaths == nil {
+			projectPaths = []string{}
+		}
+		// SandboxResolver merges the user-scope sandbox config with the
+		// project-scope override (if a project ships its own settings.toml).
+		// Reusing it here keeps the wire's IsSandboxed in lockstep with how
+		// the daemon actually launches each project; a hand-rolled "does this
+		// path appear in some allowlist" check would diverge the moment any
+		// new sandbox-routing knob (e.g. isolation=shared) gets added.
+		resolver := platformconfig.NewSandboxResolver(cfg.Sandbox)
+		raw := cfg.ListProjects()
+		projects := make([]apiProjectMeta, 0, len(raw))
+		for _, p := range raw {
+			projects = append(projects, apiProjectMeta{
+				Path:        p,
+				IsGit:       gitChildExists(r.Context(), p),
+				IsSandboxed: resolver.Resolve(p).IsSandboxed(),
+			})
 		}
 		writeJSON(w, http.StatusOK, apiSessionConfig{
 			DefaultCommand: cfg.Session.DefaultCommand,
 			Commands:       commands,
+			PushCommands:   pushCommands,
+			ProjectRoots:   projectRoots,
+			ProjectPaths:   projectPaths,
 			Projects:       projects,
 		})
 	}
+}
+
+// gitChildExists reports whether "<project>/.git" exists on disk. Used by
+// handleSessionConfig to derive isGit for the new-session palette's worktree
+// toggle. os.Stat is preferred over os.Lstat so a submodule whose .git is a
+// file pointer still counts as a git project; a symlinked .git is followed
+// for the same reason.
+//
+// Errors are partitioned:
+//   - fs.ErrNotExist  → not-a-git-project: return false silently (the common
+//     non-git case must not flood the gateway log).
+//   - any other err   → the path may exist but we cannot tell (permission
+//     denied / I/O error / ENOTDIR partway through). Return false (so the
+//     UI hides the worktree toggle rather than promising functionality the
+//     daemon may not be able to provide), and log at Warn so the operator
+//     can grep "isGit derivation failed" instead of silently wondering why
+//     a known-git project's toggle disappeared. Without this branch the
+//     fallback was a true silent failure: the previous statExists collapsed
+//     every os.Stat error to bool=false with no log trace.
+func gitChildExists(ctx context.Context, projectDir string) bool {
+	dotGit := filepath.Join(projectDir, ".git")
+	_, err := os.Stat(dotGit)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	slog.LogAttrs(ctx, slog.LevelWarn, "gateway: isGit derivation failed",
+		slog.String("project", projectDir),
+		slog.String("path", dotGit),
+		slog.String("err", err.Error()),
+	)
+	return false
 }
 
 func handleListSessions(d *DaemonClient) http.HandlerFunc {
@@ -357,6 +446,10 @@ func handleCreateSession(d *DaemonClient) http.HandlerFunc {
 		writeJSON(w, http.StatusCreated, info)
 	}
 }
+
+// Push-route handler and helpers (handlePushCommand, decodePushBody,
+// lookupActiveSession, sendPushDriver, apiPushReq, pushBodyLimit) live in
+// mux_push.go to keep mux.go under the file-length budget.
 
 func handleDeleteSession(d *DaemonClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

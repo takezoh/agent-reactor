@@ -190,6 +190,49 @@ func TestWireEncodeServerEvent_SessionsChanged_DropsActiveID(t *testing.T) {
 	}
 }
 
+// TestWireEncodeServerEvent_SessionsChanged_ForwardsActiveOccupant validates
+// that proto.EvtSessionsChanged.ActiveOccupant ("main" | "log" | "frame")
+// IS forwarded on view-update frames. Unlike ActiveSessionID (per-client
+// state — must not be clobbered by daemon-wide events), ActiveOccupant is
+// a daemon-global UI property the browser palette consumes to gate the
+// push scope (FR-005/FR-006). ADR-0044 forbids per-session occupant
+// fields; the daemon-global one carried here is exempt.
+func TestWireEncodeServerEvent_SessionsChanged_ForwardsActiveOccupant(t *testing.T) {
+	ev := proto.EvtSessionsChanged{
+		Sessions:       []proto.SessionInfo{{ID: "s1", CreatedAt: "2026-06-20T00:00:00Z"}},
+		ActiveOccupant: "frame",
+	}
+	got := encodeServerEvent(ev)
+	if got == nil {
+		t.Fatal("expected non-nil frame")
+	}
+	var m map[string]any
+	if err := json.Unmarshal(got, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if m["activeOccupant"] != "frame" {
+		t.Errorf("activeOccupant: got %v, want \"frame\"", m["activeOccupant"])
+	}
+}
+
+// TestWireEncodeServerEvent_SessionsChanged_OmitsEmptyActiveOccupant verifies
+// that the omitempty contract holds — an empty ActiveOccupant must not appear
+// on the wire, so older clients (pre-this-change) treat the absence as
+// "no frame" via the existing fail-closed path.
+func TestWireEncodeServerEvent_SessionsChanged_OmitsEmptyActiveOccupant(t *testing.T) {
+	ev := proto.EvtSessionsChanged{
+		Sessions: []proto.SessionInfo{{ID: "s1", CreatedAt: "2026-06-20T00:00:00Z"}},
+		// ActiveOccupant left empty
+	}
+	got := encodeServerEvent(ev)
+	if got == nil {
+		t.Fatal("expected non-nil frame")
+	}
+	if strings.Contains(string(got), "activeOccupant") {
+		t.Errorf("activeOccupant should be omitted when empty; got: %s", got)
+	}
+}
+
 func TestWireEncodeTranscriptTail(t *testing.T) {
 	ev := proto.EvtSessionFileLine{SessionID: "s1", Kind: "transcript", Line: "hello"}
 	got := encodeFromSessionFileLine(ev)

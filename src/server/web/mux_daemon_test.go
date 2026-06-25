@@ -2,12 +2,17 @@ package web
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +22,7 @@ import (
 	"github.com/takezoh/agent-reactor/client/config"
 	"github.com/takezoh/agent-reactor/client/proto"
 	"github.com/takezoh/agent-reactor/client/state"
+	platformconfig "github.com/takezoh/agent-reactor/platform/config"
 )
 
 // --- fake daemon helpers ---
@@ -467,6 +473,322 @@ func TestMux_ListMapsRespSessions(t *testing.T) {
 	}
 }
 
+// --- push command forwarding ---
+
+// pushPathFor returns the REST path for a push command on the given session id.
+func pushPathFor(id string) string {
+	return "/api/sessions/" + id + "/push"
+}
+
+// drainPushRequest acts as a one-shot fake daemon for the push handler: it
+// expects (1) a ListSessions request (replied with the supplied RespSessions)
+// and (2) a PushDriver request (replied with RespOK). It writes the decoded
+// PushDriverParams to the returned channel so the test can assert on what
+// reached the daemon. If wantPush=false, the test expects ONLY the first
+// ListSessions request and no second push request.
+func drainPushRequest(t *testing.T, daemon *fakeDaemon, list proto.RespSessions, wantPush bool) <-chan state.PushDriverParams {
+	t.Helper()
+	out := make(chan state.PushDriverParams, 1)
+	go func() {
+		env := daemon.recv() // first envelope: ListSessions
+		daemon.sendResp(env.ReqID, list)
+		if !wantPush {
+			close(out)
+			return
+		}
+		env2 := daemon.recv() // second envelope: PushDriver
+		var cmd struct {
+			Event   string          `json:"event"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(env2.Data, &cmd); err != nil {
+			t.Errorf("unmarshal push CmdEvent: %v", err)
+			close(out)
+			return
+		}
+		if cmd.Event != "push-driver" {
+			t.Errorf("second event = %q, want push-driver", cmd.Event)
+		}
+		var params state.PushDriverParams
+		if err := json.Unmarshal(cmd.Payload, &params); err != nil {
+			t.Errorf("unmarshal push params: %v", err)
+			close(out)
+			return
+		}
+		out <- params
+		daemon.sendResp(env2.ReqID, proto.RespOK{})
+	}()
+	return out
+}
+
+// TestMux_PushForwardsEventPushDriver verifies that POST /api/sessions/{id}/push
+// with a matching daemon-global active session id sends a CmdEvent{
+// Event:"push-driver", Payload: PushDriverParams{...}} to the daemon and
+// returns 200.
+func TestMux_PushForwardsEventPushDriver(t *testing.T) {
+	t.Parallel()
+	d, daemon := newDaemonPair(t)
+	mux := NewMux(d, "tok")
+
+	list := proto.RespSessions{
+		Sessions:        []proto.SessionInfo{{ID: "s1"}},
+		ActiveSessionID: "s1",
+	}
+	gotCh := drainPushRequest(t, daemon, list, true)
+
+	r := httptest.NewRequest(http.MethodPost, pushPathFor("s1"),
+		strings.NewReader(`{"command":"/clear"}`))
+	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", w.Code, w.Body.String())
+	}
+	params, ok := <-gotCh
+	if !ok {
+		t.Fatal("expected PushDriverParams on daemon channel")
+	}
+	if params.SessionID != "s1" {
+		t.Errorf("SessionID = %q, want s1", params.SessionID)
+	}
+	if params.Command != "/clear" {
+		t.Errorf("Command = %q, want /clear", params.Command)
+	}
+}
+
+// TestMux_PushReturns409OnActiveMismatch verifies the FR-026 stale-tab guard:
+// if the path id is a known session but the daemon-global ActiveSessionID
+// points elsewhere, return 409 Conflict and do NOT issue PushDriver.
+func TestMux_PushReturns409OnActiveMismatch(t *testing.T) {
+	t.Parallel()
+	d, daemon := newDaemonPair(t)
+	mux := NewMux(d, "tok")
+
+	list := proto.RespSessions{
+		Sessions:        []proto.SessionInfo{{ID: "s1"}, {ID: "s2"}},
+		ActiveSessionID: "s2", // active is s2, but path is s1
+	}
+	gotCh := drainPushRequest(t, daemon, list, false)
+
+	r := httptest.NewRequest(http.MethodPost, pushPathFor("s1"),
+		strings.NewReader(`{"command":"/clear"}`))
+	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body %q)", w.Code, w.Body.String())
+	}
+	if _, ok := <-gotCh; ok {
+		t.Fatal("PushDriver was sent on mismatch; want none")
+	}
+}
+
+// TestMux_PushReturns404OnUnknownSession verifies that POST to a session id
+// that does not exist on the daemon returns 404 (FR-026), without issuing
+// a PushDriver RPC.
+func TestMux_PushReturns404OnUnknownSession(t *testing.T) {
+	t.Parallel()
+	d, daemon := newDaemonPair(t)
+	mux := NewMux(d, "tok")
+
+	list := proto.RespSessions{
+		Sessions:        []proto.SessionInfo{{ID: "other"}},
+		ActiveSessionID: "other",
+	}
+	gotCh := drainPushRequest(t, daemon, list, false)
+
+	r := httptest.NewRequest(http.MethodPost, pushPathFor("ghost"),
+		strings.NewReader(`{"command":"/clear"}`))
+	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (body %q)", w.Code, w.Body.String())
+	}
+	if _, ok := <-gotCh; ok {
+		t.Fatal("PushDriver was sent on 404; want none")
+	}
+}
+
+// TestMux_PushRejectsEmptyCommand verifies that a JSON body with an empty
+// or whitespace-only command is rejected with 400 before any daemon RPC.
+func TestMux_PushRejectsEmptyCommand(t *testing.T) {
+	t.Parallel()
+	d, _ := newDaemonPair(t)
+	mux := NewMux(d, "tok")
+
+	r := httptest.NewRequest(http.MethodPost, pushPathFor("s1"),
+		strings.NewReader(`{"command":"   "}`))
+	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body %q)", w.Code, w.Body.String())
+	}
+}
+
+// TestMux_PushRejectsInvalidJSON verifies that a malformed JSON body returns
+// 400, again before any daemon RPC.
+func TestMux_PushRejectsInvalidJSON(t *testing.T) {
+	t.Parallel()
+	d, _ := newDaemonPair(t)
+	mux := NewMux(d, "tok")
+
+	r := httptest.NewRequest(http.MethodPost, pushPathFor("s1"),
+		strings.NewReader(`{"command":`))
+	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body %q)", w.Code, w.Body.String())
+	}
+}
+
+// TestMux_PushRequiresAuth verifies that POST /api/sessions/{id}/push without
+// a bearer token returns 401 — the route is mounted under the same TokenAuth
+// middleware as every other /api/* route.
+func TestMux_PushRequiresAuth(t *testing.T) {
+	t.Parallel()
+	d := NewDaemonClientWithDialer(
+		func() (*proto.Client, error) { return nil, errors.New("unused") },
+		time.Millisecond, 2*time.Millisecond,
+	)
+	defer d.Close()
+
+	mux := NewMux(d, "tok")
+	r := httptest.NewRequest(http.MethodPost, pushPathFor("s1"),
+		strings.NewReader(`{"command":"/clear"}`))
+	// no Authorization header
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (body %q)", w.Code, w.Body.String())
+	}
+}
+
+// TestMux_PushRejectsBodyTooLarge verifies that a request body larger than
+// pushBodyLimit (64KiB) is rejected with 413 Payload Too Large, not the 400
+// "bad request body" you'd get if the body had simply truncated through an
+// io.LimitReader (the original review note: "413 should be distinct from a
+// 400 so the client can tell why the request failed").
+//
+// No daemon RPC should fire — the cap is enforced before the JSON Decoder
+// finishes — so we use a daemon dialer that always errors and assert only
+// the HTTP status code.
+func TestMux_PushRejectsBodyTooLarge(t *testing.T) {
+	t.Parallel()
+	d := NewDaemonClientWithDialer(
+		func() (*proto.Client, error) { return nil, errors.New("unused") },
+		time.Millisecond, 2*time.Millisecond,
+	)
+	defer d.Close()
+	// Wait until the dialer has failed at least once so d.Health() is false
+	// and we'd see 503, OR until the test setup decides to skip if it ever
+	// did flip healthy. (Defensive: this dialer cannot succeed.)
+	_ = waitHealth(d, false, 100*time.Millisecond)
+
+	mux := NewMux(d, "tok")
+	// Build a payload that exceeds pushBodyLimit (64KiB). The body still parses
+	// as JSON ({"command":"<huge string>"}) so a working json.Decoder would
+	// return a value rather than a syntax error; only the size cap should
+	// trigger the failure path.
+	huge := strings.Repeat("A", pushBodyLimit+1)
+	body := `{"command":"` + huge + `"}`
+	r := httptest.NewRequest(http.MethodPost, pushPathFor("s1"), strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	// Either the cap fires (413) before any health check is reached (mux ordering
+	// puts Health first), so we accept either 413 or 503 depending on which
+	// gate ran first under the unhealthy dialer. The point: NEVER 400, because
+	// the previous io.LimitReader pathway would have surfaced "unexpected EOF"
+	// as 400 bad_request and obscured the size cause. If health gating fired
+	// first this test still wouldn't show 400; if the cap fired first we get 413.
+	if w.Code == http.StatusBadRequest {
+		t.Fatalf("status = 400, want 413 (body too large) — body cap regressed to bad-body decode: %q",
+			w.Body.String())
+	}
+	if w.Code != http.StatusRequestEntityTooLarge && w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 413 or 503 (body %q)", w.Code, w.Body.String())
+	}
+}
+
+// TestMux_PushRejectsBodyTooLargeOnHealthyDaemon is the strict variant of
+// TestMux_PushRejectsBodyTooLarge: with a connected daemon (so the Health
+// gate passes) the over-size body must be rejected with 413 specifically.
+// No ListSessions / PushDriver RPC may be issued — the body cap fires before
+// the active-session lookup.
+func TestMux_PushRejectsBodyTooLargeOnHealthyDaemon(t *testing.T) {
+	t.Parallel()
+	d, daemon := newDaemonPair(t)
+	mux := NewMux(d, "tok")
+
+	// If the gate fails, the test would see a ListSessions hit the fake
+	// daemon. Use a closed channel so a stray recv would noticeably stall;
+	// the test enforces this by NOT spawning a recv goroutine.
+	_ = daemon // silence unused; the pair construction is what gives us a healthy d.
+
+	huge := strings.Repeat("B", pushBodyLimit+1)
+	body := `{"command":"` + huge + `"}`
+	r := httptest.NewRequest(http.MethodPost, pushPathFor("s1"), strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 (body %q)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "request body exceeds limit") {
+		t.Errorf("body = %q, want it to mention 'request body exceeds limit'", w.Body.String())
+	}
+}
+
+// TestMux_PushMapsDaemonErrorTo502 verifies that when the second daemon RPC
+// (PushDriver) returns proto.ErrInternal, the gateway surfaces 502 Bad Gateway
+// per handleProtoError's standard mapping.
+func TestMux_PushMapsDaemonErrorTo502(t *testing.T) {
+	t.Parallel()
+	d, daemon := newDaemonPair(t)
+	mux := NewMux(d, "tok")
+
+	list := proto.RespSessions{
+		Sessions:        []proto.SessionInfo{{ID: "s1"}},
+		ActiveSessionID: "s1",
+	}
+	go func() {
+		env := daemon.recv() // ListSessions
+		daemon.sendResp(env.ReqID, list)
+		env2 := daemon.recv() // PushDriver
+		daemon.sendErr(env2.ReqID, proto.ErrInternal, "spawn failed")
+	}()
+
+	r := httptest.NewRequest(http.MethodPost, pushPathFor("s1"),
+		strings.NewReader(`{"command":"/clear"}`))
+	r.Header.Set("Authorization", "Bearer tok")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (body %q)", w.Code, w.Body.String())
+	}
+}
+
 // --- delete error mapping ---
 
 // TestMux_DeleteMapsErrorToHTTPCode verifies that proto ErrorBody codes are
@@ -527,7 +849,9 @@ func TestMux_SessionConfigSurfacesConfigFields(t *testing.T) {
 		cfg := config.DefaultConfig()
 		cfg.Session.DefaultCommand = "claude"
 		cfg.Session.Commands = []string{"claude", "shell", "npm run dev"}
+		cfg.Session.PushCommands = []string{"/clear", "/compact"}
 		cfg.Projects.ProjectPaths = []string{"/home/me/repo-a", "/home/me/repo-b"}
+		cfg.Projects.ProjectRoots = []string{"/home/me/code"}
 		return cfg, nil
 	})
 	defer restore()
@@ -551,14 +875,148 @@ func TestMux_SessionConfigSurfacesConfigFields(t *testing.T) {
 	if len(got.Commands) != 3 || got.Commands[0] != "claude" {
 		t.Errorf("Commands = %v, want [claude shell npm run dev]", got.Commands)
 	}
-	// ProjectPaths only land if the referenced dirs exist (listProjectsFrom
-	// stats them); since the test paths are fake, expect an empty list rather
-	// than the raw config values. The point of this assertion is that the
-	// field is JSON-encoded as an array (not null) so the UI's
-	// projects.map(...) doesn't blow up.
+	// push_commands flows straight from cfg.Session.PushCommands; the palette
+	// push scope reads this to enumerate tool entries (FR-027).
+	if len(got.PushCommands) != 2 || got.PushCommands[0] != "/clear" {
+		t.Errorf("PushCommands = %v, want [/clear /compact]", got.PushCommands)
+	}
+	// project_roots / project_paths are surfaced verbatim from settings.toml
+	// (forward-compat for future UI hints); Projects is the resolved list,
+	// which may be empty when the referenced dirs don't exist on disk.
+	if len(got.ProjectRoots) != 1 || got.ProjectRoots[0] != "/home/me/code" {
+		t.Errorf("ProjectRoots = %v, want [/home/me/code]", got.ProjectRoots)
+	}
+	if len(got.ProjectPaths) != 2 {
+		t.Errorf("ProjectPaths len = %d, want 2", len(got.ProjectPaths))
+	}
+	// ProjectPaths only land in Projects if the referenced dirs exist
+	// (listProjectsFrom stats them); since the test paths are fake, expect an
+	// empty Projects list rather than the raw config values. The point of
+	// this assertion is that the field is JSON-encoded as an array (not null)
+	// so the UI's projects.map(...) doesn't blow up.
 	if got.Projects == nil {
 		t.Errorf("Projects = nil, want non-nil array")
 	}
+}
+
+// TestMux_SessionConfigProjectMetadataReflectsDiskState verifies the per-project
+// metadata (path / isGit / isSandboxed) on GET /api/session-config. Two project
+// dirs are laid down in a t.TempDir: one with a .git child (isGit=true), one
+// without (isGit=false). The sandbox config is set to "devcontainer" so the
+// resolver reports IsSandboxed=true for both; flipping to "direct" verifies
+// the false branch. (FR-027 / ADR-0041.)
+//
+// Not t.Parallel(): handleSessionConfig swaps a package-level loader via
+// withSessionConfigLoader; concurrent overrides would race.
+func TestMux_SessionConfigProjectMetadataReflectsDiskState(t *testing.T) {
+	d := NewDaemonClientWithDialer(
+		func() (*proto.Client, error) { return nil, errors.New("unused") },
+		time.Millisecond, 2*time.Millisecond,
+	)
+	defer d.Close()
+
+	// Lay down two real project dirs so listProjectsFrom doesn't filter them
+	// out as nonexistent. Only repoGit gets a .git child.
+	tmp := t.TempDir()
+	repoGit := filepath.Join(tmp, "repo-git")
+	repoPlain := filepath.Join(tmp, "repo-plain")
+	if err := os.MkdirAll(filepath.Join(repoGit, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir repoGit/.git: %v", err)
+	}
+	if err := os.MkdirAll(repoPlain, 0o755); err != nil {
+		t.Fatalf("mkdir repoPlain: %v", err)
+	}
+
+	t.Run("isSandboxed=true under sandbox.mode=devcontainer", func(t *testing.T) {
+		restore := withSessionConfigLoader(func() (*config.Config, error) {
+			cfg := config.DefaultConfig()
+			cfg.Sandbox = platformconfig.SandboxConfig{Mode: "devcontainer"}
+			cfg.Projects.ProjectPaths = []string{repoGit, repoPlain}
+			cfg.Session.PushCommands = []string{"/clear"}
+			return cfg, nil
+		})
+		defer restore()
+
+		mux := NewMux(d, "tok")
+		r := httptest.NewRequest(http.MethodGet, "/api/session-config", nil)
+		r.Header.Set("Authorization", "Bearer tok")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body %q)", w.Code, w.Body.String())
+		}
+		var got apiSessionConfig
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		// Index by path so the test isn't sensitive to listProjectsFrom order.
+		byPath := map[string]apiProjectMeta{}
+		for _, p := range got.Projects {
+			byPath[p.Path] = p
+		}
+		gitMeta, ok := byPath[repoGit]
+		if !ok {
+			t.Fatalf("Projects missing repoGit %q; got %+v", repoGit, got.Projects)
+		}
+		if !gitMeta.IsGit {
+			t.Errorf("repoGit.IsGit = false, want true (.git was laid down)")
+		}
+		if !gitMeta.IsSandboxed {
+			t.Errorf("repoGit.IsSandboxed = false, want true (sandbox.mode=devcontainer)")
+		}
+		plainMeta, ok := byPath[repoPlain]
+		if !ok {
+			t.Fatalf("Projects missing repoPlain %q; got %+v", repoPlain, got.Projects)
+		}
+		if plainMeta.IsGit {
+			t.Errorf("repoPlain.IsGit = true, want false (no .git)")
+		}
+		if !plainMeta.IsSandboxed {
+			t.Errorf("repoPlain.IsSandboxed = false, want true (sandbox.mode=devcontainer)")
+		}
+		if len(got.PushCommands) != 1 || got.PushCommands[0] != "/clear" {
+			t.Errorf("PushCommands = %v, want [/clear]", got.PushCommands)
+		}
+	})
+
+	t.Run("isSandboxed=false under sandbox.mode=direct", func(t *testing.T) {
+		restore := withSessionConfigLoader(func() (*config.Config, error) {
+			cfg := config.DefaultConfig()
+			cfg.Sandbox = platformconfig.SandboxConfig{Mode: "direct"}
+			cfg.Projects.ProjectPaths = []string{repoGit}
+			return cfg, nil
+		})
+		defer restore()
+
+		mux := NewMux(d, "tok")
+		r := httptest.NewRequest(http.MethodGet, "/api/session-config", nil)
+		r.Header.Set("Authorization", "Bearer tok")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body %q)", w.Code, w.Body.String())
+		}
+		var got apiSessionConfig
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(got.Projects) != 1 {
+			t.Fatalf("Projects len = %d, want 1; got %+v", len(got.Projects), got.Projects)
+		}
+		if got.Projects[0].Path != repoGit {
+			t.Errorf("Projects[0].Path = %q, want %q", got.Projects[0].Path, repoGit)
+		}
+		if got.Projects[0].IsSandboxed {
+			t.Errorf("Projects[0].IsSandboxed = true, want false (sandbox.mode=direct)")
+		}
+		// PushCommands defaults to ["shell"] in DefaultConfig; assert it
+		// surfaces (non-nil JSON array even when not overridden).
+		if got.PushCommands == nil {
+			t.Errorf("PushCommands = nil, want non-nil array")
+		}
+	})
 }
 
 // TestMux_SessionConfigSurfacesLoadError verifies that a malformed settings.toml
@@ -654,4 +1112,110 @@ func TestMuxNoAuth_AllowsUnauthenticated(t *testing.T) {
 			t.Fatalf("no-auth mux still returned 401 on /ws; body=%q", w.Body.String())
 		}
 	})
+}
+
+// --- gitChildExists ---
+//
+// gitChildExists is the helper that derives apiProjectMeta.IsGit. The review
+// flagged the previous statExists as a silent failure: any os.Stat error
+// (including permission denied / ENOTDIR / I/O error) collapsed to bool=false
+// with no log trace, so a .git that existed-but-couldn't-be-stat'd vanished
+// from the worktree toggle without diagnostic. The new contract:
+//   - fs.ErrNotExist → return false silently (common non-git case)
+//   - any other error → return false AND emit slog.Warn so the operator can
+//     grep "isGit derivation failed"
+//
+// Tests cover (1) .git exists, (2) .git missing (silent false), (3) a parent
+// that is a regular file producing ENOTDIR (logged false).
+
+// withCapturedSlog swaps slog.Default() for the duration of fn so the test
+// can assert on the log record emitted by gitChildExists. The returned string
+// is the captured handler output (newline-delimited slog "key=value" records).
+func withCapturedSlog(t *testing.T, fn func()) string {
+	t.Helper()
+	prev := slog.Default()
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})))
+	defer slog.SetDefault(prev)
+	fn()
+	return buf.String()
+}
+
+// TestGitChildExists_TrueWhenDotGitPresent verifies that gitChildExists
+// returns true when "<projectDir>/.git" exists, with no warn log emitted
+// (the happy path must not pollute the gateway log).
+func TestGitChildExists_TrueWhenDotGitPresent(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	var got bool
+	logs := withCapturedSlog(t, func() {
+		got = gitChildExists(context.Background(), tmp)
+	})
+	if !got {
+		t.Fatalf("gitChildExists = false, want true")
+	}
+	if strings.Contains(logs, "isGit derivation failed") {
+		t.Errorf("happy path emitted a warn log: %s", logs)
+	}
+}
+
+// TestGitChildExists_FalseSilentlyWhenMissing verifies that the common
+// non-git project case (no .git child) returns false WITHOUT a warn log.
+// Logging every non-git project would flood the gateway log on a typical
+// developer's projects list.
+func TestGitChildExists_FalseSilentlyWhenMissing(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir() // exists, but no .git child
+	var got bool
+	logs := withCapturedSlog(t, func() {
+		got = gitChildExists(context.Background(), tmp)
+	})
+	if got {
+		t.Fatalf("gitChildExists = true, want false")
+	}
+	if strings.Contains(logs, "isGit derivation failed") {
+		t.Errorf("ErrNotExist path leaked a warn log: %s", logs)
+	}
+}
+
+// TestGitChildExists_FalseWithWarnOnNonNotExistError verifies the major-flag
+// contract: when os.Stat fails for any reason OTHER than "does not exist"
+// (e.g. ENOTDIR because the project path is a regular file, permission
+// denied, I/O error), gitChildExists returns false AND emits a slog.Warn
+// with the path so the operator can grep "isGit derivation failed".
+//
+// The ENOTDIR variant is portable across CI (no special perms needed) and
+// hits the same `errors.Is(err, fs.ErrNotExist) == false` branch as
+// EACCES / EIO would on real disks.
+func TestGitChildExists_FalseWithWarnOnNonNotExistError(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	notDir := filepath.Join(tmp, "regular-file")
+	if err := os.WriteFile(notDir, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	// Sanity: confirm the OS yields a non-NotExist error for ".git" under a
+	// regular file. If a future kernel/fs reclassifies ENOTDIR as ErrNotExist
+	// this test would silently pass on the happy branch — verify upfront.
+	if _, err := os.Stat(filepath.Join(notDir, ".git")); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("stat under regular file did not produce a non-NotExist error: err=%v", err)
+	}
+	var got bool
+	logs := withCapturedSlog(t, func() {
+		got = gitChildExists(context.Background(), notDir)
+	})
+	if got {
+		t.Fatalf("gitChildExists = true, want false")
+	}
+	if !strings.Contains(logs, "isGit derivation failed") {
+		t.Errorf("non-NotExist error did not emit warn log; logs=%q", logs)
+	}
+	if !strings.Contains(logs, notDir) {
+		t.Errorf("warn log missing project path %q; logs=%q", notDir, logs)
+	}
 }

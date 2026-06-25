@@ -79,10 +79,22 @@ export type ControlFrame = {
   data?: string; // omitempty
 };
 
+// ActiveOccupant mirrors the daemon-side OccupantKind: which buffer occupies
+// pane 0.1 in the TUI ("main" | "log" | "frame"). Carried daemon-globally
+// (NOT per session — ADR-0044) so the web palette can gate the push scope
+// (FR-005/FR-006). Optional / omitempty on the Go side: an absent value
+// reads as "no frame" via the existing fail-closed path.
+export type ActiveOccupant = "main" | "log" | "frame";
+
 export type HelloFrame = {
   k: "h";
   sessions: SessionInfo[];
   activeSessionID: string | null;
+  // Optional for backward compat: pre-this-change servers do not emit the
+  // field. The TS reducer in store/daemon.ts treats `undefined` as "leave
+  // the current value alone" so a clean reconnect after a binary upgrade
+  // does not regress to the pre-2026-06-24 fail-closed default.
+  activeOccupant?: ActiveOccupant;
   features: string[];
   serverTime: number;
 };
@@ -91,6 +103,11 @@ export type ViewUpdateFrame = {
   k: "v";
   sessions: SessionInfo[];
   activeSessionID?: string | null;
+  // See HelloFrame.activeOccupant. View-update frames carry it live so a
+  // frame pushed / popped by another driver client toggles push availability
+  // in the palette without requiring a reconnect (the daemon broadcasts
+  // EvtSessionsChanged on occupant changes).
+  activeOccupant?: ActiveOccupant;
 };
 
 export type TranscriptTailFrame = {

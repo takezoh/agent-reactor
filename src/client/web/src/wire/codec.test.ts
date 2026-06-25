@@ -57,8 +57,7 @@ describe("parseServerFrame", () => {
     // relies on `activeSessionID === undefined` to mean "no change" — coercing
     // to null would clobber the web client's local selection on every daemon
     // broadcast.
-    const raw =
-      '{"k":"v","sessions":[{"id":"s1","view":{"card":{"title":"T"},"status":"idle"}}]}';
+    const raw = '{"k":"v","sessions":[{"id":"s1","view":{"card":{"title":"T"},"status":"idle"}}]}';
     const parsed = parseServerFrame(raw);
     if (!parsed || Array.isArray(parsed) || parsed.k !== "v") throw new Error("expected v frame");
     expect(parsed.activeSessionID).toBeUndefined();
@@ -118,7 +117,6 @@ describe("parseServerFrame", () => {
   it('rejects "n" missing nowMs', () => {
     expect(parseServerFrame('{"k":"n","sessionId":"s1","cmd":9}')).toBeNull();
   });
-
 });
 
 describe("serializeClientFrame", () => {
