@@ -1,5 +1,6 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as platformLib from "../lib/platform";
 import { usePaletteStore } from "../store/palette";
 import { useGlobalHotkey } from "./useGlobalHotkey";
 
@@ -285,5 +286,48 @@ describe("useGlobalHotkey", () => {
 
     dispatchKey({ key: "k", metaKey: true });
     expect(openPalette).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Mac/non-mac decision is delegated to lib/platform.isMacPlatform.
+  // These tests spy on the shared implementation directly (rather than
+  // poking navigator.platform) to prove the hook routes the decision through
+  // the single source of truth — i.e. if lib/platform's algorithm changes,
+  // this hook automatically inherits the new behaviour. FR-D3 (single
+  // implementation).
+  // -------------------------------------------------------------------------
+
+  it("delegates Mac detection to lib/platform.isMacPlatform — true → metaKey+K fires openPalette", () => {
+    const spy = vi.spyOn(platformLib, "isMacPlatform").mockReturnValue(true);
+    const { openPalette } = installSpies();
+    const { unmount } = renderHook(() => useGlobalHotkey());
+
+    // metaKey path (Mac)
+    dispatchKey({ key: "k", metaKey: true });
+    expect(openPalette).toHaveBeenCalledTimes(1);
+
+    // ctrlKey path is dead on Mac — proves the hook consulted the mocked value.
+    dispatchKey({ key: "k", ctrlKey: true });
+    expect(openPalette).toHaveBeenCalledTimes(1);
+
+    expect(spy).toHaveBeenCalled();
+    unmount();
+  });
+
+  it("delegates Mac detection to lib/platform.isMacPlatform — false → ctrlKey+K fires openPalette", () => {
+    const spy = vi.spyOn(platformLib, "isMacPlatform").mockReturnValue(false);
+    const { openPalette } = installSpies();
+    const { unmount } = renderHook(() => useGlobalHotkey());
+
+    // ctrlKey path (non-Mac)
+    dispatchKey({ key: "k", ctrlKey: true });
+    expect(openPalette).toHaveBeenCalledTimes(1);
+
+    // metaKey path is dead off Mac — proves the hook consulted the mocked value.
+    dispatchKey({ key: "k", metaKey: true });
+    expect(openPalette).toHaveBeenCalledTimes(1);
+
+    expect(spy).toHaveBeenCalled();
+    unmount();
   });
 });

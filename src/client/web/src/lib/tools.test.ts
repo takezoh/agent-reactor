@@ -11,7 +11,6 @@ import {
   listTools,
   projectOptions,
   scopeDisabledReason,
-  sessionOptions,
 } from "./tools";
 
 // ---------------------------------------------------------------------------
@@ -54,24 +53,16 @@ function makeFakeNotify(): NotificationsApi & {
 
 function makeFakeStore(): ToolStoreCtx & {
   closeCalls: number;
-  clearActiveIfCalls: string[];
 } {
   const state = {
     closeCalls: 0,
-    clearActiveIfCalls: [] as string[],
   };
   return {
     close() {
       state.closeCalls += 1;
     },
-    clearActiveIf(id) {
-      state.clearActiveIfCalls.push(id);
-    },
     get closeCalls() {
       return state.closeCalls;
-    },
-    get clearActiveIfCalls() {
-      return state.clearActiveIfCalls;
     },
   };
 }
@@ -135,10 +126,23 @@ function findTool(tools: ToolDef[], id: string): ToolDef {
 // listTools
 // ---------------------------------------------------------------------------
 
-describe("listTools", () => {
-  it("returns new-session and stop-session in deterministic order", () => {
+describe("listTools deterministic order", () => {
+  it("returns new-session as the sole standard tool when pushCommands is empty", () => {
     const tools = listTools(makeDaemonSnapshot(), []);
-    expect(tools.map((t) => t.id)).toEqual(["new-session", "stop-session"]);
+    expect(tools.map((t) => t.id)).toEqual(["new-session"]);
+  });
+
+  it("never includes a stop-session entry (FR-B2 removal)", () => {
+    // stop-session was retired in tools-registry-rewrite: deletion no longer
+    // belongs to the palette surface (server-side DELETE /api/sessions/:id
+    // remains for future re-introduction). listTools must NOT surface it for
+    // any combination of daemon state or pushCommands.
+    const tools = listTools(
+      makeDaemonSnapshot({ sessions: [sessionFixture("s1")], activeSessionID: "s1" }),
+      ["save", "commit"],
+    );
+    const ids = tools.map((t) => t.id);
+    expect(ids).not.toContain("stop-session");
   });
 
   it("never includes a tool with id 'shutdown' as a standard scope entry (FR-028)", () => {
@@ -154,17 +158,7 @@ describe("listTools", () => {
 
   it("appends one push ToolDef per pushCommands entry in given order", () => {
     const tools = listTools(makeDaemonSnapshot(), ["save", "commit"]);
-    expect(tools.map((t) => t.id)).toEqual([
-      "new-session",
-      "stop-session",
-      "push:save",
-      "push:commit",
-    ]);
-  });
-
-  it("returns only standard tools when pushCommands is empty", () => {
-    const tools = listTools(makeDaemonSnapshot(), []);
-    expect(tools.map((t) => t.id)).toEqual(["new-session", "stop-session"]);
+    expect(tools.map((t) => t.id)).toEqual(["new-session", "push:save", "push:commit"]);
   });
 
   it("each tool exposes the ToolDef shape", () => {
@@ -187,6 +181,64 @@ describe("listTools", () => {
 });
 
 // ---------------------------------------------------------------------------
+// ParamDef discriminated union
+// ---------------------------------------------------------------------------
+
+describe("ParamDef discriminated union shape", () => {
+  it("newSessionTool.params[0] is a dynamic-options ParamDef keyed to 'projects'", () => {
+    const tools = listTools(makeDaemonSnapshot(), []);
+    const newSession = findTool(tools, "new-session");
+    const params = newSession.params;
+    if (!params) throw new Error("expected params on new-session");
+    const project = params[0];
+    if (!project) throw new Error("expected project param");
+    expect(project.id).toBe("project");
+    expect(project.kind).toBe("dynamic-options");
+    if (project.kind !== "dynamic-options") throw new Error("kind narrowing failed");
+    expect(project.materializeKey).toBe("projects");
+    expect(project.required).toBe(true);
+    // The dynamic variant MUST NOT carry an in-place `options` array: that
+    // would conflict with the materialize-at-param-select-time contract.
+    expect("options" in project).toBe(false);
+  });
+
+  it("newSessionTool.params[1] is a text ParamDef", () => {
+    const tools = listTools(makeDaemonSnapshot(), []);
+    const newSession = findTool(tools, "new-session");
+    const params = newSession.params;
+    if (!params) throw new Error("expected params on new-session");
+    const command = params[1];
+    if (!command) throw new Error("expected command param");
+    expect(command.id).toBe("command");
+    expect(command.kind).toBe("text");
+    if (command.kind !== "text") throw new Error("kind narrowing failed");
+    expect(command.required).toBe(true);
+    // The text variant MUST NOT carry options / materializeKey.
+    expect("options" in command).toBe(false);
+    expect("materializeKey" in command).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// newSessionTool labels (English)
+// ---------------------------------------------------------------------------
+
+describe("newSessionTool labels", () => {
+  it("uses English-only labels and success message", () => {
+    const tools = listTools(makeDaemonSnapshot(), []);
+    const newSession = findTool(tools, "new-session");
+    expect(newSession.label).toBe("New Session");
+    const params = newSession.params;
+    if (!params) throw new Error("expected params");
+    const project = params[0];
+    const command = params[1];
+    if (!project || !command) throw new Error("expected both params");
+    expect(project.label).toBe("Project");
+    expect(command.label).toBe("Command");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // disabledReason
 // ---------------------------------------------------------------------------
 
@@ -200,19 +252,6 @@ describe("standard ToolDef.disabledReason", () => {
         makeDaemonSnapshot({
           sessions: [sessionFixture("s1")],
           activeSessionID: "s1",
-        }),
-      ),
-    ).toBeNull();
-  });
-
-  it("returns null for stop-session regardless of daemon state", () => {
-    const tools = listTools(makeDaemonSnapshot(), []);
-    const t = findTool(tools, "stop-session");
-    expect(t.disabledReason(makeDaemonSnapshot())).toBeNull();
-    expect(
-      t.disabledReason(
-        makeDaemonSnapshot({
-          sessions: [sessionFixture("s1")],
         }),
       ),
     ).toBeNull();
@@ -236,7 +275,7 @@ describe("new-session.submit", () => {
       project: "/repo/a",
       command: "claude",
     });
-    expect(notify.successCalls).toEqual(["セッションを作成しました"]);
+    expect(notify.successCalls).toEqual(["Session created"]);
     expect(store.closeCalls).toBe(1);
   });
 
@@ -257,7 +296,7 @@ describe("new-session.submit", () => {
     const tool = findTool(listTools(ctx.daemon, []), "new-session");
     await tool.submit(ctx, { project: "/repo/a", command: "claude" });
     expect(daemonActions.selectSessionCalls).toEqual(["sess-just-made"]);
-    expect(notify.successCalls).toEqual(["セッションを作成しました"]);
+    expect(notify.successCalls).toEqual(["Session created"]);
     expect(store.closeCalls).toBe(1);
   });
 
@@ -348,52 +387,11 @@ describe("new-session.submit", () => {
 });
 
 // ---------------------------------------------------------------------------
-// stop-session.submit
-// ---------------------------------------------------------------------------
-
-describe("stop-session.submit", () => {
-  it("calls http.deleteSession with the sessionId", async () => {
-    const http = makeFakeHttp();
-    const notify = makeFakeNotify();
-    const store = makeFakeStore();
-    const ctx = makeCtx({ http, notify, store });
-    const tool = findTool(listTools(ctx.daemon, []), "stop-session");
-    await tool.submit(ctx, { sessionId: "sess-42" });
-    expect(http.deleteSession).toHaveBeenCalledTimes(1);
-    expect(http.deleteSession).toHaveBeenCalledWith("sess-42");
-    expect(notify.successCalls).toEqual(["セッションを停止しました"]);
-    expect(store.closeCalls).toBe(1);
-    expect(store.clearActiveIfCalls).toEqual(["sess-42"]);
-  });
-
-  it("propagates http.deleteSession failure", async () => {
-    const httpErr = new Error("HTTP 404");
-    const http = makeFakeHttp({ deleteSession: vi.fn().mockRejectedValue(httpErr) });
-    const notify = makeFakeNotify();
-    const store = makeFakeStore();
-    const ctx = makeCtx({ http, notify, store });
-    const tool = findTool(listTools(ctx.daemon, []), "stop-session");
-    await expect(tool.submit(ctx, { sessionId: "sess-42" })).rejects.toBe(httpErr);
-    expect(notify.successCalls).toEqual([]);
-    expect(store.closeCalls).toBe(0);
-    // clearActiveIf is only called on success — the active pointer stays
-    // intact if the kill failed.
-    expect(store.clearActiveIfCalls).toEqual([]);
-  });
-
-  it("throws when sessionId is missing", async () => {
-    const ctx = makeCtx();
-    const tool = findTool(listTools(ctx.daemon, []), "stop-session");
-    await expect(tool.submit(ctx, {})).rejects.toThrow(/sessionId/);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // option-source helpers
 // ---------------------------------------------------------------------------
 
 describe("projectOptions", () => {
-  it("projects daemon.projects to value + getText", () => {
+  it("projects daemon.projects to value + label ParamOption entries", () => {
     const daemon = makeDaemonSnapshot({
       projects: [
         { path: "/repo/a", isGit: true, isSandboxed: false },
@@ -402,33 +400,63 @@ describe("projectOptions", () => {
     });
     const opts = projectOptions(daemon);
     expect(opts.map((o) => o.value)).toEqual(["/repo/a", "/repo/b"]);
-    const firstOpt = opts[0];
-    if (!firstOpt) throw new Error("missing opt");
-    expect(firstOpt.getText(firstOpt.value)).toBe("/repo/a");
+    expect(opts.map((o) => o.label)).toEqual(["/repo/a", "/repo/b"]);
   });
-});
 
-describe("sessionOptions", () => {
-  it("uses ADR-0033 display label (title → subtitle → id fallback)", () => {
-    const daemon = makeDaemonSnapshot({
-      sessions: [
-        sessionFixture("s1", "My session"),
-        sessionFixture("s2"), // no title → falls back to id
-      ],
-    });
-    const opts = sessionOptions(daemon);
-    expect(opts.map((o) => o.value)).toEqual(["s1", "s2"]);
-    const o0 = opts[0];
-    const o1 = opts[1];
-    if (!o0 || !o1) throw new Error("missing opt");
-    expect(o0.getText(o0.value)).toBe("My session");
-    expect(o1.getText(o1.value)).toBe("s2");
+  it("is the sole materialize for materializeKey === 'projects'", () => {
+    // newSessionTool.params[0] declares materializeKey === 'projects', so
+    // projectOptions must remain the unique implementation. This test fails
+    // loudly if the contract drifts (e.g. someone changes the materializeKey
+    // value or adds a second helper without removing this one).
+    const tools = listTools(makeDaemonSnapshot(), []);
+    const newSession = findTool(tools, "new-session");
+    const params = newSession.params;
+    if (!params) throw new Error("expected params");
+    const project = params[0];
+    if (!project || project.kind !== "dynamic-options") {
+      throw new Error("expected dynamic-options project param");
+    }
+    expect(project.materializeKey).toBe("projects");
+    // projectOptions accepts a DaemonSnapshot and returns ParamOption[]; the
+    // mere call below is the type-level proof that this is the right shape.
+    const opts = projectOptions(makeDaemonSnapshot());
+    expect(Array.isArray(opts)).toBe(true);
   });
 });
 
 // ---------------------------------------------------------------------------
 // scopeDisabledReason (ADR-0047: single source of truth)
 // ---------------------------------------------------------------------------
+
+describe("scopeDisabledReason English", () => {
+  it("returns 'No active session' for push scope when active session is missing", () => {
+    expect(scopeDisabledReason("push", makeDaemonSnapshot({ activeSessionID: null }))).toBe(
+      "No active session",
+    );
+  });
+
+  it("returns 'No push-capable driver' for push scope when occupant is not 'frame'", () => {
+    expect(
+      scopeDisabledReason(
+        "push",
+        makeDaemonSnapshot({ activeSessionID: "s1", activeOccupant: "main" }),
+      ),
+    ).toBe("No push-capable driver");
+    expect(
+      scopeDisabledReason(
+        "push",
+        makeDaemonSnapshot({ activeSessionID: "s1", activeOccupant: "log" }),
+      ),
+    ).toBe("No push-capable driver");
+    // Absence of occupant fails closed — same English copy.
+    expect(
+      scopeDisabledReason(
+        "push",
+        makeDaemonSnapshot({ activeSessionID: "s1", activeOccupant: undefined }),
+      ),
+    ).toBe("No push-capable driver");
+  });
+});
 
 describe("scopeDisabledReason", () => {
   it("standard scope is always enabled regardless of daemon state", () => {
@@ -442,39 +470,6 @@ describe("scopeDisabledReason", () => {
         makeDaemonSnapshot({ activeSessionID: "s1", activeOccupant: "main" }),
       ),
     ).toBeNull();
-  });
-
-  it("FR-005: push is disabled with 'アクティブセッションなし' when no active session", () => {
-    expect(scopeDisabledReason("push", makeDaemonSnapshot({ activeSessionID: null }))).toBe(
-      "アクティブセッションなし",
-    );
-  });
-
-  it("FR-006: push is disabled with 'push 対象 driver なし' when occupant is not 'frame'", () => {
-    expect(
-      scopeDisabledReason(
-        "push",
-        makeDaemonSnapshot({ activeSessionID: "s1", activeOccupant: "main" }),
-      ),
-    ).toBe("push 対象 driver なし");
-    expect(
-      scopeDisabledReason(
-        "push",
-        makeDaemonSnapshot({ activeSessionID: "s1", activeOccupant: "log" }),
-      ),
-    ).toBe("push 対象 driver なし");
-  });
-
-  it("FR-006: push fails closed (disabled) when occupant is undefined", () => {
-    // The wire may not yet carry occupant; absence must read as "no frame"
-    // so a stale push cannot fire against a pane that may have already
-    // shifted off the frame driver.
-    expect(
-      scopeDisabledReason(
-        "push",
-        makeDaemonSnapshot({ activeSessionID: "s1", activeOccupant: undefined }),
-      ),
-    ).toBe("push 対象 driver なし");
   });
 
   it("FR-005 + FR-006: push is enabled when both active session and frame occupant are present", () => {
@@ -497,8 +492,8 @@ describe("push ToolDef expansion", () => {
     const save = findTool(tools, "push:save");
     expect(save.scope).toBe("push");
     expect(save.label).toBe("save");
-    // FR-010: paramless = Enter 即送信. The store skips ParamSelectPhase
-    // entirely when params === null.
+    // FR-010: paramless = Enter immediate send. The store skips
+    // ParamSelectPhase entirely when params === null.
     expect(save.params).toBeNull();
     const commit = findTool(tools, "push:commit");
     expect(commit.label).toBe("commit");
@@ -507,33 +502,33 @@ describe("push ToolDef expansion", () => {
 
   it("FR-028: returns standard tools only when pushCommands is empty (no shutdown)", () => {
     const tools = listTools(makeDaemonSnapshot(), []);
-    expect(tools).toHaveLength(2);
+    expect(tools).toHaveLength(1);
     expect(tools.find((t) => t.scope === "push")).toBeUndefined();
   });
 });
 
 describe("push ToolDef.disabledReason (shares scopeDisabledReason per ADR-0047)", () => {
-  it("FR-005: returns 'アクティブセッションなし' when no active session", () => {
+  it("FR-005: returns 'No active session' when no active session", () => {
     const tools = listTools(makeDaemonSnapshot(), ["save"]);
     const t = findTool(tools, "push:save");
     expect(t.disabledReason(makeDaemonSnapshot({ activeSessionID: null }))).toBe(
-      "アクティブセッションなし",
+      "No active session",
     );
   });
 
-  it("FR-006: returns 'push 対象 driver なし' when occupant is not 'frame'", () => {
+  it("FR-006: returns 'No push-capable driver' when occupant is not 'frame'", () => {
     const tools = listTools(makeDaemonSnapshot(), ["save"]);
     const t = findTool(tools, "push:save");
     expect(
       t.disabledReason(makeDaemonSnapshot({ activeSessionID: "s1", activeOccupant: "main" })),
-    ).toBe("push 対象 driver なし");
+    ).toBe("No push-capable driver");
     expect(
       t.disabledReason(makeDaemonSnapshot({ activeSessionID: "s1", activeOccupant: "log" })),
-    ).toBe("push 対象 driver なし");
+    ).toBe("No push-capable driver");
     // Absence of occupant fails closed — same contract as scopeDisabledReason.
     expect(
       t.disabledReason(makeDaemonSnapshot({ activeSessionID: "s1", activeOccupant: undefined })),
-    ).toBe("push 対象 driver なし");
+    ).toBe("No push-capable driver");
   });
 
   it("returns null when active session + frame occupant are both present", () => {
@@ -629,15 +624,16 @@ describe("push ToolDef.submit", () => {
     // non-null reason, submit() proceeds — the palette-store owns the gate.
     // We assert this by giving the tool a daemon WITH activeSessionID (so
     // the inner throw doesn't fire) but with occupant=main (so
-    // disabledReason would say 'push 対象 driver なし'). submit() must still
-    // call http.pushCommand because the gate is the store's responsibility.
+    // disabledReason would say 'No push-capable driver'). submit() must
+    // still call http.pushCommand because the gate is the store's
+    // responsibility.
     const http = makeFakeHttp({ pushCommand: vi.fn().mockResolvedValue(undefined) });
     const ctx = makeCtx({
       http,
       daemon: makeDaemonSnapshot({ activeSessionID: "sess-99", activeOccupant: "main" }),
     });
     const tool = findTool(listTools(ctx.daemon, ["save"]), "push:save");
-    expect(tool.disabledReason(ctx.daemon)).toBe("push 対象 driver なし");
+    expect(tool.disabledReason(ctx.daemon)).toBe("No push-capable driver");
     await tool.submit(ctx, {});
     expect(http.pushCommand).toHaveBeenCalledWith("sess-99", "save");
   });

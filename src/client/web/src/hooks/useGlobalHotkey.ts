@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { isMacPlatform } from "../lib/platform";
 import { usePaletteStore } from "../store/palette";
 
 /**
@@ -6,8 +7,8 @@ import { usePaletteStore } from "../store/palette";
  * intercepts Cmd+K (macOS) / Ctrl+K (other) on the capture phase and toggles
  * the command palette.
  *
- * Design (ADR-0037 — "Cmd/Ctrl+K は document の capture phase で listen し、
- * 常設ボタンを保険として併設する"):
+ * Design (ADR-0037 — "Listen for Cmd/Ctrl+K on the document capture phase,
+ * and pair it with an always-on header button as a fallback"):
  *
  *   - xterm.js' internal `<textarea>` consumes `keydown` events on the bubble
  *     phase, so a normal `window.addEventListener("keydown", ...)` would never
@@ -36,15 +37,6 @@ import { usePaletteStore } from "../store/palette";
  * the top of `App.tsx`. The effect's cleanup removes the listener on
  * unmount so HMR / tests reload cleanly.
  */
-
-function isMacPlatform(): boolean {
-  // navigator.platform is deprecated but still the most reliable signal in
-  // the browsers we target. happy-dom and real Chrome/Safari/Firefox all
-  // expose it; userAgentData is too new (and gated behind permissions in
-  // some browsers) to rely on for a keyboard-modifier decision.
-  if (typeof navigator === "undefined") return false;
-  return navigator.platform.toUpperCase().includes("MAC");
-}
 
 export function useGlobalHotkey(): void {
   useEffect(() => {

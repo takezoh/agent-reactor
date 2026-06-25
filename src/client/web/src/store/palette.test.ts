@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiHttpError, SessionsApi } from "../api/sessions";
 import type {
-  DaemonSnapshot,
   NotificationsApi,
   ToolCtx,
   ToolDaemonActions,
@@ -9,6 +8,7 @@ import type {
   ToolStoreCtx,
 } from "../lib/tools";
 import * as toolsModule from "../lib/tools";
+import { mkSnapshot } from "../test/fixtures/daemon";
 import { useDaemonStore } from "./daemon";
 import { usePaletteStore } from "./palette";
 
@@ -52,21 +52,14 @@ function makeFakeNotify(): NotificationsApi & {
 
 function makeFakeStoreActions(): ToolStoreCtx & {
   closeCalls: number;
-  clearActiveIfCalls: string[];
 } {
-  const state = { closeCalls: 0, clearActiveIfCalls: [] as string[] };
+  const state = { closeCalls: 0 };
   return {
     close() {
       state.closeCalls += 1;
     },
-    clearActiveIf(id) {
-      state.clearActiveIfCalls.push(id);
-    },
     get closeCalls() {
       return state.closeCalls;
-    },
-    get clearActiveIfCalls() {
-      return state.clearActiveIfCalls;
     },
   };
 }
@@ -88,20 +81,10 @@ function makeFakeDaemonActions(): ToolDaemonActions & {
   };
 }
 
-function makeDaemonSnapshot(overrides: Partial<DaemonSnapshot> = {}): DaemonSnapshot {
-  return {
-    sessions: [],
-    activeSessionID: null,
-    projects: [],
-    pushCommands: [],
-    ...overrides,
-  };
-}
-
 function makeCtx(overrides: Partial<ToolCtx> = {}): ToolCtx {
   return {
     http: makeFakeHttp(),
-    daemon: makeDaemonSnapshot(),
+    daemon: mkSnapshot(),
     daemonActions: makeFakeDaemonActions(),
     notify: makeFakeNotify(),
     store: makeFakeStoreActions(),
@@ -162,7 +145,7 @@ describe("usePaletteStore", () => {
 
   it("openPalette picks 'push' when active session has frame occupant (FR-004)", () => {
     usePaletteStore.getState().openPalette({
-      daemonSnapshot: makeDaemonSnapshot({
+      daemonSnapshot: mkSnapshot({
         activeSessionID: "s1",
         activeOccupant: "frame",
       }),
@@ -174,7 +157,7 @@ describe("usePaletteStore", () => {
 
   it("openPalette picks 'standard' when active session occupant is not 'frame'", () => {
     usePaletteStore.getState().openPalette({
-      daemonSnapshot: makeDaemonSnapshot({
+      daemonSnapshot: mkSnapshot({
         activeSessionID: "s1",
         activeOccupant: "main",
       }),
@@ -184,7 +167,7 @@ describe("usePaletteStore", () => {
 
   it("openPalette picks 'standard' when no active session is present", () => {
     usePaletteStore.getState().openPalette({
-      daemonSnapshot: makeDaemonSnapshot({ activeSessionID: null }),
+      daemonSnapshot: mkSnapshot({ activeSessionID: null }),
     });
     expect(usePaletteStore.getState().scope).toBe("standard");
   });
@@ -198,7 +181,7 @@ describe("usePaletteStore", () => {
   it("openPalette is a no-op when already open (FR-029)", () => {
     // First open: push scope.
     usePaletteStore.getState().openPalette({
-      daemonSnapshot: makeDaemonSnapshot({
+      daemonSnapshot: mkSnapshot({
         activeSessionID: "s1",
         activeOccupant: "frame",
       }),
@@ -212,7 +195,7 @@ describe("usePaletteStore", () => {
     // Second open with a snapshot that WOULD pick 'standard' must not
     // overwrite the in-progress paramSelect state.
     usePaletteStore.getState().openPalette({
-      daemonSnapshot: makeDaemonSnapshot({ activeSessionID: null }),
+      daemonSnapshot: mkSnapshot({ activeSessionID: null }),
     });
     const s = usePaletteStore.getState();
     expect(s.scope).toBe("push");
@@ -357,7 +340,7 @@ describe("usePaletteStore", () => {
   it("confirmTool with ctx but unknown id fails fast (notify.error + console.error, no transition)", async () => {
     // Reviewer fix (major): previously confirmTool(id, ctx) would transition
     // to paramSelect for an unknown id and the failure would only surface
-    // one frame later inside submit() as a generic "ツールが選択されていません"
+    // one frame later inside submit() as a generic "no tool selected" toast
     // — losing the attribution of who passed the bogus id. Now we fail-fast
     // with notify.error + console.error and leave state unchanged.
     const spy = vi.spyOn(toolsModule, "listTools").mockReturnValue([]);
@@ -371,8 +354,9 @@ describe("usePaletteStore", () => {
       // visible at the call site, not laundered into a later submit().
       expect(s.phase).toBe("toolSelect");
       expect(s.selectedToolId).toBeNull();
-      // Toast surfaced with id + scope context.
+      // Toast surfaced with id + scope context. English-only (FR-C5).
       expect(notify.errorCalls).toHaveLength(1);
+      expect(notify.errorCalls[0]).toMatch(/Unknown tool/);
       expect(notify.errorCalls[0]).toContain("ghost-tool");
       expect(notify.errorCalls[0]).toContain("standard");
       // Devtools breadcrumb for attribution.
@@ -571,7 +555,7 @@ describe("usePaletteStore", () => {
       await usePaletteStore.getState().submit(makeCtx({ notify }));
       const s = usePaletteStore.getState();
       expect(s.open).toBe(false);
-      expect(notify.errorCalls).toEqual(["認証エラー (再ログインしてください)"]);
+      expect(notify.errorCalls).toEqual(["Authentication required"]);
     } finally {
       spy.mockRestore();
     }
@@ -584,7 +568,7 @@ describe("usePaletteStore", () => {
       label: "t",
       scope: "push",
       params: [],
-      disabledReason: () => "push 対象 driver なし",
+      disabledReason: () => "No push-capable driver",
       submit: submitFn,
     };
     const spy = vi.spyOn(toolsModule, "listTools").mockReturnValue([tool]);
@@ -594,7 +578,7 @@ describe("usePaletteStore", () => {
       const notify = makeFakeNotify();
       await usePaletteStore.getState().submit(makeCtx({ notify }));
       expect(submitFn).not.toHaveBeenCalled();
-      expect(notify.errorCalls).toEqual(["push 対象 driver なし"]);
+      expect(notify.errorCalls).toEqual(["No push-capable driver"]);
       expect(usePaletteStore.getState().open).toBe(false);
     } finally {
       spy.mockRestore();
@@ -620,14 +604,15 @@ describe("usePaletteStore", () => {
       // Palette closed and state fully reset.
       expect(s.open).toBe(false);
       expect(s.error).toBeNull();
-      // Toast surfaced with context. We surface "なし" (not the literal
+      // Toast surfaced with context. We surface "none" (not the literal
       // token "null") for the user-facing missing-id case so the toast
-      // reads as a Japanese error message rather than a developer
+      // reads as a regular English error message rather than a developer
       // artifact; the precise null is still in the console.error
       // breadcrumb for attribution.
       expect(notify.errorCalls).toHaveLength(1);
-      expect(notify.errorCalls[0]).toContain("ツール");
-      expect(notify.errorCalls[0]).toContain("なし");
+      expect(notify.errorCalls[0]).toContain("Internal error");
+      expect(notify.errorCalls[0]).toContain("selected tool");
+      expect(notify.errorCalls[0]).toContain("none");
       expect(notify.errorCalls[0]).not.toContain("null");
       expect(notify.errorCalls[0]).toContain("standard");
       // Devtools breadcrumb for attribution.
@@ -688,7 +673,7 @@ describe("usePaletteStore", () => {
       expect(s.open).toBe(true);
       // Toast surfaced (non-HTTP must not be silent).
       expect(notify.errorCalls).toHaveLength(1);
-      expect(notify.errorCalls[0]).toContain("予期しないエラー");
+      expect(notify.errorCalls[0]).toContain("Unexpected error");
       expect(notify.errorCalls[0]).toContain("Failed to fetch");
       // Devtools breadcrumb for stack trace.
       expect(errSpy).toHaveBeenCalled();
@@ -781,7 +766,7 @@ describe("usePaletteStore", () => {
       expect(s.open).toBe(true);
       // Toast surfaced through the non-HTTP path (loudest, not silent).
       expect(notify.errorCalls).toHaveLength(1);
-      expect(notify.errorCalls[0]).toContain("予期しないエラー");
+      expect(notify.errorCalls[0]).toContain("Unexpected error");
       // Devtools breadcrumb for stack attribution.
       expect(errSpy).toHaveBeenCalled();
     } finally {
@@ -811,7 +796,7 @@ describe("usePaletteStore", () => {
       expect(s.submitting).toBe(false);
       expect(s.open).toBe(true);
       expect(notify.errorCalls).toHaveLength(1);
-      expect(notify.errorCalls[0]).toContain("予期しないエラー");
+      expect(notify.errorCalls[0]).toContain("Unexpected error");
       expect(notify.errorCalls[0]).toContain("registry boom");
       expect(errSpy).toHaveBeenCalled();
     } finally {
@@ -865,18 +850,176 @@ describe("usePaletteStore", () => {
   });
 
   // -------------------------------------------------------------------------
-  // clearActiveIf
+  // openPalette preselect — scope-filter bypass + normalize (FR-A2, FR-Det)
   // -------------------------------------------------------------------------
 
-  it("clearActiveIf clears daemon activeSessionID when ids match", () => {
-    useDaemonStore.setState({ activeSessionID: "s1" });
-    usePaletteStore.getState().clearActiveIf("s1");
-    expect(useDaemonStore.getState().activeSessionID).toBeNull();
+  it("openPalette preselect bypasses scope filter even when daemon implies push", () => {
+    // Header's "New Session" CTA must land on 'new-session' regardless of
+    // the daemon's occupant. If a session is active with occupant='frame'
+    // the initialScope would resolve to 'push' and the previous scope-
+    // filtered lookup would miss the standard-scope new-session ToolDef.
+    // The fix bypasses the scope filter on preselect and normalizes the
+    // resulting state to scope='standard' so ParamSelectPhase renders
+    // against the correct segment.
+    const opener = { id: "stub-opener" } as unknown as HTMLElement;
+    usePaletteStore.getState().openPalette({
+      preselectToolId: "new-session",
+      daemonSnapshot: mkSnapshot({
+        activeSessionID: "s1",
+        activeOccupant: "frame",
+        // pushCommands present so the standard scope is genuinely the
+        // "wrong" scope under the daemon-derived initialScope (= 'push').
+        pushCommands: ["save"],
+      }),
+      opener,
+    });
+    const s = usePaletteStore.getState();
+    expect(s.open).toBe(true);
+    // Scope normalized to 'standard' for preselect — independent of the
+    // daemon-derived scope so the param-select phase renders against
+    // the correct segment.
+    expect(s.scope).toBe("standard");
+    expect(s.phase).toBe("paramSelect");
+    expect(s.selectedToolId).toBe("new-session");
+    expect(s.paramValues).toEqual({});
+    expect(s.opener).toBe(opener);
   });
 
-  it("clearActiveIf is a no-op when ids differ", () => {
-    useDaemonStore.setState({ activeSessionID: "s1" });
-    usePaletteStore.getState().clearActiveIf("s2");
-    expect(useDaemonStore.getState().activeSessionID).toBe("s1");
+  it("openPalette preselect with unknown id falls through to toolSelect at daemon scope", () => {
+    // Contract miss (bad id) is not user-visible: the open path falls
+    // through to the unfiltered toolSelect open at the daemon-derived
+    // scope, with a console.warn for traceability.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      usePaletteStore.getState().openPalette({
+        preselectToolId: "ghost-tool",
+        daemonSnapshot: mkSnapshot({
+          activeSessionID: "s1",
+          activeOccupant: "frame",
+          pushCommands: ["save"],
+        }),
+      });
+      const s = usePaletteStore.getState();
+      expect(s.open).toBe(true);
+      expect(s.phase).toBe("toolSelect");
+      expect(s.selectedToolId).toBeNull();
+      // Scope follows the daemon-derived initialScope when preselect misses.
+      expect(s.scope).toBe("push");
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // submit error toasts in English (FR-C5)
+  // -------------------------------------------------------------------------
+
+  it("submit error toasts use English copy across auth / http / unknown branches", async () => {
+    // FR-C5: all store-emitted user-facing strings are English-only. The
+    // three submit() error branches each have a default English text; HTTP
+    // server messages pass through verbatim, so the HTTP branch asserts
+    // the server message is preserved without a Japanese prefix.
+
+    // auth: notify.error('Authentication required')
+    {
+      const tool: ToolDef = {
+        id: "t",
+        label: "t",
+        scope: "standard",
+        params: [],
+        disabledReason: () => null,
+        submit: vi.fn().mockRejectedValue(makeHttpError(401, "unauthorized")),
+      };
+      const spy = vi.spyOn(toolsModule, "listTools").mockReturnValue([tool]);
+      try {
+        usePaletteStore.getState().openPalette();
+        usePaletteStore.setState({ selectedToolId: "t", phase: "paramSelect" });
+        const notify = makeFakeNotify();
+        await usePaletteStore.getState().submit(makeCtx({ notify }));
+        expect(notify.errorCalls).toEqual(["Authentication required"]);
+      } finally {
+        spy.mockRestore();
+      }
+    }
+
+    // http: server message preserved verbatim (no notify, inline only)
+    {
+      resetPalette();
+      const tool: ToolDef = {
+        id: "t",
+        label: "t",
+        scope: "standard",
+        params: [],
+        disabledReason: () => null,
+        submit: vi.fn().mockRejectedValue(makeHttpError(400, "bad request")),
+      };
+      const spy = vi.spyOn(toolsModule, "listTools").mockReturnValue([tool]);
+      try {
+        usePaletteStore.getState().openPalette();
+        usePaletteStore.setState({ selectedToolId: "t", phase: "paramSelect" });
+        const notify = makeFakeNotify();
+        await usePaletteStore.getState().submit(makeCtx({ notify }));
+        // No toast for http branch (preserves existing FR-024 inline-only).
+        expect(notify.errorCalls).toEqual([]);
+        // Inline error carries the server message verbatim.
+        expect(usePaletteStore.getState().error).toBe("bad request");
+      } finally {
+        spy.mockRestore();
+      }
+    }
+
+    // unknown: notify.error('Unexpected error: <msg>') — English prefix
+    {
+      resetPalette();
+      const tool: ToolDef = {
+        id: "t",
+        label: "t",
+        scope: "standard",
+        params: [],
+        disabledReason: () => null,
+        submit: vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
+      };
+      const spy = vi.spyOn(toolsModule, "listTools").mockReturnValue([tool]);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        usePaletteStore.getState().openPalette();
+        usePaletteStore.setState({ selectedToolId: "t", phase: "paramSelect" });
+        const notify = makeFakeNotify();
+        await usePaletteStore.getState().submit(makeCtx({ notify }));
+        expect(notify.errorCalls).toHaveLength(1);
+        expect(notify.errorCalls[0]).toMatch(/Unexpected error/);
+        expect(notify.errorCalls[0]).toContain("Failed to fetch");
+        // Sanity: no Japanese leftover anywhere in the toast.
+        expect(notify.errorCalls[0]).not.toMatch(/[\u3040-\u30FF\u4E00-\u9FFF]/);
+      } finally {
+        spy.mockRestore();
+        errSpy.mockRestore();
+      }
+    }
+  });
+
+  it("submit http branch falls back to 'HTTP error' when server returns empty message", async () => {
+    // FR-C5: empty server message becomes the English fallback 'HTTP error'
+    // so the inline state.error is never a blank string.
+    const tool: ToolDef = {
+      id: "t",
+      label: "t",
+      scope: "standard",
+      params: [],
+      disabledReason: () => null,
+      submit: vi.fn().mockRejectedValue(makeHttpError(500, "")),
+    };
+    const spy = vi.spyOn(toolsModule, "listTools").mockReturnValue([tool]);
+    try {
+      usePaletteStore.getState().openPalette();
+      usePaletteStore.setState({ selectedToolId: "t", phase: "paramSelect" });
+      const notify = makeFakeNotify();
+      await usePaletteStore.getState().submit(makeCtx({ notify }));
+      expect(usePaletteStore.getState().error).toBe("HTTP error");
+      expect(notify.errorCalls).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

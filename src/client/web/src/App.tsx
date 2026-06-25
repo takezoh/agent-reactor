@@ -10,23 +10,21 @@ import { StatusBanner } from "./components/StatusBanner";
 import { TerminalPane } from "./components/TerminalPane";
 import { CommandPalette } from "./components/palette/CommandPalette";
 import { useGlobalHotkey } from "./hooks/useGlobalHotkey";
+// isMacPlatform centralizes the Cmd/Ctrl-key label decision (FR-D3 / ADR-0048).
+// The previous local isMac() was a duplicate of the single-source helper in
+// lib/platform.ts; routing through the lib lets the hotkey hook and Header
+// share the same UA-Client-Hints / navigator.platform / userAgent fallback
+// chain (FR-D1 / FR-D2 — no crash when navigator is undefined).
+import { isMacPlatform } from "./lib/platform";
 import { Connection } from "./socket/connection";
-import { useDaemonStore } from "./store/daemon";
+import { selectDaemonSnapshot, useDaemonStore } from "./store/daemon";
 import { useNotificationsStore } from "./store/notifications";
 import { usePaletteStore } from "./store/palette";
 
-// isMac is a UI-label helper: the global hotkey hook does its own platform
-// detection (see useGlobalHotkey / ADR-0037). Centralizing both in one helper
-// would risk drift since the hook needs SSR-safety while this only renders
-// in the browser — keeping them separate is the cheaper invariant.
-function isMac(): boolean {
-  if (typeof navigator === "undefined") return false;
-  return navigator.platform.toUpperCase().includes("MAC");
-}
-
 export function App() {
-  // ADR-0037 / FR-001: capture-phase で Cmd/Ctrl+K を横取りする。
-  // App ツリー全体で 1 回だけ mount する不変条件。複数箇所で呼ばないこと。
+  // ADR-0037 / FR-001: intercept Cmd/Ctrl+K on the capture phase.
+  // Invariant: mount this exactly once across the App tree. Do not call from
+  // multiple sites.
   useGlobalHotkey();
 
   const token = useMemo(() => readBearerTokenFromHash(), []);
@@ -85,7 +83,7 @@ export function App() {
         const msg = e instanceof Error ? e.message : String(e);
         useNotificationsStore.getState().add({
           level: "error",
-          message: `session-config の取得に失敗しました: ${msg}`,
+          message: `Failed to load session config: ${msg}`,
         });
       });
     return () => {
@@ -98,31 +96,51 @@ export function App() {
     s.activeSessionID ? (s.sessions.find((x) => x.id === s.activeSessionID) ?? null) : null,
   );
 
+  // Subscribe to the daemon primitives that feed selectDaemonSnapshot so the
+  // Header re-renders whenever a field consumed by the snapshot changes — same
+  // pattern as ScopeSegment / ParamSelectPhase (Y3 single source). We pass the
+  // snapshot through openPalette({daemonSnapshot}) on the New Session CTA
+  // (FR-A2) so the store can resolve preselectToolId='new-session' against the
+  // live daemon (push-aware) instead of falling back to an empty snapshot.
+  const sessions = useDaemonStore((s) => s.sessions);
+  const activeOccupant = useDaemonStore((s) => s.activeOccupant);
+  const sessionConfig = useDaemonStore((s) => s.sessionConfig);
+  const daemonSnapshot = useMemo(
+    () => selectDaemonSnapshot({ sessions, activeSessionID, activeOccupant, sessionConfig }),
+    [sessions, activeSessionID, activeOccupant, sessionConfig],
+  );
+
   return (
     <div className="app">
       <NotificationToast />
       <StatusBanner />
       <header className="app-header">
-        {/* FR-002: 常設 Command ボタンは Cmd/Ctrl+K の hotkey 保険 (ADR-0037)。
-            hotkey が browser-native binding に奪われる環境でも palette を必ず
-            開けるよう、Header に視認可能なまま残す。f2: CreateSessionForm 撤去後
-            は New Session ボタンもこの Header に統合され、palette を 'new'
-            で pre-filter して開く (ADR-0043 / FR-021)。 */}
+        {/* FR-002: the always-on Command button is a fallback for the
+            Cmd/Ctrl+K hotkey (ADR-0037). It stays visible in the Header so
+            the palette can always be opened even on environments where the
+            hotkey is consumed by a browser-native binding. f2: after
+            CreateSessionForm was removed, the New Session button was folded
+            into this Header and opens the palette pre-filtered to 'new'
+            (ADR-0043 / FR-021). */}
         <button
           type="button"
-          aria-label="Command Palette"
-          onClick={(e) => usePaletteStore.getState().openPalette({ opener: e.currentTarget })}
+          aria-label="Open command palette (⌘K / Ctrl+K)"
+          onClick={(e) =>
+            usePaletteStore.getState().openPalette({ opener: e.currentTarget, daemonSnapshot })
+          }
         >
-          Command ({isMac() ? "⌘K" : "Ctrl+K"})
+          Command ({isMacPlatform() ? "⌘K" : "Ctrl+K"})
         </button>
-        {/* FR-021 / ADR-0043: 旧 CreateSessionForm の "New Session" CTA を
-            palette new-session に置換。openPalette({preselectToolId}) で
-            palette を出し、ToolSelectPhase をスキップして直接 new-session の
-            paramSelect phase に進む (ID で 1 件に固定する不変条件を palette-
-            store 層で表現する)。fuzzy filter 経由ではない理由は newSessionTool
-            の label が日本語 ("新しいセッション") のため "new" / "new-session"
-            のいずれの query でも 0 hit になるから。store-level preselect は
-            ToolDef.id の同値で resolve するので日本語 label の影響を受けない。 */}
+        {/* FR-021 / ADR-0043: the legacy CreateSessionForm "New Session"
+            CTA is replaced by palette new-session. openPalette({
+            preselectToolId }) surfaces the palette, skips ToolSelectPhase,
+            and lands directly on the new-session paramSelect phase (the
+            invariant of pinning to one tool by ID is expressed in the
+            palette-store layer). We do not go through the fuzzy filter
+            because newSessionTool.label was historically Japanese ("New
+            session" rendered as JP) — a "new" / "new-session" query would
+            return 0 hits. store-level preselect resolves by ToolDef.id
+            equality so it is independent of label localization. */}
         <button
           type="button"
           aria-label="New Session"
@@ -130,6 +148,12 @@ export function App() {
             usePaletteStore.getState().openPalette({
               opener: e.currentTarget,
               preselectToolId: "new-session",
+              // FR-A2: pass the live daemon snapshot so palette-store can
+              // resolve preselect against the actual occupant / projects and
+              // normalize scope to 'standard' instead of falling back to an
+              // empty snapshot (which would silently swap behavior if a
+              // future tool changed its disabledReason).
+              daemonSnapshot,
             });
           }}
         >
@@ -155,7 +179,8 @@ export function App() {
           }
         />
       </main>
-      {/* portal で body 直下に出るので mount 位置は任意 (ADR-0036)。 */}
+      {/* Mounted via portal directly under <body>, so the placement of
+          this element in the tree is irrelevant (ADR-0036). */}
       <CommandPalette />
     </div>
   );

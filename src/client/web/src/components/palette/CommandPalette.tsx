@@ -5,17 +5,19 @@
 //   - FR-003 focus trap + blur on open
 //   - FR-007 role="dialog" / aria-modal
 //   - FR-017 Esc steps back (paramSelect → toolSelect; toolSelect → close)
-//   - FR-018 戻る / 閉じる / overlay 外側クリックで離脱
-//   - FR-020 submitting 表示
-//   - FR-023 push 失効時に close + opener focus 復帰
-//   - FR-029 refocusSeq 観測で input.focus()
+//   - FR-018 Back / Close / overlay outside-click dismissal
+//   - FR-020 surfaces the submitting state
+//   - FR-023 close + restore opener focus when push becomes invalid
+//   - FR-029 input.focus() driven by refocusSeq observation
 // ADRs:
-//   - 0030 terminal-keyed-remount: subscribe/unsubscribe を発行せず、
-//     blur のみで TerminalPane の入力を抑制する。
-//   - 0036 palette-2phase-store-architecture: DOM 副作用 (blur / focus /
-//     portal mount) は本 component に局所化。store は純粋 state。
-//   - 0039 palette-focus-trap-minimal: 本 component は useFocusTrap を
-//     enabled=open で切り替えるだけ。trap 詳細は hook 側に委譲。
+//   - 0030 terminal-keyed-remount: do NOT emit subscribe/unsubscribe; just
+//     blur so the TerminalPane stops absorbing keystrokes.
+//   - 0036 palette-2phase-store-architecture: DOM side effects (blur /
+//     focus / portal mount) live in this component. The store stays a pure
+//     state slice.
+//   - 0039 palette-focus-trap-minimal: this component only toggles
+//     useFocusTrap via enabled=open. Trap details are delegated to the
+//     hook.
 //
 // Tool ctx assembly:
 //   ParamSelectPhase needs ToolCtx (http / daemon / notify / store). We
@@ -49,12 +51,7 @@ import { ToolSelectPhase } from "./ToolSelectPhase";
 // would crash deep inside submit() with a confusing `undefined is not a
 // function`. We check up front so the root cause (broken factory) is on the
 // same stack as the failure.
-const REQUIRED_HTTP_METHODS = [
-  "createSession",
-  "deleteSession",
-  "pushCommand",
-  "getSessionConfig",
-] as const;
+const REQUIRED_HTTP_METHODS = ["createSession", "pushCommand", "getSessionConfig"] as const;
 
 function isValidSessionsApi(http: unknown): http is ToolCtx["http"] {
   if (http === null || typeof http !== "object") return false;
@@ -237,7 +234,6 @@ export function CommandPalette(props: CommandPaletteProps = {}): JSX.Element | n
       },
       store: {
         close: paletteState.close,
-        clearActiveIf: paletteState.clearActiveIf,
       },
     };
   }, [daemon, props.httpFactory]);
@@ -289,7 +285,7 @@ export function CommandPalette(props: CommandPaletteProps = {}): JSX.Element | n
         <header className="palette-header">
           <button
             type="button"
-            aria-label="戻る"
+            aria-label="Back"
             className="palette-header__back"
             onClick={() => usePaletteStore.getState().back()}
             data-testid="palette-back"
@@ -301,7 +297,7 @@ export function CommandPalette(props: CommandPaletteProps = {}): JSX.Element | n
           </h2>
           <button
             type="button"
-            aria-label="閉じる"
+            aria-label="Close"
             className="palette-header__close"
             onClick={() => usePaletteStore.getState().close()}
             data-testid="palette-close"
@@ -320,7 +316,7 @@ export function CommandPalette(props: CommandPaletteProps = {}): JSX.Element | n
           // user so they know the param phase is non-functional rather than
           // staring at an empty area.
           <div role="alert" className="palette-error" data-testid="palette-ctx-error">
-            command palette は利用できません (http クライアントが不正)
+            Command palette unavailable (http client invalid)
           </div>
         )}
         {submitting && (

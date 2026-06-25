@@ -9,8 +9,6 @@
 //   - 0047 palette-disabledreason-single-source (push availability and
 //     submit-time re-validation share a single disabledReason(daemon)
 //     function per ToolDef)
-//   - 0033 display-label-empty-policy (stop-session listbox getText respects
-//     the title→subtitle→id fallback)
 //
 // This file is the framework + standard scope plus dynamic push expansion.
 // session-config-extension supplies the curated `pushCommands` list on the
@@ -21,8 +19,7 @@
 
 import type { SessionsApi } from "../api/sessions";
 import type { SessionConfigProject } from "../api/sessions";
-import { displayLabel } from "../components/SessionList";
-import type { SessionInfo } from "../wire/server";
+import type { ActiveOccupant, SessionInfo } from "../wire/server";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -30,16 +27,53 @@ import type { SessionInfo } from "../wire/server";
 
 export type ToolScope = "standard" | "push";
 
-// ParamDef describes one input field of a ToolDef. `options` is the listbox
-// source (one entry per choice, with a getText projection so callers can
-// format values without leaking display formatting back into the wire
-// payload). `options=null` means "text input" — the value is taken from a
-// free-form input field rather than a listbox selection.
-export interface ParamDef<V = unknown> {
-  id: string;
+// ParamOption is a single listbox choice: the wire-side `value` plus a
+// pre-formatted `label` for display. Keeping `label` as a plain string (not
+// a getText projection) lets the palette store materialize once at param-
+// select time and then render without callbacks; the static `label` doubles
+// as the substring filter source for the listbox typeahead.
+export interface ParamOption {
+  value: string;
   label: string;
-  options: ReadonlyArray<{ value: V; getText: (v: V) => string }> | null;
 }
+
+// ParamDef is a discriminated union over `kind`, the only field every variant
+// shares besides id/label/required. Splitting by kind keeps the listbox
+// (static-options / dynamic-options) and free-form input (text) variants
+// statically distinguishable at the call site, so ParamSelectPhase can
+// switch(kind) and the type checker enforces exhaustiveness.
+//
+// - 'text': free-form input field. Optional `placeholder` hints the user.
+// - 'static-options': listbox sourced from a baked-in `options` array
+//   declared at tool-definition time (no daemon dependency).
+// - 'dynamic-options': listbox sourced at param-select time by looking up
+//   `materializeKey` against the daemon snapshot. The materialization itself
+//   lives outside this file (palette-store / ParamSelectPhase wire it up via
+//   the option-source helpers below, e.g. projectOptions). materializeKey is
+//   a closed enum on purpose — adding a new dynamic source is a deliberate
+//   change to this union, not an accidental string typo.
+export type ParamDef =
+  | {
+      id: string;
+      kind: "text";
+      label: string;
+      placeholder?: string;
+      required?: boolean;
+    }
+  | {
+      id: string;
+      kind: "static-options";
+      label: string;
+      options: ParamOption[];
+      required?: boolean;
+    }
+  | {
+      id: string;
+      kind: "dynamic-options";
+      label: string;
+      materializeKey: "projects";
+      required?: boolean;
+    };
 
 // DaemonSnapshot is the read-only slice of daemon state that ToolDef.submit
 // and ToolDef.disabledReason can observe. We define it locally instead of
@@ -48,13 +82,16 @@ export interface ParamDef<V = unknown> {
 // later sources (e.g. session-config-extension) to extend `projects` /
 // `pushCommands` without touching the store shape. ADR-0036 keeps store
 // pure; ctx.daemon is the projection palette-store hands to submit().
-// DaemonOccupant mirrors the Go-side OccupantKind ('main' | 'log' | 'frame'):
-// what currently occupies pane 0.1 in the TUI. Web UI only cares about this
-// to gate push scope (push targets the active session's frame pane); see
-// FR-004 (initial scope selection) and FR-006 (push-segment disabled state).
-// Optional because not all callers (older tests, stub snapshots) provide it;
-// `undefined` is treated as "no frame" for scope purposes.
-export type DaemonOccupant = "main" | "log" | "frame";
+// DaemonOccupant is the tool-layer alias for the wire-level ActiveOccupant
+// ('main' | 'log' | 'frame'): what currently occupies pane 0.1 in the TUI.
+// Aliasing (Y2) keeps the literal union single-sourced at the wire boundary
+// so a future scope ('chat' / 'scratch' / ...) widens in exactly one place.
+// Web UI only cares about this to gate push scope (push targets the active
+// session's frame pane); see FR-004 (initial scope selection) and FR-006
+// (push-segment disabled state). Optional on DaemonSnapshot because not all
+// callers (older tests, stub snapshots) provide it; `undefined` is treated
+// as "no frame" for scope purposes.
+export type DaemonOccupant = ActiveOccupant;
 
 export interface DaemonSnapshot {
   sessions: SessionInfo[];
@@ -79,18 +116,14 @@ export interface NotificationsApi {
 // ToolStoreCtx is the narrow PaletteActions slice ToolDef.submit consumes
 // through ctx.store. Renamed from `PaletteActions` to avoid a collision with
 // the broader interface of the same name in store/palette.ts (the full
-// PaletteState action set used by the React layer). We expose only the two
-// callbacks ToolDef.submit needs today:
-//   - close()                — close the palette after a successful submit
-//   - clearActiveIf(id)      — if `id` is the currently active session,
-//                              clear daemon activeSessionID (stop-session
-//                              must not leave a dangling active pointer).
-// ToolStoreCtx stays minimal on purpose: every new method here is one
-// more thing test fakes must implement. Tools that need richer access
-// should go through ctx.http or ctx.daemon instead.
+// PaletteState action set used by the React layer). We expose only the
+// callback ToolDef.submit needs today:
+//   - close() — close the palette after a successful submit.
+// ToolStoreCtx stays minimal on purpose: every new method here is one more
+// thing test fakes must implement. Tools that need richer access should go
+// through ctx.http or ctx.daemon instead.
 export interface ToolStoreCtx {
   close(): void;
-  clearActiveIf(sessionId: string): void;
 }
 
 // ToolDaemonActions is the narrow daemon-action surface a ToolDef.submit
@@ -129,7 +162,7 @@ export interface ToolDef {
   scope: ToolScope;
   params: ParamDef[] | null;
   // disabledReason returns null when the tool is currently usable, and a
-  // short human-readable Japanese sentence when not. ADR-0047 makes this
+  // short human-readable English sentence when not. ADR-0047 makes this
   // the single source of truth for both ScopeSegment "disabled" rendering
   // and submit-time re-validation. Standard scope is always null in this
   // task; push scope adds real predicates in tools-registry-dynamic-push.
@@ -180,29 +213,28 @@ function readSandboxFromHostToggle(payload: Record<string, unknown>): "host" | u
 
 const newSessionTool: ToolDef = {
   id: "new-session",
-  label: "新しいセッション",
+  label: "New Session",
   scope: "standard",
-  // project = listbox (filled by ctx.daemon.projects at param-select time);
-  // command = free-form text input. worktree / sandbox are NOT declared as
-  // params here because the ParamSelectPhase gates them via Tab / Shift+Tab
-  // toggles whose visibility depends on the selected project's isGit /
-  // isSandboxed flags (FR-013, FR-014). They flow through `payload` as
-  // optional fields ("worktree": bool, "host": bool) — see submit below.
+  // project = dynamic listbox (materialized from ctx.daemon.projects at
+  // param-select time via materializeKey = 'projects'); command = free-form
+  // text input. worktree / sandbox are NOT declared as params here because
+  // the ParamSelectPhase gates them via Tab / Shift+Tab toggles whose
+  // visibility depends on the selected project's isGit / isSandboxed flags
+  // (FR-013, FR-014). They flow through `payload` as optional fields
+  // ("worktree": bool, "host": bool) — see submit below.
   params: [
     {
       id: "project",
-      label: "プロジェクト",
-      // Note: options=[] is a placeholder. The palette store fills the
-      // listbox at param-select time from ctx.daemon.projects, since the
-      // available projects change as session-config updates. Keeping the
-      // ParamDef declaration static (no closure over daemon) makes
-      // listTools() deterministic and trivially testable.
-      options: [],
+      kind: "dynamic-options",
+      materializeKey: "projects",
+      label: "Project",
+      required: true,
     },
     {
       id: "command",
-      label: "コマンド",
-      options: null,
+      kind: "text",
+      label: "Command",
+      required: true,
     },
   ],
   disabledReason: () => null,
@@ -233,34 +265,7 @@ const newSessionTool: ToolDef = {
     // Notification first, then close: if notify throws the palette stays
     // open with the active error toast visible. close() is idempotent so a
     // future re-entry that calls submit() twice is fine.
-    ctx.notify.success("セッションを作成しました");
-    ctx.store.close();
-  },
-};
-
-const stopSessionTool: ToolDef = {
-  id: "stop-session",
-  label: "セッションを停止",
-  scope: "standard",
-  // sessionId = listbox of current sessions. The palette store materializes
-  // the options from ctx.daemon.sessions at param-select time (same reason
-  // newSessionTool.params[0].options stays empty here).
-  params: [
-    {
-      id: "sessionId",
-      label: "対象セッション",
-      options: [],
-    },
-  ],
-  disabledReason: () => null,
-  async submit(ctx, payload) {
-    const sessionId = readString(payload, "sessionId");
-    await ctx.http.deleteSession(sessionId);
-    // Clear the active pointer if we just killed the active session.
-    // Going through ctx.store keeps palette/daemon state coordination in
-    // one place (ADR-0036) instead of having tools poke daemon directly.
-    ctx.store.clearActiveIf(sessionId);
-    ctx.notify.success("セッションを停止しました");
+    ctx.notify.success("Session created");
     ctx.store.close();
   },
 };
@@ -269,35 +274,17 @@ const stopSessionTool: ToolDef = {
 // Public ParamDef option-source helpers
 // ---------------------------------------------------------------------------
 //
-// These are exposed so the palette store / ParamSelectPhase can materialize
-// listbox options at param-select time without duplicating the projection
-// logic. ADR-0033 mandates the title → subtitle → id fallback for session
-// display labels; centralizing it here keeps stop-session and any future
-// per-session listbox in sync.
+// projectOptions is the sole materialize implementation for
+// `materializeKey === 'projects'`. Exposed so palette store /
+// ParamSelectPhase can fill the listbox options at param-select time
+// without duplicating the projection logic. Other materializeKey values
+// are intentionally NOT added in this PR; introducing a new key is a
+// deliberate widening of the ParamDef union.
 
-export function projectOptions(
-  daemon: DaemonSnapshot,
-): ReadonlyArray<{ value: string; getText: (v: string) => string }> {
+export function projectOptions(daemon: DaemonSnapshot): ParamOption[] {
   return daemon.projects.map((p) => ({
     value: p.path,
-    getText: (v: string) => v,
-  }));
-}
-
-export function sessionOptions(
-  daemon: DaemonSnapshot,
-): ReadonlyArray<{ value: string; getText: (v: string) => string }> {
-  // Snapshot the per-session labels at materialization time so the listbox
-  // entry's getText is a pure projection of `value` (the session id). This
-  // matches ParamDef.options' contract: getText is a function of value
-  // alone, not of an enclosing scope that might be stale by the time the
-  // listbox renders.
-  const labelById = new Map<string, string>(
-    daemon.sessions.map((s) => [s.id, displayLabel(s.view.card, s.id)]),
-  );
-  return daemon.sessions.map((s) => ({
-    value: s.id,
-    getText: (v: string) => labelById.get(v) ?? v,
+    label: p.path,
   }));
 }
 
@@ -306,15 +293,15 @@ export function sessionOptions(
 // ---------------------------------------------------------------------------
 
 // scopeDisabledReason is the single source of truth (ADR-0047) for whether a
-// given palette scope is currently usable, returning either a short Japanese
+// given palette scope is currently usable, returning either a short English
 // reason (rendered as the disabled sub-text in ScopeSegment) or null when the
 // scope is enabled. The same helper is consumed by tools-registry-dynamic-push
 // to gate per-push ToolDef.disabledReason — keeping the literal strings in one
 // place so the segment UI and the submit-time re-validation can never drift.
 //
 // - 'standard' is always enabled (FR-004 baseline): there is no precondition
-//   the standard tools (new-session, stop-session) can fail to meet from the
-//   daemon's perspective; any HTTP-level rejection surfaces inside submit().
+//   the standard tools (new-session) can fail to meet from the daemon's
+//   perspective; any HTTP-level rejection surfaces inside submit().
 // - 'push' requires an active session AND an active-occupant of 'frame'
 //   (FR-005, FR-006). occupant is optional on the snapshot because the wire
 //   may not yet populate it; treat undefined as "no frame" — failing closed
@@ -322,8 +309,8 @@ export function sessionOptions(
 //   fire against a session whose pane just shifted to the main/log buffer.
 export function scopeDisabledReason(scope: ToolScope, daemon: DaemonSnapshot): string | null {
   if (scope === "standard") return null;
-  if (!daemon.activeSessionID) return "アクティブセッションなし";
-  if (daemon.activeOccupant !== "frame") return "push 対象 driver なし";
+  if (!daemon.activeSessionID) return "No active session";
+  if (daemon.activeOccupant !== "frame") return "No push-capable driver";
   return null;
 }
 
@@ -394,13 +381,12 @@ export function toolsForPush(
 }
 
 // listTools is the single entry point palette-store calls to enumerate
-// available tools. Ordering is deterministic: standard tools first (new-
-// session, stop-session — the user-visible "create / kill" pair), then
-// one push-scope ToolDef per entry in pushCommands. shutdown is
-// intentionally NOT registered here (FR-028) — palette-store handles
-// shutdown via a different code path (a dedicated confirm modal) so it does
-// not appear in the tool list, even if "shutdown" or "/quit" happens to be
-// in the curated push list.
+// available tools. Ordering is deterministic: standard tools first
+// (new-session — the user-visible "create" CTA), then one push-scope
+// ToolDef per entry in pushCommands. shutdown is intentionally NOT
+// registered here (FR-028) — palette-store handles shutdown via a different
+// code path (a dedicated confirm modal) so it does not appear in the tool
+// list, even if "shutdown" or "/quit" happens to be in the curated push list.
 export function listTools(daemon: DaemonSnapshot, pushCommands: ReadonlyArray<string>): ToolDef[] {
-  return [newSessionTool, stopSessionTool, ...toolsForPush(daemon, pushCommands)];
+  return [newSessionTool, ...toolsForPush(daemon, pushCommands)];
 }

@@ -75,6 +75,9 @@ describe("CommandPalette", () => {
     expect(dialog.getAttribute("aria-modal")).toBe("true");
     expect(dialog.getAttribute("aria-labelledby")).toBe("palette-title");
     expect(screen.getByText("Command Palette").id).toBe("palette-title");
+    // FR-C5: header chrome labels are English.
+    expect(screen.getByTestId("palette-back").getAttribute("aria-label")).toBe("Back");
+    expect(screen.getByTestId("palette-close").getAttribute("aria-label")).toBe("Close");
   });
 
   it("portals to document.body so z-index parents do not clip it", () => {
@@ -238,12 +241,53 @@ describe("CommandPalette", () => {
         httpFactory={(() => ({}) as any) as () => SessionsApi}
       />,
     );
-    expect(screen.getByTestId("palette-ctx-error")).toBeDefined();
+    const placeholder = screen.getByTestId("palette-ctx-error");
+    expect(placeholder).toBeDefined();
+    // FR-C5: ctx-error copy is English ASCII.
+    expect(placeholder.textContent).toBe("Command palette unavailable (http client invalid)");
     expect(errorSpy).toHaveBeenCalled();
     const matched = errorSpy.mock.calls.some(
       (call) => typeof call[0] === "string" && call[0].includes("invalid SessionsApi"),
     );
     expect(matched).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it("accepts an http client without deleteSession (FR-B3: deleteSession is not a required method)", () => {
+    // REQUIRED_HTTP_METHODS no longer lists deleteSession; a factory that
+    // returns only createSession / pushCommand / getSessionConfig must still
+    // pass isValidSessionsApi and render the ParamSelectPhase rather than
+    // falling through to the ctx-error placeholder.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    act(() => {
+      usePaletteStore.setState({
+        open: true,
+        phase: "paramSelect",
+        selectedToolId: "new-session",
+      });
+    });
+    const slimHttp = {
+      createSession: vi.fn().mockResolvedValue({ id: "sess-new" }),
+      pushCommand: vi.fn().mockResolvedValue(undefined),
+      getSessionConfig: vi.fn().mockResolvedValue({
+        projectRoots: [],
+        projectPaths: [],
+        projects: [],
+        commands: [],
+        pushCommands: [],
+      }),
+    };
+    render(
+      <CommandPalette
+        // biome-ignore lint/suspicious/noExplicitAny: slimHttp is intentionally missing deleteSession
+        httpFactory={(() => slimHttp as any) as () => SessionsApi}
+      />,
+    );
+    expect(screen.queryByTestId("palette-ctx-error")).toBeNull();
+    const invalidMatched = errorSpy.mock.calls.some(
+      (call) => typeof call[0] === "string" && call[0].includes("invalid SessionsApi"),
+    );
+    expect(invalidMatched).toBe(false);
     errorSpy.mockRestore();
   });
 

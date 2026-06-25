@@ -59,17 +59,31 @@ export function isApiHttpError(e: unknown): e is ApiHttpError {
 // stash in state.error. Synchronous bugs inside ToolDef.submit (TypeError,
 // ReferenceError) need to surface SOMETHING in the palette rather than vanish;
 // the empty-string guard catches `throw ''` / `throw null` style anti-patterns.
-export function messageOf(e: unknown): string {
-  if (e instanceof Error && e.message !== "") return e.message;
+// The fallback is overridable so HTTP / unknown branches can substitute their
+// own English default ('HTTP error' vs. 'Unknown error') without each call
+// site re-implementing the empty-string guard. Errors with an empty message
+// also fall back (instead of degrading to the default "Error" String(e)
+// projection) so an HTTP error with no server message reads as 'HTTP error'
+// rather than the meaningless class name.
+export function messageOf(e: unknown, fallback = "Unknown error"): string {
+  if (e instanceof Error) {
+    return e.message !== "" ? e.message : fallback;
+  }
   const s = String(e);
-  return s === "" ? "unknown error" : s;
+  return s === "" ? fallback : s;
 }
 
 // SubmitErrorBranch is the classifier output for submit()'s catch-block. Each
 // branch maps 1:1 onto a side-effect bundle palette.submit executes:
-//   - 'auth':    fixed Japanese toast + full close (FR-024 auth path)
-//   - 'http':    inline state.error + clear submitting (FR-024 server-message)
+//   - 'auth':    fixed English toast + full close (FR-024 auth path)
+//   - 'http':    inline state.error + clear submitting (FR-024 server-message
+//                pass-through; classifier substitutes 'HTTP error' when the
+//                server returns an empty message so the inline error is never
+//                a blank string)
 //   - 'unknown': console.error + notify.error toast + inline state.error
+//                (classifier defaults the message to 'Unknown error' so the
+//                inline state and the prefixed toast are both readable when
+//                the thrown value carries no message)
 // Keeping the classification pure (this function does no I/O, no state writes)
 // lets palette.submit stay a thin dispatcher and shrinks the file under the
 // 500-line cap. (FR-024 ADR-0046)
@@ -80,6 +94,6 @@ export type SubmitErrorBranch =
 
 export function classifySubmitError(e: unknown): SubmitErrorBranch {
   if (isApiHttpError(e) && e.status === 401) return { kind: "auth" };
-  if (isApiHttpError(e)) return { kind: "http", message: messageOf(e) };
-  return { kind: "unknown", message: messageOf(e), cause: e };
+  if (isApiHttpError(e)) return { kind: "http", message: messageOf(e, "HTTP error") };
+  return { kind: "unknown", message: messageOf(e, "Unknown error"), cause: e };
 }

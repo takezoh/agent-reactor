@@ -231,6 +231,10 @@ body {
   font-size: 0.85em;
   opacity: 0.8;
 }
+.palette-param-empty {
+  font-size: 0.85em;
+  opacity: 0.8;
+}
 .palette-error {
   color: #f38ba8;
   font-size: 0.9em;

@@ -1,10 +1,21 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+// FR-D1 / FR-D2 / FR-D3: Header's Cmd/Ctrl-K label routes through the
+// lib/platform single-source helper instead of the deleted local isMac().
+// We mock the lib so each test can flip mac / non-mac without touching
+// navigator (which different envs surface differently — userAgentData on
+// Chromium, deprecated navigator.platform on Safari/Firefox, etc).
+import { isMacPlatform } from "./lib/platform";
 import { Connection } from "./socket/connection";
-import { useDaemonStore } from "./store/daemon";
+import { selectDaemonSnapshot, useDaemonStore } from "./store/daemon";
 import { useNotificationsStore } from "./store/notifications";
 import { usePaletteStore } from "./store/palette";
+import { mkSnapshot } from "./test/fixtures/daemon";
+
+vi.mock("./lib/platform", () => ({
+  isMacPlatform: vi.fn(),
+}));
 
 describe("App", () => {
   beforeEach(() => {
@@ -15,6 +26,8 @@ describe("App", () => {
     // FR-002 / FR-001: Header の Command ボタンと useGlobalHotkey() は
     // usePaletteStore に書き込むため、テスト間で open=true の漏れを防ぐ。
     usePaletteStore.getState().close();
+    // Default isMacPlatform → false (Linux). Mac-branch tests override per case.
+    vi.mocked(isMacPlatform).mockReturnValue(false);
     // Stub fetch to hang forever so Connection.start() never rejects and
     // no unhandled rejection leaks out of the voided conn.start() in useEffect.
     vi.stubGlobal(
@@ -254,7 +267,7 @@ describe("App", () => {
     render(<App />);
     expect(usePaletteStore.getState().open).toBe(false);
 
-    const btn = screen.getByLabelText("Command Palette");
+    const btn = screen.getByLabelText("Open command palette (⌘K / Ctrl+K)");
     expect(btn).toBeTruthy();
     act(() => {
       fireEvent.click(btn);
@@ -266,11 +279,15 @@ describe("App", () => {
     expect(s.opener).toBe(btn);
   });
 
-  // FR-001 / ADR-0037: App は useGlobalHotkey() を 1 回 mount し、
-  // document の capture-phase で Cmd+K (mac) / Ctrl+K (other) を拾う。
-  it("Cmd+K (mac) で palette が open になる — useGlobalHotkey 配線 (FR-001)", () => {
-    // navigator.platform を mac に偽装
-    const platformSpy = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  // FR-001 / ADR-0037: App mounts useGlobalHotkey() once and listens on the
+  // document capture phase for Cmd+K (mac) / Ctrl+K (other).
+  //
+  // useGlobalHotkey reads isMacPlatform() from ./lib/platform — the SAME mocked
+  // module the test importer sees. Spying navigator.platform alone is NOT enough
+  // because the module-level vi.mock above replaces the implementation with a
+  // vi.fn(); we have to flip the mock return per case via vi.mocked(...).
+  it("Cmd+K (mac) opens palette — useGlobalHotkey wiring (FR-001)", () => {
+    vi.mocked(isMacPlatform).mockReturnValue(true);
     useDaemonStore.setState({ sessions: [], activeSessionID: null });
     render(<App />);
     expect(usePaletteStore.getState().open).toBe(false);
@@ -280,11 +297,10 @@ describe("App", () => {
     });
 
     expect(usePaletteStore.getState().open).toBe(true);
-    platformSpy.mockRestore();
   });
 
-  it("Ctrl+K (non-mac) で palette が open になる — useGlobalHotkey 配線 (FR-001)", () => {
-    const platformSpy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  it("Ctrl+K (non-mac) opens palette — useGlobalHotkey wiring (FR-001)", () => {
+    vi.mocked(isMacPlatform).mockReturnValue(false);
     useDaemonStore.setState({ sessions: [], activeSessionID: null });
     render(<App />);
     expect(usePaletteStore.getState().open).toBe(false);
@@ -294,44 +310,47 @@ describe("App", () => {
     });
 
     expect(usePaletteStore.getState().open).toBe(true);
-    platformSpy.mockRestore();
   });
 
-  it("非対象キーでは palette は開かない (regression guard)", () => {
-    const platformSpy = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  it("non-target keys do not open palette (regression guard)", () => {
+    vi.mocked(isMacPlatform).mockReturnValue(true);
     useDaemonStore.setState({ sessions: [], activeSessionID: null });
     render(<App />);
     expect(usePaletteStore.getState().open).toBe(false);
 
     act(() => {
-      // metaKey 無しの k は palette を開かない
+      // k without metaKey must not open the palette
       fireEvent.keyDown(document, { key: "k" });
     });
     expect(usePaletteStore.getState().open).toBe(false);
 
     act(() => {
-      // 別キーは palette を開かない
+      // Another key with metaKey must not open the palette
       fireEvent.keyDown(document, { key: "j", metaKey: true });
     });
     expect(usePaletteStore.getState().open).toBe(false);
-
-    platformSpy.mockRestore();
   });
 
-  // FR-002: ボタン label は platform に合わせて切り替わる
-  it("Command ボタンの label が mac / non-mac で切り替わる", () => {
+  // FR-D1 / FR-D2 / FR-D3: Command ボタンの label / aria-label は
+  // lib/platform:isMacPlatform を一次ソースとして mac / non-mac で切り替わる。
+  // Header はもう navigator.platform を直に読まない (旧 isMac() 削除済み) — ので
+  // 各分岐は vi.mocked(isMacPlatform) を直接フリップして driver する。
+  it("FR-D1: Header button shows ⌘K when isMacPlatform()=true and exposes the hotkey-bearing aria-label", () => {
     useDaemonStore.setState({ sessions: [], activeSessionID: null });
-
-    const macSpy = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
-    const { unmount } = render(<App />);
-    expect(screen.getByLabelText("Command Palette").textContent).toContain("⌘K");
-    unmount();
-    macSpy.mockRestore();
-
-    const linuxSpy = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    vi.mocked(isMacPlatform).mockReturnValue(true);
     render(<App />);
-    expect(screen.getByLabelText("Command Palette").textContent).toContain("Ctrl+K");
-    linuxSpy.mockRestore();
+    const btn = screen.getByLabelText("Open command palette (⌘K / Ctrl+K)");
+    expect(btn.textContent).toContain("⌘K");
+    expect(btn.getAttribute("aria-label")).toBe("Open command palette (⌘K / Ctrl+K)");
+  });
+
+  it("FR-D2: Header button shows Ctrl+K when isMacPlatform()=false (no crash on fallback envs)", () => {
+    useDaemonStore.setState({ sessions: [], activeSessionID: null });
+    vi.mocked(isMacPlatform).mockReturnValue(false);
+    render(<App />);
+    const btn = screen.getByLabelText("Open command palette (⌘K / Ctrl+K)");
+    expect(btn.textContent).toContain("Ctrl+K");
+    expect(btn.textContent).not.toContain("⌘K");
   });
 
   // FR-021 / ADR-0043 (f2): 旧 CreateSessionForm の "New Session" CTA は
@@ -362,6 +381,52 @@ describe("App", () => {
     // 固定された paramSelect phase に進む。query / fuzzy 結果には依存しない。
     expect(s.phase).toBe("paramSelect");
     expect(s.selectedToolId).toBe("new-session");
+  });
+
+  // FR-A2: Header の New Session ボタン onClick は openPalette に
+  // {preselectToolId:'new-session', daemonSnapshot, opener} を必ず渡す。
+  // daemonSnapshot は selectDaemonSnapshot 経由で実 store の値を渡すので、
+  // palette-store 側で preselect 解決時に scope='standard' へ正規化されつつ
+  // 実 daemon (push 占有 / projects) を見て disabledReason / 後段の materialize
+  // が正しく動く (空 snapshot fallback 経路に落ちない)。
+  it("FR-A2: Header New Session click calls openPalette with {preselectToolId, daemonSnapshot, opener}", () => {
+    // 実 daemon に projects + pushCommands を seed して mkSnapshot と同形の
+    // snapshot が流れることを確認する。
+    useDaemonStore.setState({
+      sessions: [],
+      activeSessionID: null,
+      sessionConfig: {
+        projects: [{ path: "/repo1", isGit: true, isSandboxed: false }],
+        pushCommands: ["/clear"],
+      },
+    });
+    const expectedSnapshot = mkSnapshot({
+      projects: [{ path: "/repo1", isGit: true, isSandboxed: false }],
+      pushCommands: ["/clear"],
+    });
+    // selectDaemonSnapshot は store/daemon の単一ソース。test 側でも同じ
+    // 関数で組み立てて、App 側が渡す snapshot と等値であることを assert する。
+    const liveSnapshot = selectDaemonSnapshot(useDaemonStore.getState());
+    expect(liveSnapshot).toEqual(expectedSnapshot);
+
+    const openSpy = vi.spyOn(usePaletteStore.getState(), "openPalette");
+
+    render(<App />);
+    const btn = screen.getByLabelText("New Session");
+    act(() => {
+      fireEvent.click(btn);
+    });
+
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    const arg = openSpy.mock.calls[0]?.[0];
+    expect(arg).toBeDefined();
+    expect(arg?.preselectToolId).toBe("new-session");
+    expect(arg?.opener).toBe(btn);
+    // daemonSnapshot は selectDaemonSnapshot の結果 (mkSnapshot で組んだ
+    // canonical 形と等値)。
+    expect(arg?.daemonSnapshot).toEqual(expectedSnapshot);
+
+    openSpy.mockRestore();
   });
 
   // Blocker T1 regression guard: App on mount MUST call
@@ -446,6 +511,10 @@ describe("App", () => {
     const items = useNotificationsStore.getState().items;
     const errors = items.filter((i) => i.level === "error");
     expect(errors.length).toBeGreaterThanOrEqual(1);
+    // English-only gate: session-config 失敗 toast は英語に置換 (旧
+    // "session-config の取得に失敗しました:" は撤去)。Server message は
+    // ": <reason>" の形で連結されたまま末尾に残る。
+    expect(errors[0]?.message).toMatch(/^Failed to load session config:/);
     expect(useDaemonStore.getState().sessionConfig).toBeNull();
   });
 

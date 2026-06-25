@@ -25,7 +25,6 @@
 
 import { create } from "zustand";
 import { type DaemonSnapshot, type ToolCtx, type ToolScope, listTools } from "../lib/tools";
-import { useDaemonStore } from "./daemon";
 import {
   classifySubmitError,
   findToolForSubmit,
@@ -105,12 +104,6 @@ export interface PaletteActions {
   setComposing(composing: boolean): void;
   submit(ctx: ToolCtx): Promise<void>;
   refocusInput(): void;
-  // clearActiveIf is the palette-layer wrapper around daemon's selectSession.
-  // ToolDef.submit calls this through ctx.store after stop-session so the
-  // stale active pointer is dropped without the tool importing the daemon
-  // store directly (keeps the ToolDef → store coupling 1-direction:
-  // ToolDef → PaletteActions → daemon).
-  clearActiveIf(sessionId: string): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,11 +163,16 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
     // without disturbing in-progress param-select work.
     if (state.open) return;
     const scope = initialScope(opts?.daemonSnapshot);
-    // preselectToolId (ADR-0043 / FR-021): when caller omits daemonSnapshot
-    // we fall back to a minimal empty snapshot — standard tools (new-session,
-    // stop-session) register without daemon state, so the lookup still works.
-    // Push tools cannot be preselected without a snapshot by design (the New
-    // Session use case is standard scope).
+    // preselectToolId (ADR-0043 / FR-021 / FR-A2 / FR-Det): the Header's
+    // "New Session" CTA must land on 'new-session' regardless of the
+    // daemon's current occupant — when an active session has occupant
+    // 'frame' the initialScope would resolve to 'push' and the scope
+    // filter would never find a standard-scope tool. Bypass the scope
+    // filter and resolve against the full ToolDef set, then normalize
+    // scope to 'standard' so ParamSelectPhase renders against the right
+    // segment. We do NOT materialize options or hit HTTP here (ADR-0036
+    // keeps the store DOM/HTTP-free); ParamSelectPhase handles dynamic
+    // option materialization at render time.
     if (opts?.preselectToolId !== undefined) {
       const snap: DaemonSnapshot = opts.daemonSnapshot ?? {
         sessions: [],
@@ -182,23 +180,22 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
         projects: [],
         pushCommands: [],
       };
-      const tool = listTools(snap, snap.pushCommands).find(
-        (t) => t.id === opts.preselectToolId && t.scope === scope,
-      );
+      const tool = listTools(snap, snap.pushCommands).find((t) => t.id === opts.preselectToolId);
       if (tool) {
         set({
           ...initialClosedState,
           open: true,
-          scope,
+          scope: "standard",
           opener: opts?.opener ?? null,
           phase: "paramSelect",
           selectedToolId: tool.id,
         });
         return;
       }
-      // Unknown / wrong-scope preselect id is a contract miss but not a
-      // user-facing error: fall through to the unfiltered toolSelect open
-      // and leave a console.warn so the regression is traceable.
+      // Unknown preselect id is a contract miss but not a user-facing
+      // error: fall through to the unfiltered toolSelect open at the
+      // daemon-derived scope and leave a console.warn so the regression
+      // is traceable.
       console.warn("[palette] openPalette preselectToolId did not resolve", {
         preselectToolId: opts.preselectToolId,
         scope,
@@ -307,7 +304,7 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
         // Unknown tool id with ctx: hard contract break. Surface loudly via
         // notify.error (user signal) + console.error (devtools/Sentry
         // attribution), leave state untouched (no fake paramSelect).
-        ctx.notify.error(`内部エラー: ツール '${id}' が見つかりません (scope=${state.scope})`);
+        ctx.notify.error(`Unknown tool: ${id} (scope=${state.scope})`);
         console.error("[palette] confirmTool unknown id", { id, scope: state.scope });
         return;
       }
@@ -406,10 +403,14 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
       if (tool === null) {
         // selectedToolId is null or the id no longer resolves (push tool
         // list changed between confirm and submit). Notify + console.error
-        // + full close so a follow-up Cmd+K starts clean.
-        const idForUser = state.selectedToolId ?? "なし";
+        // + full close so a follow-up Cmd+K starts clean. "none" is the
+        // user-facing token for the null selectedToolId case so the toast
+        // reads as an English error message rather than a literal "null";
+        // the precise null is still in the console.error breadcrumb for
+        // attribution.
+        const idForUser = state.selectedToolId ?? "none";
         ctx.notify.error(
-          `内部エラー: 選択中ツール (${idForUser}) が見つかりません (scope=${state.scope})`,
+          `Internal error: selected tool (${idForUser}) not found (scope=${state.scope})`,
         );
         console.error("[palette] submit() unresolved tool", {
           selectedToolId: state.selectedToolId,
@@ -450,17 +451,19 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
       const branch = classifySubmitError(e);
       switch (branch.kind) {
         case "auth":
-          // 401 → fixed Japanese toast and full close. Re-auth happens
+          // 401 → fixed English toast and full close. Re-auth happens
           // out-of-band (URL #token=…); leaving the palette open would
           // suggest "try again here", which is wrong.
-          ctx.notify.error("認証エラー (再ログインしてください)");
+          ctx.notify.error("Authentication required");
           set({ ...initialClosedState });
           return;
         case "http":
           // Server-validated 4xx (non-401) / 5xx → inline-error treatment
           // so the user can correct the input and retry without losing
-          // the form. No notify.error: the server message is actionable
-          // inline and doubling it as a toast is noisy.
+          // the form. The server message is passed through verbatim;
+          // classifySubmitError already substitutes the English fallback
+          // 'HTTP error' when the server returns an empty message. No
+          // notify.error: doubling the server message as a toast is noisy.
           set({ error: branch.message, submitting: false });
           return;
         case "unknown":
@@ -471,7 +474,7 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
           // signal and developer stack context, plus inline error for
           // anyone still looking at the open palette.
           console.error("[palette] submit() non-HTTP error", branch.cause);
-          ctx.notify.error(`予期しないエラー: ${branch.message}`);
+          ctx.notify.error(`Unexpected error: ${branch.message}`);
           set({ error: branch.message, submitting: false });
           return;
       }
@@ -482,17 +485,5 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
     // FR-029: incrementing the counter is the entire signal. CommandPalette's
     // useEffect([refocusSeq]) handles the actual input.focus() call.
     set((s) => ({ refocusSeq: s.refocusSeq + 1 }));
-  },
-
-  clearActiveIf(sessionId) {
-    // We read daemon state directly (instead of having the caller pass it)
-    // because the only legitimate caller is ToolDef.submit which already
-    // proved it knows the right sessionId. The daemon store's selectSession
-    // is the single-writer for activeSessionID; going through it preserves
-    // any future invariants daemon.ts grows.
-    const daemon = useDaemonStore.getState();
-    if (daemon.activeSessionID === sessionId) {
-      daemon.selectSession(null);
-    }
   },
 }));

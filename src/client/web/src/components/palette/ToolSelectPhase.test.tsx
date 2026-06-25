@@ -71,9 +71,12 @@ describe("ToolSelectPhase", () => {
   it("renders standard scope tools in a listbox", () => {
     renderToolSelectPhase();
     const opts = options();
-    expect(opts).toHaveLength(2);
+    // After tools-registry-rewrite stop-session is no longer registered in
+    // listTools(); only new-session remains in the standard scope.
+    expect(opts).toHaveLength(1);
     expect(opts[0]?.dataset.toolId).toBe("new-session");
-    expect(opts[1]?.dataset.toolId).toBe("stop-session");
+    const ids = opts.map((o) => o.dataset.toolId ?? "");
+    expect(ids).not.toContain("stop-session");
     // ARIA: listbox + activedescendant + selected (FR-007)
     const listbox = screen.getByRole("listbox");
     expect(listbox.id).toBe("palette-listbox");
@@ -82,14 +85,15 @@ describe("ToolSelectPhase", () => {
     const cb = input();
     expect(cb.getAttribute("role")).toBe("combobox");
     expect(cb.getAttribute("aria-controls")).toBe("palette-listbox");
+    // FR-C5: placeholder is English ASCII.
+    expect(cb.placeholder).toBe("Search commands...");
   });
 
   it("filters by fuzzy query and highlights matched ranges with <mark>", () => {
     renderToolSelectPhase();
-    // Query matches "新しいセッション" via the 'shi' romaji? No — fuzzy is
-    // by raw chars. Use a label that we know contains the literal chars
-    // we type. 'セ' is in both labels ("セッション" / "セッションを停止").
-    fireEvent.change(input(), { target: { value: "新しい" } });
+    // Filter the (single-entry) standard scope by typing chars present in
+    // the English "New Session" label.
+    fireEvent.change(input(), { target: { value: "new" } });
 
     const opts = options();
     expect(opts).toHaveLength(1);
@@ -98,34 +102,32 @@ describe("ToolSelectPhase", () => {
     // a <mark data-testid="palette-mark"> per range.
     const marks = screen.queryAllByTestId("palette-mark");
     expect(marks.length).toBeGreaterThan(0);
-    const markedText = marks.map((m) => m.textContent ?? "").join("");
+    const markedText = marks
+      .map((m) => m.textContent ?? "")
+      .join("")
+      .toLowerCase();
     // Each char in the query should appear inside at least one <mark>.
-    for (const ch of "新しい") {
+    for (const ch of "new") {
       expect(markedText).toContain(ch);
     }
   });
 
-  it("moves cursor with ArrowDown / ArrowUp and Ctrl+N / Ctrl+P, clamping at the ends", () => {
+  it("cursor stays clamped on a single-entry list across ArrowDown / Ctrl+N / ArrowUp / Ctrl+P", () => {
+    // After tools-registry-rewrite the standard scope only has one tool
+    // (new-session). FR-009 mandates clamp-not-wrap, so every nav key
+    // should leave the cursor pointing at new-session.
     renderToolSelectPhase();
     expect(selectedToolId()).toBe("new-session");
 
     fireEvent.keyDown(input(), { key: "ArrowDown" });
-    expect(selectedToolId()).toBe("stop-session");
-
-    // Over-scroll: store counter advances past the list end, component clamps.
-    fireEvent.keyDown(input(), { key: "n", ctrlKey: true });
-    expect(selectedToolId()).toBe("stop-session");
-
-    fireEvent.keyDown(input(), { key: "ArrowUp" });
-    // Underlying counter was 2 (from +1 +1), so ArrowUp brings it to 1 →
-    // still on stop-session.
-    expect(selectedToolId()).toBe("stop-session");
-
-    fireEvent.keyDown(input(), { key: "p", ctrlKey: true });
     expect(selectedToolId()).toBe("new-session");
 
-    // Ctrl+P past the top clamps to 0.
-    fireEvent.keyDown(input(), { key: "p", ctrlKey: true });
+    fireEvent.keyDown(input(), { key: "n", ctrlKey: true });
+    expect(selectedToolId()).toBe("new-session");
+
+    fireEvent.keyDown(input(), { key: "ArrowUp" });
+    expect(selectedToolId()).toBe("new-session");
+
     fireEvent.keyDown(input(), { key: "p", ctrlKey: true });
     expect(selectedToolId()).toBe("new-session");
   });
@@ -162,7 +164,7 @@ describe("ToolSelectPhase", () => {
     // the wrapper behavior by mocking confirmTool — see test above. Here we
     // assert the non-paramless branch keeps the palette open (sanity).
     render(<ToolSelectPhase httpFactory={() => http} />);
-    fireEvent.change(input(), { target: { value: "新しい" } });
+    fireEvent.change(input(), { target: { value: "new" } });
     fireEvent.keyDown(input(), { key: "Enter" });
     // new-session has params → confirmTool transitions to paramSelect.
     expect(usePaletteStore.getState().phase).toBe("paramSelect");
@@ -229,12 +231,15 @@ describe("ToolSelectPhase", () => {
 
   it("setQuery resets cursor; aria-activedescendant follows the clamp", () => {
     renderToolSelectPhase();
+    // ArrowDown clamps at the single new-session entry; cursor stays at 0
+    // in display terms (FR-009 clamp-not-wrap), even though the unbounded
+    // store counter advances.
     fireEvent.keyDown(input(), { key: "ArrowDown" });
-    expect(selectedToolId()).toBe("stop-session");
+    expect(selectedToolId()).toBe("new-session");
 
     // Type a query that only matches new-session — cursor resets to 0 in the
     // store, and the listbox only has one entry to land on.
-    fireEvent.change(input(), { target: { value: "新しい" } });
+    fireEvent.change(input(), { target: { value: "new" } });
     expect(usePaletteStore.getState().paramCursor).toBe(0);
     expect(selectedToolId()).toBe("new-session");
     expect(screen.getByRole("listbox").getAttribute("aria-activedescendant")).toBe("palette-opt-0");

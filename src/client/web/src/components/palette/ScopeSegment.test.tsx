@@ -37,7 +37,7 @@ describe("ScopeSegment", () => {
     expect(push.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("FR-005: push is disabled with 'アクティブセッションなし' when there is no active session", () => {
+  it("FR-005: push is disabled with 'No active session' when there is no active session", () => {
     useDaemonStore.setState({
       activeSessionID: null,
       activeOccupant: "frame",
@@ -45,14 +45,14 @@ describe("ScopeSegment", () => {
     render(<ScopeSegment />);
     const push = screen.getByRole("tab", { name: /push/ });
     expect(push.hasAttribute("disabled")).toBe(true);
-    expect(push.textContent).toContain("アクティブセッションなし");
+    expect(push.textContent).toContain("No active session");
     // standard remains enabled — push being unavailable must not block the
     // common create/stop tools.
     const standard = screen.getByRole("tab", { name: /standard/ });
     expect(standard.hasAttribute("disabled")).toBe(false);
   });
 
-  it("FR-006: push is disabled with 'push 対象 driver なし' when active session occupant is not 'frame'", () => {
+  it("FR-006: push is disabled with 'No push-capable driver' when active session occupant is not 'frame'", () => {
     useDaemonStore.setState({
       activeSessionID: "s1",
       activeOccupant: "main",
@@ -60,7 +60,7 @@ describe("ScopeSegment", () => {
     render(<ScopeSegment />);
     const push = screen.getByRole("tab", { name: /push/ });
     expect(push.hasAttribute("disabled")).toBe(true);
-    expect(push.textContent).toContain("push 対象 driver なし");
+    expect(push.textContent).toContain("No push-capable driver");
   });
 
   it("FR-006: push is disabled (fail-closed) when activeOccupant is undefined", () => {
@@ -74,7 +74,7 @@ describe("ScopeSegment", () => {
     render(<ScopeSegment />);
     const push = screen.getByRole("tab", { name: /push/ });
     expect(push.hasAttribute("disabled")).toBe(true);
-    expect(push.textContent).toContain("push 対象 driver なし");
+    expect(push.textContent).toContain("No push-capable driver");
   });
 
   it("calls setScope('push') when push button is clicked and push is enabled", () => {

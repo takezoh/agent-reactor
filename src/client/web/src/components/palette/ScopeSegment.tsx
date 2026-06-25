@@ -14,7 +14,7 @@
 
 import { scopeDisabledReason } from "../../lib/tools";
 import { selectDaemonSnapshot, useDaemonStore } from "../../store/daemon";
-import { usePaletteStore } from "../../store/palette";
+import { type PaletteScope, usePaletteStore } from "../../store/palette";
 import type { SessionInfo } from "../../wire/server";
 
 // EMPTY_SESSIONS is a module-level reference-stable empty array. ScopeSegment
@@ -30,7 +30,7 @@ const EMPTY_SESSIONS: SessionInfo[] = [];
 // wiring — a regression in either button (e.g. forgetting aria-pressed) would
 // otherwise have to be caught in two places.
 function scopeButton(props: {
-  scope: "standard" | "push";
+  scope: PaletteScope;
   label: string;
   active: boolean;
   reason: string | null;

@@ -146,7 +146,6 @@ export function ToolSelectPhase(props: ToolSelectPhaseProps = {}) {
       },
       store: {
         close: paletteState.close,
-        clearActiveIf: paletteState.clearActiveIf,
       },
     };
   }, [daemon, props.httpFactory]);
@@ -217,7 +216,7 @@ export function ToolSelectPhase(props: ToolSelectPhaseProps = {}) {
         onCompositionEnd={() => usePaletteStore.getState().setComposing(false)}
         onKeyDown={onKeyDown}
         readOnly={submitting}
-        placeholder="コマンドを検索…"
+        placeholder="Search commands..."
         data-testid="palette-input"
       />
       {/*
