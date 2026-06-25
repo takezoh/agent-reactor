@@ -6,7 +6,7 @@ import type { HelloFrame, SessionInfo, ViewUpdateFrame } from "../wire/server";
 export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "closed";
 
 // SessionConfigSlice mirrors the subset of GET /api/session-config the
-// palette / ScopeSegment need to gate behavior: the projects list (with
+// palette needs to gate behavior: the projects list (with
 // isGit/isSandboxed flags driving the new-session worktree/host toggles per
 // FR-013/FR-014) and the push_commands enumeration (FR-027, fed to the
 // dynamic push scope by tools-registry-dynamic-push). Kept as its own slice
@@ -88,8 +88,8 @@ export type DaemonSnapshotSource = {
   sessionConfig: DaemonState["sessionConfig"];
 };
 
-// selectDaemonSnapshot is the read-only projection consumers (ScopeSegment,
-// CommandPalette, ToolSelectPhase, ParamSelectPhase) feed to
+// selectDaemonSnapshot is the read-only projection consumers (CommandPalette,
+// ToolSelectPhase, ParamSelectPhase) feed to
 // scopeDisabledReason / ToolDef.disabledReason / listTools (ADR-0047). It
 // assembles the DaemonSnapshot shape from the live daemon store without
 // forcing each caller to repeat the field plumbing. projects /

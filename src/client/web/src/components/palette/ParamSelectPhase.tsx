@@ -20,7 +20,8 @@
 //   - 0049 dynamic-options-materialize-at-view (display layer projects
 //     materializeKey → ParamOption[]; store / wire stay daemon-free)
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { useChipHotkey } from "../../hooks/useChipHotkey";
 import {
   type DaemonSnapshot,
   type ParamDef,
@@ -30,8 +31,9 @@ import {
   listTools,
   projectOptions,
 } from "../../lib/tools";
-import { selectDaemonSnapshot, useDaemonStore } from "../../store/daemon";
 import { usePaletteStore } from "../../store/palette";
+import { useDaemonSnapshot } from "../../store/useDaemonSnapshot";
+import { ChipSwitch } from "./ChipSwitch";
 import { ParamEmptyState } from "./ParamEmptyState";
 import { ParamListbox } from "./ParamListbox";
 import { ParamTextInput } from "./ParamTextInput";
@@ -87,20 +89,6 @@ export function materializeOptions(
   }
 }
 
-// findSelectedProject locates the SessionConfigProject the user has
-// chosen in the `project` field, so the command-field toggle visibility
-// (FR-015) can branch on isGit / isSandboxed. Returns null when no
-// project is selected or the path no longer exists (snapshot diff
-// between open and now).
-function findSelectedProject(
-  snapshot: DaemonSnapshot,
-  paramValues: Record<string, unknown>,
-): { path: string; isGit: boolean; isSandboxed: boolean } | null {
-  const raw = paramValues.project;
-  if (typeof raw !== "string" || raw === "") return null;
-  return snapshot.projects.find((p) => p.path === raw) ?? null;
-}
-
 // isFinalField is the predicate FR-011 / spec point 4 documents for the
 // "Enter submits vs Enter advances" branch.
 function isFinalField(params: ReadonlyArray<unknown>, paramCursor: number): boolean {
@@ -129,23 +117,19 @@ export function ParamSelectPhase({ ctx }: ParamSelectPhaseProps): JSX.Element | 
   const submitting = usePaletteStore((s) => s.submitting);
   const composing = usePaletteStore((s) => s.composing);
   const setParam = usePaletteStore((s) => s.setParam);
-  const toggleWorktree = usePaletteStore((s) => s.toggleWorktree);
-  const toggleHost = usePaletteStore((s) => s.toggleHost);
   const moveCursor = usePaletteStore((s) => s.moveCursor);
   const submit = usePaletteStore((s) => s.submit);
   const setComposing = usePaletteStore((s) => s.setComposing);
+  const toggleWorktree = usePaletteStore((s) => s.toggleWorktree);
+  const toggleHost = usePaletteStore((s) => s.toggleHost);
+
+  // Ref to the command text input for focus fallback (FR-022).
+  const commandInputRef = useRef<HTMLInputElement>(null);
 
   // Subscribe to daemon primitives so React re-renders only when a
   // consumed field changes; the snapshot is reassembled by
-  // selectDaemonSnapshot (Y3 single-source).
-  const sessions = useDaemonStore((s) => s.sessions);
-  const activeSessionID = useDaemonStore((s) => s.activeSessionID);
-  const activeOccupant = useDaemonStore((s) => s.activeOccupant);
-  const sessionConfig = useDaemonStore((s) => s.sessionConfig);
-  const snapshot: DaemonSnapshot = useMemo(
-    () => selectDaemonSnapshot({ sessions, activeSessionID, activeOccupant, sessionConfig }),
-    [sessions, activeSessionID, activeOccupant, sessionConfig],
-  );
+  // selectDaemonSnapshot via useDaemonSnapshot (Y3 single-source).
+  const snapshot: DaemonSnapshot = useDaemonSnapshot();
 
   // Resolve the tool fresh every render so a registry diff does not
   // leave a stale ToolDef captured in a memo.
@@ -158,12 +142,18 @@ export function ParamSelectPhase({ ctx }: ParamSelectPhaseProps): JSX.Element | 
   // useMemo / useEffect deps don't churn on identity.
   const params = useMemo<ParamDef[]>(() => tool?.params ?? [], [tool]);
 
-  // The selected project drives command-field toggle visibility (FR-015).
-  const selectedProject = findSelectedProject(snapshot, paramValues);
-  const showWorktreeToggle = selectedProject?.isGit === true;
-  const showHostToggle = selectedProject?.isSandboxed === true;
-  const worktreeOn = paramValues.worktree === true;
-  const hostOn = paramValues.host === true;
+  // Derive the selected project's capabilities to drive chip visibility.
+  // FR-015 / FR-016: chips are only shown when the command field is rendered
+  // (param.id === 'command' exists in params up to stopIdx) AND the selected
+  // project has isGit / isSandboxed flags set.
+  const selectedProjectPath = typeof paramValues.project === "string" ? paramValues.project : null;
+  const selectedProject = useMemo(
+    () =>
+      selectedProjectPath !== null
+        ? (snapshot.projects.find((p) => p.path === selectedProjectPath) ?? null)
+        : null,
+    [selectedProjectPath, snapshot.projects],
+  );
 
   // Today's tools declare at most 2 params (new-session: project +
   // command). To keep useDynamicParamPreset's hook ordering stable
@@ -178,6 +168,54 @@ export function ParamSelectPhase({ ctx }: ParamSelectPhaseProps): JSX.Element | 
   useDynamicParamPreset(slot0, options0, paramValues[slot0.id], setParam);
   useDynamicParamPreset(slot1, options1, paramValues[slot1.id], setParam);
   const materialized: Array<ParamOption[] | null> = [options0, options1];
+
+  // FR-015 / FR-016: chip visibility is derived from the selected project's
+  // capabilities. hasCommandField is true when the 'command' param is in the
+  // params list (needed by useChipHotkey's commandFieldVisible guard).
+  const hasCommandField = params.some((p) => p.id === "command");
+  const showWorktreeToggle = hasCommandField && selectedProject?.isGit === true;
+  const showHostToggle = hasCommandField && selectedProject?.isSandboxed === true;
+  const worktreeOn = paramValues.worktree === true;
+  const hostOn = paramValues.host === true;
+
+  // FR-018: mount the Alt+W / Alt+H keyboard shortcut handler. The hook
+  // is always called (stable hook ordering) but internally gates itself on
+  // the chip visibility flags so hotkeys are only active when the chip is
+  // visible.
+  useChipHotkey({
+    worktreeChipVisible: showWorktreeToggle,
+    hostChipVisible: showHostToggle,
+    commandFieldVisible: hasCommandField,
+  });
+
+  // FR-022: when a chip's visibility transitions from true → false while
+  // DOM focus is on that chip, return focus to the command input. This
+  // prevents focus loss on project switch (e.g. non-git project selected).
+  //
+  // We capture the active element BEFORE the chip unmounts (render phase,
+  // before the DOM mutation) so that by the time the useEffect runs the
+  // chip is already gone but we already know it had focus.
+  const prevShowWorktreeRef = useRef(showWorktreeToggle);
+  const prevShowHostRef = useRef(showHostToggle);
+  // Capture at render time (before the effect / DOM mutation).
+  const worktreeJustHidden = prevShowWorktreeRef.current && !showWorktreeToggle;
+  const hostJustHidden = prevShowHostRef.current && !showHostToggle;
+  const focusWasOnChipRef = useRef(false);
+  if (worktreeJustHidden || hostJustHidden) {
+    const active = document.activeElement;
+    focusWasOnChipRef.current =
+      active instanceof HTMLElement && active.closest("[data-toggle]") !== null;
+  }
+  prevShowWorktreeRef.current = showWorktreeToggle;
+  prevShowHostRef.current = showHostToggle;
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — focusWasOnChipRef is a ref, not a dep; commandInputRef.current is accessed imperatively
+  useEffect(() => {
+    if (!focusWasOnChipRef.current) return;
+    focusWasOnChipRef.current = false;
+    commandInputRef.current?.focus();
+  }, [showWorktreeToggle, showHostToggle]);
 
   if (tool === null) {
     // Bug at the shell level (CommandPalette should render
@@ -265,32 +303,47 @@ export function ParamSelectPhase({ ctx }: ParamSelectPhaseProps): JSX.Element | 
         }
         // Free-form text input (param.kind === 'text').
         return (
-          <ParamTextInput
-            key={param.id}
-            paramId={param.id}
-            label={param.label}
-            value={typeof value === "string" ? value : ""}
-            focused={isCurrent}
-            disabled={submitting}
-            composing={composing}
-            onChange={(v) => setParam(param.id, v)}
-            onEnter={advanceOrSubmit}
-            isCommandField={param.id === "command"}
-            commandToggles={
-              param.id === "command"
-                ? {
-                    showWorktreeToggle,
-                    showHostToggle,
-                    worktreeOn,
-                    hostOn,
-                    toggleWorktree,
-                    toggleHost,
-                  }
-                : null
-            }
-            onCompositionStart={() => setComposing(true)}
-            onCompositionEnd={() => setComposing(false)}
-          />
+          <div key={param.id} className="palette-param-text-group">
+            <ParamTextInput
+              ref={param.id === "command" ? commandInputRef : undefined}
+              paramId={param.id}
+              label={param.label}
+              value={typeof value === "string" ? value : ""}
+              focused={isCurrent}
+              disabled={submitting}
+              composing={composing}
+              onChange={(v) => setParam(param.id, v)}
+              onEnter={advanceOrSubmit}
+              onCompositionStart={() => setComposing(true)}
+              onCompositionEnd={() => setComposing(false)}
+            />
+            {param.id === "command" && (showWorktreeToggle || showHostToggle) && (
+              <fieldset className="palette-param-command-toggles" aria-label="command toggles">
+                {showWorktreeToggle && (
+                  <ChipSwitch
+                    hintKey="W"
+                    label="Worktree"
+                    checked={worktreeOn}
+                    onToggle={toggleWorktree}
+                    disabled={submitting}
+                    composing={composing}
+                    testId="worktree"
+                  />
+                )}
+                {showHostToggle && (
+                  <ChipSwitch
+                    hintKey="H"
+                    label="Host (sandbox)"
+                    checked={hostOn}
+                    onToggle={toggleHost}
+                    disabled={submitting}
+                    composing={composing}
+                    testId="host"
+                  />
+                )}
+              </fieldset>
+            )}
+          </div>
         );
       })}
     </form>

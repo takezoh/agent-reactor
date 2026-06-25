@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SessionsApi } from "../api/sessions";
+import type { ActiveContextSnapshot } from "../store/palette_active_context";
 import type { SessionInfo } from "../wire/server";
 import {
   type DaemonSnapshot,
@@ -36,9 +37,21 @@ function makeFakeHttp(overrides: Partial<SessionsApi> = {}): SessionsApi {
 function makeFakeNotify(): NotificationsApi & {
   successCalls: string[];
   errorCalls: string[];
+  addCalls: Array<{
+    level: "info" | "warn" | "error";
+    message: string;
+    title?: string;
+    body?: string;
+  }>;
 } {
   const successCalls: string[] = [];
   const errorCalls: string[] = [];
+  const addCalls: Array<{
+    level: "info" | "warn" | "error";
+    message: string;
+    title?: string;
+    body?: string;
+  }> = [];
   return {
     success(m) {
       successCalls.push(m);
@@ -46,8 +59,12 @@ function makeFakeNotify(): NotificationsApi & {
     error(m) {
       errorCalls.push(m);
     },
+    add(input) {
+      addCalls.push(input);
+    },
     successCalls,
     errorCalls,
+    addCalls,
   };
 }
 
@@ -83,10 +100,10 @@ function makeFakeDaemonActions(): ToolDaemonActions & {
   };
 }
 
-function sessionFixture(id: string, title?: string): SessionInfo {
+function sessionFixture(id: string, title?: string, project?: string): SessionInfo {
   return {
     id,
-    project: "/p",
+    project: project ?? "/p",
     command: "claude",
     created_at: "2026-06-24T00:00:00Z",
     view: {
@@ -542,9 +559,9 @@ describe("push ToolDef.disabledReason (shares scopeDisabledReason per ADR-0047)"
   it("ADR-0047: push ToolDef.disabledReason agrees with scopeDisabledReason('push', daemon) byte-for-byte", () => {
     // The same daemon snapshot fed to both code paths MUST produce the same
     // string, because palette-store's submit-time re-check (FR-023) calls
-    // ToolDef.disabledReason while ScopeSegment renders scopeDisabledReason
+    // ToolDef.disabledReason while the listbox renders via scopeDisabledReason
     // — drift between the two would silently let a submit through when the
-    // segment looks disabled, or vice versa.
+    // row shows disabled, or vice versa.
     const tools = listTools(makeDaemonSnapshot(), ["save"]);
     const t = findTool(tools, "push:save");
     const cases: DaemonSnapshot[] = [
@@ -561,33 +578,129 @@ describe("push ToolDef.disabledReason (shares scopeDisabledReason per ADR-0047)"
 });
 
 describe("push ToolDef.submit", () => {
-  function activeFrameDaemon(): DaemonSnapshot {
-    return makeDaemonSnapshot({ activeSessionID: "sess-42", activeOccupant: "frame" });
+  // UAC-011 / UAC-012 / UAC-018 / FR-014 / FR-015
+
+  // Resolved-snapshot fixture: session 'sess_abcd1234efgh' on project '/home/foo/bar'.
+  function resolvedFrameDaemon(): DaemonSnapshot {
+    return makeDaemonSnapshot({
+      activeSessionID: "sess_abcd1234efgh",
+      activeOccupant: "frame",
+      sessions: [sessionFixture("sess_abcd1234efgh", undefined, "/home/foo/bar")],
+      projects: [{ path: "/home/foo/bar", isGit: true, isSandboxed: true }],
+    });
   }
 
   it("calls ctx.http.pushCommand(activeSessionID, command) on success", async () => {
+    // UAC-011 / FR-014
     const http = makeFakeHttp({ pushCommand: vi.fn().mockResolvedValue(undefined) });
     const notify = makeFakeNotify();
     const store = makeFakeStore();
-    const ctx = makeCtx({ http, notify, store, daemon: activeFrameDaemon() });
+    const ctx = makeCtx({ http, notify, store, daemon: resolvedFrameDaemon() });
     const tool = findTool(listTools(ctx.daemon, ["save"]), "push:save");
     await tool.submit(ctx, {});
     expect(http.pushCommand).toHaveBeenCalledTimes(1);
-    expect(http.pushCommand).toHaveBeenCalledWith("sess-42", "save");
+    expect(http.pushCommand).toHaveBeenCalledWith("sess_abcd1234efgh", "save");
   });
 
-  it("notifies success with 'push: <command>' and closes the palette", async () => {
+  it("FR-014 / UAC-011: emits info toast with projBase · sid8 message and fullPath/fullSessionId title", async () => {
+    // UAC-011 / UAC-012 / UAC-018 / FR-014 / FR-015
     const http = makeFakeHttp({ pushCommand: vi.fn().mockResolvedValue(undefined) });
     const notify = makeFakeNotify();
     const store = makeFakeStore();
-    const ctx = makeCtx({ http, notify, store, daemon: activeFrameDaemon() });
-    const tool = findTool(listTools(ctx.daemon, ["commit"]), "push:commit");
+    const ctx = makeCtx({ http, notify, store, daemon: resolvedFrameDaemon() });
+    const tool = findTool(listTools(ctx.daemon, ["save"]), "push:save");
     await tool.submit(ctx, {});
-    expect(notify.successCalls).toEqual(["push: commit"]);
+    expect(notify.addCalls).toHaveLength(1);
+    expect(notify.addCalls[0]).toEqual({
+      level: "info",
+      title: "/home/foo/bar\nsess_abcd1234efgh",
+      message: "Sent 'save' → bar · sess_abc",
+    });
+    // FR-015: no interactive elements in toast — the add call is a plain data
+    // object without callbacks/actions. successCalls must remain empty.
+    expect(notify.successCalls).toEqual([]);
     expect(store.closeCalls).toBe(1);
   });
 
+  it("UAC-018: frozenActiveContext snapshot is used even when ctx.daemon active changes", async () => {
+    // UAC-011 / UAC-012 / UAC-018 / FR-014 / FR-015
+    // frozenActiveContext is the submit-time capture; ctx.daemon may drift
+    // after a view-update. The toast MUST use the frozen snapshot, not re-derive.
+    const http = makeFakeHttp({ pushCommand: vi.fn().mockResolvedValue(undefined) });
+    const notify = makeFakeNotify();
+    const store = makeFakeStore();
+    const frozenActiveContext: ActiveContextSnapshot = {
+      kind: "resolved",
+      projBase: "frozen-proj",
+      sid8: "frozen12",
+      fullPath: "/home/frozen/proj",
+      fullSessionId: "frozen_session_id",
+    };
+    // ctx.daemon points to a *different* active session — toast must ignore it
+    const ctx = makeCtx({
+      http,
+      notify,
+      store,
+      daemon: resolvedFrameDaemon(), // has sess_abcd1234efgh as active
+      frozenActiveContext,
+    });
+    const tool = findTool(listTools(ctx.daemon, ["commit"]), "push:commit");
+    await tool.submit(ctx, {});
+    expect(notify.addCalls).toHaveLength(1);
+    expect(notify.addCalls[0]).toEqual({
+      level: "info",
+      title: "/home/frozen/proj\nfrozen_session_id",
+      message: "Sent 'commit' → frozen-proj · frozen12",
+    });
+  });
+
+  it("kind=unknown: emits info toast with ??? projBase and sid8 only in title", async () => {
+    // UAC-011 / UAC-012 / UAC-018 / FR-014 / FR-015
+    // Session found but project not in projects list → kind=unknown.
+    const http = makeFakeHttp({ pushCommand: vi.fn().mockResolvedValue(undefined) });
+    const notify = makeFakeNotify();
+    const store = makeFakeStore();
+    // activeSessionID is present, session is in sessions[], but projects[] is empty
+    const daemon = makeDaemonSnapshot({
+      activeSessionID: "sess_unknown1234",
+      activeOccupant: "frame",
+      sessions: [sessionFixture("sess_unknown1234", undefined, "/home/foo/missing")],
+      projects: [], // project not registered
+    });
+    const ctx = makeCtx({ http, notify, store, daemon });
+    const tool = findTool(listTools(ctx.daemon, ["save"]), "push:save");
+    await tool.submit(ctx, {});
+    expect(notify.addCalls).toHaveLength(1);
+    expect(notify.addCalls[0]).toEqual({
+      level: "info",
+      title: "sess_unknown1234",
+      message: "Sent 'save' → ??? · sess_unk",
+    });
+  });
+
+  it("kind=none (defensive): emits minimal info toast when snapshot is none", async () => {
+    // UAC-011 / UAC-012 / UAC-018 / FR-014 / FR-015
+    // Normally the activeSessionID guard throws before reaching here.
+    // Test via frozenActiveContext to exercise the defensive branch.
+    const http = makeFakeHttp({ pushCommand: vi.fn().mockResolvedValue(undefined) });
+    const notify = makeFakeNotify();
+    const store = makeFakeStore();
+    const frozenActiveContext: ActiveContextSnapshot = { kind: "none" };
+    const ctx = makeCtx({
+      http,
+      notify,
+      store,
+      daemon: resolvedFrameDaemon(),
+      frozenActiveContext,
+    });
+    const tool = findTool(listTools(ctx.daemon, ["save"]), "push:save");
+    await tool.submit(ctx, {});
+    expect(notify.addCalls).toHaveLength(1);
+    expect(notify.addCalls[0]).toEqual({ level: "info", message: "Sent 'save'" });
+  });
+
   it("throws 'no active session' when activeSessionID is null", async () => {
+    // UAC-011 / UAC-012 / UAC-018 / FR-014 / FR-015
     // palette-store gates this via disabledReason re-check (FR-023); the
     // defensive throw protects against direct submit() calls (test code,
     // future entry points) that bypass the store.
@@ -603,23 +716,26 @@ describe("push ToolDef.submit", () => {
     const tool = findTool(listTools(ctx.daemon, ["save"]), "push:save");
     await expect(tool.submit(ctx, {})).rejects.toThrow(/no active session/);
     expect(http.pushCommand).not.toHaveBeenCalled();
-    expect(notify.successCalls).toEqual([]);
+    expect(notify.addCalls).toEqual([]);
     expect(store.closeCalls).toBe(0);
   });
 
-  it("propagates ctx.http.pushCommand failure without notifying success or closing", async () => {
+  it("propagates ctx.http.pushCommand failure without notifying or closing", async () => {
+    // UAC-011 / UAC-012 / UAC-018 / FR-014 / FR-015
     const httpErr = new Error("HTTP 502");
     const http = makeFakeHttp({ pushCommand: vi.fn().mockRejectedValue(httpErr) });
     const notify = makeFakeNotify();
     const store = makeFakeStore();
-    const ctx = makeCtx({ http, notify, store, daemon: activeFrameDaemon() });
+    const ctx = makeCtx({ http, notify, store, daemon: resolvedFrameDaemon() });
     const tool = findTool(listTools(ctx.daemon, ["save"]), "push:save");
     await expect(tool.submit(ctx, {})).rejects.toBe(httpErr);
+    expect(notify.addCalls).toEqual([]);
     expect(notify.successCalls).toEqual([]);
     expect(store.closeCalls).toBe(0);
   });
 
   it("does NOT re-evaluate disabledReason inside submit (FR-023 lives in palette-store)", async () => {
+    // UAC-011 / UAC-012 / UAC-018 / FR-014 / FR-015
     // Even when the daemon snapshot would make disabledReason return a
     // non-null reason, submit() proceeds — the palette-store owns the gate.
     // We assert this by giving the tool a daemon WITH activeSessionID (so

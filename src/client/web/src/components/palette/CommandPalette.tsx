@@ -4,60 +4,44 @@
 // FR:
 //   - FR-003 focus trap + blur on open
 //   - FR-007 role="dialog" / aria-modal
+//   - FR-009 active context header (setActiveContextSnapshot wiring)
+//   - FR-010 InlineStatus announce on active session change
+//   - FR-012 frozenSnapshotRef capture on submitting false→true
+//   - FR-013 frozenSnapshotRef release on submitting true→false
 //   - FR-017 Esc steps back (paramSelect → toolSelect; toolSelect → close)
 //   - FR-018 Back / Close / overlay outside-click dismissal
-//   - FR-020 surfaces the submitting state
+//   - FR-020 surfaces the submitting state (StatusBadge)
 //   - FR-023 close + restore opener focus when push becomes invalid
+//   - FR-024 StatusBadge priority text
+//   - FR-025 StatusBadge: ctx===null → 'Unavailable', loading → 'Loading commands...'
 //   - FR-029 input.focus() driven by refocusSeq observation
+//   - FR-033 InlineStatus announce suppressed while submitting
 // ADRs:
-//   - 0030 terminal-keyed-remount: do NOT emit subscribe/unsubscribe; just
-//     blur so the TerminalPane stops absorbing keystrokes.
-//   - 0036 palette-2phase-store-architecture: DOM side effects (blur /
-//     focus / portal mount) live in this component. The store stays a pure
-//     state slice.
-//   - 0039 palette-focus-trap-minimal: this component only toggles
-//     useFocusTrap via enabled=open. Trap details are delegated to the
-//     hook.
-//
-// Tool ctx assembly:
-//   ParamSelectPhase needs ToolCtx (http / daemon / notify / store). We
-//   build it here once per render — ToolSelectPhase builds its own ctx
-//   (paramless tools fast-path goes through confirmTool → submit there).
-//   Keeping ctx construction symmetrical between phases avoids divergence
-//   in how http / notify / store are wired.
+//   - 0030 terminal-keyed-remount
+//   - 0036 palette-2phase-store-architecture
+//   - 0039 palette-focus-trap-minimal
+//   - 0050 unified listbox
+//   - 0055 submit-freeze-lift-state
+//   - 0057 InlineStatus single aria-live slot
 
 import type { KeyboardEvent, MouseEvent } from "react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { makeSessionsApi } from "../../api/sessions";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
-import type { DaemonSnapshot, ToolCtx } from "../../lib/tools";
-import { selectDaemonSnapshot, useDaemonStore } from "../../store/daemon";
-import { useNotificationsStore } from "../../store/notifications";
+import type { ToolCtx } from "../../lib/tools";
+import { listTools } from "../../lib/tools";
+import { useDaemonStore } from "../../store/daemon";
 import { usePaletteStore } from "../../store/palette";
+import { useDaemonSnapshot } from "../../store/useDaemonSnapshot";
+import { ActiveContextHeader } from "./ActiveContextHeader";
+import { InlineStatus } from "./InlineStatus";
 import { ParamSelectPhase } from "./ParamSelectPhase";
-import { ScopeSegment } from "./ScopeSegment";
+import { StatusBadge } from "./StatusBadge";
 import { ToolSelectPhase } from "./ToolSelectPhase";
-
-// sessionConfig (ADR-0041) is null until makeSessionsApi().getSessionConfig()
-// resolves; we keep the breadcrumb-on-open observability below so a
-// regression that drops the slice mid-session-life is still surfaced rather
-// than rendering as "you have zero projects". The actual []-fallback lives
-// inside selectDaemonSnapshot (Y3 single source) so this component does not
-// duplicate the projection.
-
-// SessionsApi method names we require at ToolCtx construction time. If the
-// httpFactory hands us back something missing any of these, ParamSelectPhase
-// would crash deep inside submit() with a confusing `undefined is not a
-// function`. We check up front so the root cause (broken factory) is on the
-// same stack as the failure.
-const REQUIRED_HTTP_METHODS = ["createSession", "pushCommand", "getSessionConfig"] as const;
-
-function isValidSessionsApi(http: unknown): http is ToolCtx["http"] {
-  if (http === null || typeof http !== "object") return false;
-  const obj = http as Record<string, unknown>;
-  return REQUIRED_HTTP_METHODS.every((name) => typeof obj[name] === "function");
-}
+import { useActiveContextBridge } from "./hooks/useActiveContextBridge";
+import { useAnnounceMessage } from "./hooks/useAnnounceMessage";
+import { useFrozenSnapshot } from "./hooks/useFrozenSnapshot";
+import { useToolCtx } from "./hooks/useToolCtx";
 
 export interface CommandPaletteProps {
   // httpFactory swaps the SessionsApi for hermetic tests. Production callers
@@ -72,57 +56,32 @@ export function CommandPalette(props: CommandPaletteProps = {}): JSX.Element | n
   const submitting = usePaletteStore((s) => s.submitting);
   const error = usePaletteStore((s) => s.error);
   const refocusSeq = usePaletteStore((s) => s.refocusSeq);
+  const announceSeq = usePaletteStore((s) => s.announceSeq);
+  const activeContextSnapshot = usePaletteStore((s) => s.activeContextSnapshot);
+  const flashSeq = usePaletteStore((s) => s.flashSeq);
+  const setActiveContextSnapshot = usePaletteStore((s) => s.setActiveContextSnapshot);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  // openerRef tracks the latest non-null opener. We update it on every
-  // render so that if a future caller swaps opener mid-open we restore to
-  // the new one — but we never overwrite to null. close() / back() reset
-  // opener to null as part of the closed-state shape, so without this
-  // "never go null" rule the cleanup would lose the focus target before
-  // it gets a chance to restore it.
+  // openerRef tracks the latest non-null opener so close/cleanup can
+  // always find the focus target even after store resets opener to null.
   const openerRef = useRef<HTMLElement | null>(null);
   if (opener !== null) openerRef.current = opener;
 
-  // useFocusTrap is a true no-op when enabled=false (see ADR-0039), so
-  // unconditionally calling it with `open` is correct even though the
-  // component early-returns null below — the hook is called from the same
-  // place in the render every time (React rules of hooks).
   useFocusTrap(dialogRef, open);
 
-  // FR-003: on open, blur whatever currently owns DOM focus so the
-  // underlying TerminalPane (xterm textarea) stops swallowing keys. We do
-  // NOT subscribe/unsubscribe TerminalPane (ADR-0030 keeps that contract
-  // single-owner); blur is a pseudo-defocus that the terminal interprets
-  // naturally. On unmount (close / unmount-while-open) we restore focus
-  // to the opener that openPalette() captured.
-  //
-  // We depend only on `open` (not on `opener`) so a future mid-open opener
-  // change does NOT re-fire the effect body — re-running blur would steal
-  // focus from the palette input the user is currently typing into. The
-  // openerRef captures the latest non-null opener for the cleanup path.
+  // FR-003: blur on open; restore opener focus on close.
   useEffect(() => {
     if (!open) return;
     const active = document.activeElement as HTMLElement | null;
     if (active !== null && typeof active.blur === "function") {
       active.blur();
     } else {
-      // Observable fallback: activeElement was <body> or a non-blurrable
-      // node, so FR-003 ("TerminalPane stops swallowing keys") may not
-      // actually hold. We log a breadcrumb so the "palette is open but
-      // xterm still receives keystrokes" failure mode is debuggable
-      // rather than invisible.
       console.warn("[palette] open: activeElement not blurrable; FR-003 defocus is best-effort", {
         activeTag: active === null ? null : active.tagName,
       });
     }
     return () => {
-      // Read opener from the ref — close() may have nulled the store
-      // opener before this cleanup runs, but openerRef remembers the
-      // last non-null value. Guard against detached opener nodes:
-      // focus() on a detached element silently moves focus to <body>,
-      // which would break FR-017 / FR-023 ("close → focus returns to
-      // opener") without any error.
       const o = openerRef.current;
       if (o === null) return;
       if (typeof o.focus !== "function") return;
@@ -134,18 +93,11 @@ export function CommandPalette(props: CommandPaletteProps = {}): JSX.Element | n
         return;
       }
       o.focus();
-      // Clear the ref so the next open() cycle starts from a clean slate
-      // and a no-opener open won't accidentally focus the stale opener
-      // from the previous cycle.
       openerRef.current = null;
     };
   }, [open]);
 
-  // FR-029: refocusSeq increments are the store's "please focus the
-  // search input" signal. We only honor it while open — a stray
-  // refocusInput() call while closed should not steal focus. Reading
-  // refocusSeq inside the effect body (even just `void`) keeps biome's
-  // useExhaustiveDependencies happy without dropping the trigger dep.
+  // FR-029: refocusSeq increments → focus the search input.
   useEffect(() => {
     void refocusSeq;
     if (!open) return;
@@ -153,34 +105,13 @@ export function CommandPalette(props: CommandPaletteProps = {}): JSX.Element | n
     if (el !== null) el.focus();
   }, [refocusSeq, open]);
 
-  // Build the ToolCtx ParamSelectPhase needs. We mirror ToolSelectPhase's
-  // composition: primitive selectors over the daemon store, then a useMemo
-  // that returns a stable snapshot object. httpFactory is captured so
-  // tests can inject a fake without prop-drilling.
-  //
-  // NOTE: we use one primitive selector per field instead of a single
-  // `(s) => s` selector — the latter re-renders this component on EVERY
-  // daemon snapshot tick (sessions array identity, view status, etc.),
-  // which would also burn through ctx useMemo identity (props.httpFactory
-  // wouldn't be enough to stop it because daemon would change every tick).
-  // Pulling fields independently keeps re-renders proportional to the
-  // fields we actually read.
-  const sessions = useDaemonStore((s) => s.sessions);
+  // Daemon snapshot (primitive selectors to minimize re-renders).
   const activeSessionID = useDaemonStore((s) => s.activeSessionID);
-  const activeOccupant = useDaemonStore((s) => s.activeOccupant);
-  // sessionConfig is the REST-fetched slice (ADR-0041). We subscribe to the
-  // whole slice reference (a single zustand selector) so the snapshot memo
-  // below re-fires on slice swap but not on every daemon-internal tick.
-  // The actual projects/pushCommands extraction + []-fallback lives inside
-  // selectDaemonSnapshot (Y3 single source) — keep it out of this file so
-  // a future shape diff lands in one place.
+  const sessions = useDaemonStore((s) => s.sessions);
   const sessionConfig = useDaemonStore((s) => s.sessionConfig);
-  // Observability: log once per palette-open when sessionConfig has not yet
-  // been hydrated. Without this breadcrumb a "ParamSelectPhase renders empty
-  // projects" failure would look indistinguishable from a real "user has
-  // zero projects configured" result. Tied to `open` so closed-palette
-  // renders stay silent and the warning only fires when a user actually
-  // tries to use the palette before the REST fetch resolved.
+  const daemon = useDaemonSnapshot();
+
+  // Warn once per palette-open when sessionConfig is missing.
   const sessionConfigMissing = sessionConfig === null;
   useEffect(() => {
     if (!open) return;
@@ -191,75 +122,52 @@ export function CommandPalette(props: CommandPaletteProps = {}): JSX.Element | n
     }
   }, [open, sessionConfigMissing]);
 
-  const daemon = useMemo<DaemonSnapshot>(
-    () => selectDaemonSnapshot({ sessions, activeSessionID, activeOccupant, sessionConfig }),
-    [sessions, activeSessionID, activeOccupant, sessionConfig],
+  // FR-009: derive + push active context snapshot (suppressed while submitting).
+  useActiveContextBridge(
+    submitting,
+    activeSessionID,
+    sessions,
+    sessionConfig,
+    setActiveContextSnapshot,
   );
-  const ctx = useMemo<ToolCtx | null>(() => {
-    const http = props.httpFactory ? props.httpFactory() : makeSessionsApi();
-    // Validate the http shape up front. A factory that returns undefined or
-    // a partial object would otherwise crash deep inside ParamSelectPhase's
-    // submit handler with `Cannot read properties of undefined (reading
-    // 'createSession')`, far from the actual root cause. Refusing to build
-    // ctx surfaces the failure at construction time and keeps the palette
-    // shell rendering — submit() falls through to a no-op, and the
-    // breadcrumb tells operators which factory misbehaved.
-    if (!isValidSessionsApi(http)) {
-      console.error("[palette] httpFactory returned an invalid SessionsApi; ctx not built", {
-        keys: http === null || typeof http !== "object" ? typeof http : Object.keys(http),
-      });
-      return null;
+
+  // FR-012 / FR-013 / ADR-0055: capture/release frozenSnapshot.
+  const { frozenSnapshotRef } = useFrozenSnapshot(
+    submitting,
+    daemon,
+    activeContextSnapshot,
+    flashSeq,
+  );
+
+  // FR-010 / FR-033 / ADR-0057: announce active context change to InlineStatus.
+  const announceRef = useAnnounceMessage(announceSeq, submitting, activeContextSnapshot);
+
+  // ctx construction (includes frozenActiveContext for UAC-018).
+  const frozenActiveContext = frozenSnapshotRef.current?.activeContext ?? undefined;
+  const ctx = useToolCtx(daemon, props.httpFactory, frozenActiveContext);
+
+  // FR-024 / FR-025: StatusBadge text computation.
+  const liveStatusBadgeText: string | null = (() => {
+    if (phase === "toolSelect") {
+      const all = listTools(daemon, daemon.pushCommands);
+      const enabledCount = all.filter((t) => t.disabledReason(daemon) === null).length;
+      if (enabledCount === 0) {
+        if (sessionConfig === null) return "Loading commands...";
+        return "No commands available";
+      }
     }
-    const paletteState = usePaletteStore.getState();
-    return {
-      http,
-      daemon,
-      // FR-021: daemonActions exposes the write-side daemon API ToolDef.submit
-      // uses (selectSession after createSession). Bound via useDaemonStore.
-      // getState() so the action call always lands on the current store
-      // instance (zustand actions are stable singletons but the getter form
-      // is consistent with the rest of ctx construction).
-      daemonActions: {
-        selectSession(id) {
-          useDaemonStore.getState().selectSession(id);
-        },
-      },
-      notify: {
-        success(m) {
-          useNotificationsStore.getState().add({ level: "info", message: m });
-        },
-        error(m) {
-          useNotificationsStore.getState().add({ level: "error", message: m });
-        },
-      },
-      store: {
-        close: paletteState.close,
-      },
-    };
-  }, [daemon, props.httpFactory]);
+    return null;
+  })();
 
   if (!open) return null;
 
   function onOverlayMouseDown(e: MouseEvent<HTMLDivElement>): void {
-    // FR-018: outside-click closes. We treat "outside" as a mousedown whose
-    // target IS the overlay itself — clicks bubbling up from the dialog
-    // body get target === dialog descendant, which fails the check.
     if (e.target === e.currentTarget) {
       usePaletteStore.getState().close();
     }
   }
 
   function onDialogKeyDown(e: KeyboardEvent<HTMLDivElement>): void {
-    // FR-017: Esc = back (paramSelect → toolSelect; toolSelect → close).
-    // The store's back() implements both transitions.
-    //
-    // IME passthrough: while composing=true the user almost certainly means
-    // "cancel current conversion candidate", not "step palette back". The
-    // browser already routes Esc to the IME first when keyCode === 229; we
-    // additionally check the store's composing flag so we don't swallow the
-    // post-IME Esc that some platforms surface as key="Escape" with
-    // composing=true still set. Leaving Esc unhandled lets the IME consume
-    // it naturally.
     if (e.key === "Escape") {
       const state = usePaletteStore.getState();
       if (state.composing) return;
@@ -267,6 +175,18 @@ export function CommandPalette(props: CommandPaletteProps = {}): JSX.Element | n
       state.back();
     }
   }
+
+  // Frozen list props for ToolSelectPhase.
+  const frozen = frozenSnapshotRef.current;
+  const frozenListProps = frozen
+    ? { frozenList: frozen.sortedList, frozenCursor: frozen.sortedListCursor }
+    : {};
+
+  // Frozen header props (ADR-0055: lock flashSeq at capture time).
+  const frozenHeaderSnapshot = frozen?.activeContext;
+  const headerFlashSeq = frozen !== null ? frozen.flashSeq : flashSeq;
+
+  const statusBadgeText = submitting ? "Sending..." : liveStatusBadgeText;
 
   return createPortal(
     <div className="palette-overlay" data-testid="palette-overlay" onMouseDown={onOverlayMouseDown}>
@@ -305,24 +225,27 @@ export function CommandPalette(props: CommandPaletteProps = {}): JSX.Element | n
             ×
           </button>
         </header>
-        <ScopeSegment />
+        {ctx !== null && (
+          <ActiveContextHeader snapshot={frozenHeaderSnapshot} flashSeq={headerFlashSeq} />
+        )}
+        <InlineStatus announce={announceRef.current} />
+        {ctx === null ? (
+          <StatusBadge text="Unavailable" />
+        ) : (
+          <StatusBadge text={statusBadgeText} submitting={submitting} />
+        )}
         {phase === "toolSelect" ? (
-          <ToolSelectPhase inputRef={inputRef} httpFactory={props.httpFactory} />
+          <ToolSelectPhase
+            inputRef={inputRef}
+            httpFactory={props.httpFactory}
+            {...frozenListProps}
+          />
         ) : ctx !== null ? (
           <ParamSelectPhase ctx={ctx} />
         ) : (
-          // ctx === null means httpFactory returned an invalid SessionsApi.
-          // We already logged a console.error; surface the same fact to the
-          // user so they know the param phase is non-functional rather than
-          // staring at an empty area.
           <div role="alert" className="palette-error" data-testid="palette-ctx-error">
             Command palette unavailable (http client invalid)
           </div>
-        )}
-        {submitting && (
-          <output className="palette-progress" data-testid="palette-progress">
-            sending…
-          </output>
         )}
         {error !== null && (
           <div role="alert" className="palette-error" data-testid="palette-error">

@@ -17,9 +17,10 @@ import { useGlobalHotkey } from "./hooks/useGlobalHotkey";
 // chain (FR-D1 / FR-D2 — no crash when navigator is undefined).
 import { isMacPlatform } from "./lib/platform";
 import { Connection } from "./socket/connection";
-import { selectDaemonSnapshot, useDaemonStore } from "./store/daemon";
+import { useDaemonStore } from "./store/daemon";
 import { useNotificationsStore } from "./store/notifications";
 import { usePaletteStore } from "./store/palette";
+import { useDaemonSnapshot } from "./store/useDaemonSnapshot";
 
 export function App() {
   // ADR-0037 / FR-001: intercept Cmd/Ctrl+K on the capture phase.
@@ -98,17 +99,11 @@ export function App() {
 
   // Subscribe to the daemon primitives that feed selectDaemonSnapshot so the
   // Header re-renders whenever a field consumed by the snapshot changes — same
-  // pattern as ScopeSegment / ParamSelectPhase (Y3 single source). We pass the
+  // pattern as ParamSelectPhase (Y3 single source). We pass the
   // snapshot through openPalette({daemonSnapshot}) on the New Session CTA
   // (FR-A2) so the store can resolve preselectToolId='new-session' against the
   // live daemon (push-aware) instead of falling back to an empty snapshot.
-  const sessions = useDaemonStore((s) => s.sessions);
-  const activeOccupant = useDaemonStore((s) => s.activeOccupant);
-  const sessionConfig = useDaemonStore((s) => s.sessionConfig);
-  const daemonSnapshot = useMemo(
-    () => selectDaemonSnapshot({ sessions, activeSessionID, activeOccupant, sessionConfig }),
-    [sessions, activeSessionID, activeOccupant, sessionConfig],
-  );
+  const daemonSnapshot = useDaemonSnapshot();
 
   return (
     <div className="app">

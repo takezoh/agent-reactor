@@ -2,21 +2,131 @@
 // 500-line file-size limit (AGENTS.md). Behavior-preserving: each function is
 // the verbatim implementation that used to live inline; comments are kept
 // because they document the rationale palette.ts callers depend on.
+//
+// sortToolsForList and resolveCursorBySelectedToolId were added by the
+// palette-redesign m1 (pure helpers) milestone:
+//   - sortToolsForList: UAC-004 / FR-001 / FR-002
+//   - resolveCursorBySelectedToolId: UAC-006 / UAC-014 / FR-026
 
 import type { ApiHttpError } from "../api/sessions";
 import { type DaemonSnapshot, type ToolCtx, type ToolDef, listTools } from "../lib/tools";
-import type { PaletteScope } from "./palette";
 
-// initialScopeFromSnapshot encodes FR-004: open with `push` selected iff there
-// is an active session AND the daemon-global ActiveOccupant is 'frame'. Any
-// other state (no active session, or active but occupant is 'main'/'log'/
-// missing) opens at 'standard'. Pulled into a free function so the openPalette
-// reducer reads as a one-line `scope: initialScope(snapshot)`.
-export function initialScope(snapshot: DaemonSnapshot | undefined): PaletteScope {
-  if (!snapshot) return "standard";
-  if (!snapshot.activeSessionID) return "standard";
-  if (snapshot.activeOccupant !== "frame") return "standard";
-  return "push";
+// ---------------------------------------------------------------------------
+// sortToolsForList
+// ---------------------------------------------------------------------------
+
+// SortedToolEntry is a single row in the logical tool list (separator-free).
+// logicalIndex is the 0-based index within the enabled+disabled concatenation;
+// enabled entries come first, disabled entries follow (FR-001 / FR-002).
+export interface SortedToolEntry {
+  tool: ToolDef;
+  enabled: boolean;
+  reason: string | null;
+  // logicalIndex is the separator-excluded 0-based position.
+  // enabled rows occupy 0..enabled.length-1; disabled rows follow.
+  logicalIndex: number;
+}
+
+export interface SortedTools {
+  enabled: SortedToolEntry[];
+  disabled: SortedToolEntry[];
+  // sorted is enabled+disabled concatenated in logicalIndex order.
+  // The presentation layer inserts the visual separator between them.
+  sorted: SortedToolEntry[];
+}
+
+// sortToolsForList partitions a fuzzy-ranked ToolDef list into enabled and
+// disabled groups while preserving the intra-group ordering supplied by
+// fuzzyRanked (which reflects registry order when no query is active and
+// fuzzy-score order when one is). Invariants (UAC-004 / FR-001 / FR-002):
+//   - Each ToolDef's disabledReason(daemon) is called exactly once.
+//   - All entries in fuzzyRanked appear in sorted (no filtering here).
+//   - enabled entries precede disabled entries; within each group the original
+//     fuzzyRanked order is preserved.
+//   - logicalIndex is a contiguous 0-based sequence across sorted.
+export function sortToolsForList<T extends { item: ToolDef }>(
+  fuzzyRanked: ReadonlyArray<T>,
+  daemon: DaemonSnapshot,
+): SortedTools {
+  const enabled: SortedToolEntry[] = [];
+  const disabled: SortedToolEntry[] = [];
+
+  for (const hit of fuzzyRanked) {
+    const reason = hit.item.disabledReason(daemon);
+    const isEnabled = reason === null;
+    if (isEnabled) {
+      enabled.push({ tool: hit.item, enabled: true, reason: null, logicalIndex: -1 });
+    } else {
+      disabled.push({ tool: hit.item, enabled: false, reason, logicalIndex: -1 });
+    }
+  }
+
+  // Assign contiguous logicalIndex values: enabled group first, then disabled.
+  const sorted: SortedToolEntry[] = [];
+  let idx = 0;
+  for (const entry of enabled) {
+    entry.logicalIndex = idx++;
+    sorted.push(entry);
+  }
+  for (const entry of disabled) {
+    entry.logicalIndex = idx++;
+    sorted.push(entry);
+  }
+
+  return { enabled, disabled, sorted };
+}
+
+// ---------------------------------------------------------------------------
+// resolveCursorBySelectedToolId
+// ---------------------------------------------------------------------------
+
+// resolveCursorBySelectedToolId recalculates the logical cursor position after
+// the sorted list changes (e.g. query update or daemon snapshot change).
+// Rules (UAC-006 / UAC-014 / FR-026):
+//   (a) If prevSelectedId is still in sorted AND is enabled → return its new
+//       logicalIndex (identity preservation).
+//   (b) Otherwise search forward from prevLogicalIndex for the nearest enabled
+//       entry (forward-first per FR-026).
+//   (c) If none found forward, search backward.
+//   (d) If sorted has no enabled entries → return -1.
+//   (e) If prevSelectedId is null and there is an enabled entry → return 0
+//       (anchor=0, which is the first enabled entry via forward search).
+//
+// NOTE: sortToolsForList guarantees sorted[i].logicalIndex === i (contiguous
+// 0-based), so we can index directly by position instead of searching by
+// logicalIndex (avoids O(N²) find loops).
+export function resolveCursorBySelectedToolId(
+  prevSelectedId: string | null,
+  prevLogicalIndex: number,
+  sorted: ReadonlyArray<SortedToolEntry>,
+): number {
+  // Fast path: no enabled entries at all.
+  const hasEnabled = sorted.some((e) => e.enabled);
+  if (!hasEnabled) return -1;
+
+  // Case (a): prevSelectedId found among enabled entries.
+  if (prevSelectedId !== null) {
+    const same = sorted.find((e) => e.enabled && e.tool.id === prevSelectedId);
+    if (same) return same.logicalIndex;
+  }
+
+  // Cases (b)+(c)+(e): search nearest enabled by logical index proximity.
+  // prevSelectedId is null (case e) or the id is gone/disabled.
+  // Use prevLogicalIndex as the anchor (0 when prevSelectedId is null).
+  const anchor = prevSelectedId === null ? 0 : prevLogicalIndex;
+
+  // Forward search: from anchor onward (FR-026 forward-first).
+  for (let i = anchor; i < sorted.length; i++) {
+    if (sorted[i]?.enabled) return i;
+  }
+
+  // Backward search: from anchor-1 down to 0 (fallback).
+  for (let i = anchor - 1; i >= 0; i--) {
+    if (sorted[i]?.enabled) return i;
+  }
+
+  // Should not reach here given hasEnabled check above, but be safe.
+  return -1;
 }
 
 // findToolForSubmit re-runs listTools and returns the ToolDef matching id.

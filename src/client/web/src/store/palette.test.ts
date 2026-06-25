@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiHttpError, SessionsApi } from "../api/sessions";
 import type {
   NotificationsApi,
@@ -11,6 +11,7 @@ import * as toolsModule from "../lib/tools";
 import { mkSnapshot } from "../test/fixtures/daemon";
 import { useDaemonStore } from "./daemon";
 import { usePaletteStore } from "./palette";
+import { INLINE_STATUS_AUTO_CLEAR_MS } from "./palette_inline_status";
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -45,6 +46,7 @@ function makeFakeNotify(): NotificationsApi & {
     error(m) {
       errorCalls.push(m);
     },
+    add(_input) {},
     successCalls,
     errorCalls,
   };
@@ -127,7 +129,6 @@ describe("usePaletteStore", () => {
     const s = usePaletteStore.getState();
     expect(s.open).toBe(false);
     expect(s.phase).toBe("toolSelect");
-    expect(s.scope).toBe("standard");
     expect(s.selectedToolId).toBeNull();
     expect(s.paramValues).toEqual({});
     expect(s.paramCursor).toBe(0);
@@ -140,65 +141,27 @@ describe("usePaletteStore", () => {
   });
 
   // -------------------------------------------------------------------------
-  // openPalette: scope selection (FR-004) + idempotency (FR-029)
+  // openPalette: idempotency (FR-029)
   // -------------------------------------------------------------------------
 
-  it("openPalette picks 'push' when active session has frame occupant (FR-004)", () => {
-    usePaletteStore.getState().openPalette({
-      daemonSnapshot: mkSnapshot({
-        activeSessionID: "s1",
-        activeOccupant: "frame",
-      }),
-    });
+  it("openPalette opens the palette (open=true, phase=toolSelect)", () => {
+    usePaletteStore.getState().openPalette();
     const s = usePaletteStore.getState();
     expect(s.open).toBe(true);
-    expect(s.scope).toBe("push");
-  });
-
-  it("openPalette picks 'standard' when active session occupant is not 'frame'", () => {
-    usePaletteStore.getState().openPalette({
-      daemonSnapshot: mkSnapshot({
-        activeSessionID: "s1",
-        activeOccupant: "main",
-      }),
-    });
-    expect(usePaletteStore.getState().scope).toBe("standard");
-  });
-
-  it("openPalette picks 'standard' when no active session is present", () => {
-    usePaletteStore.getState().openPalette({
-      daemonSnapshot: mkSnapshot({ activeSessionID: null }),
-    });
-    expect(usePaletteStore.getState().scope).toBe("standard");
-  });
-
-  it("openPalette picks 'standard' when no daemonSnapshot is provided", () => {
-    usePaletteStore.getState().openPalette();
-    expect(usePaletteStore.getState().scope).toBe("standard");
-    expect(usePaletteStore.getState().open).toBe(true);
+    expect(s.phase).toBe("toolSelect");
   });
 
   it("openPalette is a no-op when already open (FR-029)", () => {
-    // First open: push scope.
-    usePaletteStore.getState().openPalette({
-      daemonSnapshot: mkSnapshot({
-        activeSessionID: "s1",
-        activeOccupant: "frame",
-      }),
-    });
+    usePaletteStore.getState().openPalette();
     // User navigates into paramSelect.
     usePaletteStore.setState({
       phase: "paramSelect",
       selectedToolId: "new-session",
       paramValues: { project: "/p" },
     });
-    // Second open with a snapshot that WOULD pick 'standard' must not
-    // overwrite the in-progress paramSelect state.
-    usePaletteStore.getState().openPalette({
-      daemonSnapshot: mkSnapshot({ activeSessionID: null }),
-    });
+    // Second open must not overwrite in-progress paramSelect state.
+    usePaletteStore.getState().openPalette();
     const s = usePaletteStore.getState();
-    expect(s.scope).toBe("push");
     expect(s.phase).toBe("paramSelect");
     expect(s.selectedToolId).toBe("new-session");
     expect(s.paramValues).toEqual({ project: "/p" });
@@ -259,29 +222,8 @@ describe("usePaletteStore", () => {
   });
 
   // -------------------------------------------------------------------------
-  // setScope / setQuery / moveCursor + IME guard (FR-019)
+  // setQuery / moveCursor + IME guard (FR-019)
   // -------------------------------------------------------------------------
-
-  it("setScope resets phase, paramValues, cursor, query, error", () => {
-    usePaletteStore.getState().openPalette();
-    usePaletteStore.setState({
-      phase: "paramSelect",
-      selectedToolId: "new-session",
-      paramValues: { project: "/p" },
-      paramCursor: 2,
-      query: "ses",
-      error: "x",
-    });
-    usePaletteStore.getState().setScope("push");
-    const s = usePaletteStore.getState();
-    expect(s.scope).toBe("push");
-    expect(s.phase).toBe("toolSelect");
-    expect(s.selectedToolId).toBeNull();
-    expect(s.paramValues).toEqual({});
-    expect(s.paramCursor).toBe(0);
-    expect(s.query).toBe("");
-    expect(s.error).toBeNull();
-  });
 
   it("setQuery is a no-op while composing=true (FR-019)", () => {
     usePaletteStore.getState().openPalette();
@@ -354,11 +296,10 @@ describe("usePaletteStore", () => {
       // visible at the call site, not laundered into a later submit().
       expect(s.phase).toBe("toolSelect");
       expect(s.selectedToolId).toBeNull();
-      // Toast surfaced with id + scope context. English-only (FR-C5).
+      // Toast surfaced with id context. English-only (FR-C5).
       expect(notify.errorCalls).toHaveLength(1);
       expect(notify.errorCalls[0]).toMatch(/Unknown tool/);
       expect(notify.errorCalls[0]).toContain("ghost-tool");
-      expect(notify.errorCalls[0]).toContain("standard");
       // Devtools breadcrumb for attribution.
       expect(errSpy).toHaveBeenCalled();
     } finally {
@@ -591,7 +532,7 @@ describe("usePaletteStore", () => {
     // via a contract break (UI let user submit before confirming a tool, or
     // the tool list churned between confirm and submit), and inline-only
     // surfacing was invisible if the palette was already closed. Now we:
-    //   - fire notify.error with id + scope context,
+    //   - fire notify.error with id context,
     //   - log to console.error for devtools / Sentry,
     //   - reset state fully (close palette).
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -614,7 +555,6 @@ describe("usePaletteStore", () => {
       expect(notify.errorCalls[0]).toContain("selected tool");
       expect(notify.errorCalls[0]).toContain("none");
       expect(notify.errorCalls[0]).not.toContain("null");
-      expect(notify.errorCalls[0]).toContain("standard");
       // Devtools breadcrumb for attribution.
       expect(errSpy).toHaveBeenCalled();
     } finally {
@@ -850,45 +790,33 @@ describe("usePaletteStore", () => {
   });
 
   // -------------------------------------------------------------------------
-  // openPalette preselect — scope-filter bypass + normalize (FR-A2, FR-Det)
+  // openPalette preselect (FR-A2, FR-Det)
   // -------------------------------------------------------------------------
 
-  it("openPalette preselect bypasses scope filter even when daemon implies push", () => {
+  it("openPalette preselect resolves tool by id and advances to paramSelect (FR-A2)", () => {
     // Header's "New Session" CTA must land on 'new-session' regardless of
-    // the daemon's occupant. If a session is active with occupant='frame'
-    // the initialScope would resolve to 'push' and the previous scope-
-    // filtered lookup would miss the standard-scope new-session ToolDef.
-    // The fix bypasses the scope filter on preselect and normalizes the
-    // resulting state to scope='standard' so ParamSelectPhase renders
-    // against the correct segment.
+    // the daemon's snapshot (ADR-0050: scope removed, all tools visible).
     const opener = { id: "stub-opener" } as unknown as HTMLElement;
     usePaletteStore.getState().openPalette({
       preselectToolId: "new-session",
       daemonSnapshot: mkSnapshot({
         activeSessionID: "s1",
         activeOccupant: "frame",
-        // pushCommands present so the standard scope is genuinely the
-        // "wrong" scope under the daemon-derived initialScope (= 'push').
         pushCommands: ["save"],
       }),
       opener,
     });
     const s = usePaletteStore.getState();
     expect(s.open).toBe(true);
-    // Scope normalized to 'standard' for preselect — independent of the
-    // daemon-derived scope so the param-select phase renders against
-    // the correct segment.
-    expect(s.scope).toBe("standard");
     expect(s.phase).toBe("paramSelect");
     expect(s.selectedToolId).toBe("new-session");
     expect(s.paramValues).toEqual({});
     expect(s.opener).toBe(opener);
   });
 
-  it("openPalette preselect with unknown id falls through to toolSelect at daemon scope", () => {
-    // Contract miss (bad id) is not user-visible: the open path falls
-    // through to the unfiltered toolSelect open at the daemon-derived
-    // scope, with a console.warn for traceability.
+  it("openPalette preselect with unknown id falls through to toolSelect with console.warn", () => {
+    // Contract miss (bad id) is not user-visible: falls through to
+    // unfiltered toolSelect open, with a console.warn for traceability.
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       usePaletteStore.getState().openPalette({
@@ -903,8 +831,6 @@ describe("usePaletteStore", () => {
       expect(s.open).toBe(true);
       expect(s.phase).toBe("toolSelect");
       expect(s.selectedToolId).toBeNull();
-      // Scope follows the daemon-derived initialScope when preselect misses.
-      expect(s.scope).toBe("push");
       expect(warnSpy).toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
@@ -1023,3 +949,209 @@ describe("usePaletteStore", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// activeContext slice — UAC-001 / UAC-013 / FR-009 / FR-010 / FR-032
+// ---------------------------------------------------------------------------
+
+describe("activeContext slice", () => {
+  beforeEach(() => {
+    resetPalette();
+    // flashSeq / announceSeq are monotonic (not reset by close()), so reset
+    // them explicitly here so each test starts from a known baseline of 0.
+    usePaletteStore.setState({ flashSeq: 0, announceSeq: 0 });
+  });
+
+  it("setActiveContextSnapshot(resolved) sets snapshot and bumps flashSeq + announceSeq when id changes", () => {
+    const s0 = usePaletteStore.getState();
+    expect(s0.flashSeq).toBe(0);
+    expect(s0.announceSeq).toBe(0);
+    expect(s0.activeContextSnapshot).toEqual({ kind: "none" });
+
+    usePaletteStore.getState().setActiveContextSnapshot({
+      kind: "resolved",
+      projBase: "my-app",
+      sid8: "abcd1234",
+      fullPath: "/projects/my-app",
+      fullSessionId: "abcd1234-full",
+    });
+
+    const s1 = usePaletteStore.getState();
+    expect(s1.activeContextSnapshot).toEqual({
+      kind: "resolved",
+      projBase: "my-app",
+      sid8: "abcd1234",
+      fullPath: "/projects/my-app",
+      fullSessionId: "abcd1234-full",
+    });
+    // id changed from null -> 'abcd1234-full': both seqs must increment
+    expect(s1.flashSeq).toBe(1);
+    expect(s1.announceSeq).toBe(1);
+  });
+
+  it("snapshot with same fullSessionId does not bump seq (disambiguator-only change is silent)", () => {
+    // First set: resolved with projBase "my-app"
+    usePaletteStore.getState().setActiveContextSnapshot({
+      kind: "resolved",
+      projBase: "my-app",
+      sid8: "abcd1234",
+      fullPath: "/a/my-app",
+      fullSessionId: "abcd1234-full",
+    });
+    const s1 = usePaletteStore.getState();
+    expect(s1.flashSeq).toBe(1);
+    expect(s1.announceSeq).toBe(1);
+
+    // Second set: same fullSessionId but projBase changed (disambiguator-only)
+    usePaletteStore.getState().setActiveContextSnapshot({
+      kind: "resolved",
+      projBase: "my-app (under a)",
+      sid8: "abcd1234",
+      fullPath: "/a/my-app",
+      fullSessionId: "abcd1234-full",
+    });
+    const s2 = usePaletteStore.getState();
+    // projBase updated but seqs unchanged (FR-010 note: disambiguator-only)
+    expect(s2.activeContextSnapshot).toEqual({
+      kind: "resolved",
+      projBase: "my-app (under a)",
+      sid8: "abcd1234",
+      fullPath: "/a/my-app",
+      fullSessionId: "abcd1234-full",
+    });
+    expect(s2.flashSeq).toBe(1);
+    expect(s2.announceSeq).toBe(1);
+  });
+
+  it("none -> none keeps seq unchanged", () => {
+    // Both prev and next are { kind: 'none' } (id null === null)
+    const s0 = usePaletteStore.getState();
+    expect(s0.activeContextSnapshot).toEqual({ kind: "none" });
+    expect(s0.flashSeq).toBe(0);
+
+    usePaletteStore.getState().setActiveContextSnapshot({ kind: "none" });
+
+    const s1 = usePaletteStore.getState();
+    expect(s1.flashSeq).toBe(0);
+    expect(s1.announceSeq).toBe(0);
+  });
+
+  it("none -> resolved bumps seq (id transitions from null to value)", () => {
+    // Start in none state; transition to resolved
+    usePaletteStore.getState().setActiveContextSnapshot({
+      kind: "resolved",
+      projBase: "proj",
+      sid8: "ffffffff",
+      fullPath: "/projects/proj",
+      fullSessionId: "ffffffff-full",
+    });
+    const s = usePaletteStore.getState();
+    expect(s.flashSeq).toBe(1);
+    expect(s.announceSeq).toBe(1);
+  });
+
+  it("resolved -> none bumps seq (id transitions to null)", () => {
+    // Establish a resolved snapshot first
+    usePaletteStore.getState().setActiveContextSnapshot({
+      kind: "resolved",
+      projBase: "proj",
+      sid8: "aaaabbbb",
+      fullPath: "/projects/proj",
+      fullSessionId: "aaaabbbb-full",
+    });
+    expect(usePaletteStore.getState().flashSeq).toBe(1);
+
+    // Transition to none: id changes from 'aaaabbbb-full' to null
+    usePaletteStore.getState().setActiveContextSnapshot({ kind: "none" });
+    const s = usePaletteStore.getState();
+    expect(s.flashSeq).toBe(2);
+    expect(s.announceSeq).toBe(2);
+    expect(s.activeContextSnapshot).toEqual({ kind: "none" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// inlineStatus slice — UAC-005 / UAC-017 / FR-005 / FR-031 / FR-023
+// ---------------------------------------------------------------------------
+
+describe("inlineStatus slice", () => {
+  beforeEach(() => {
+    resetPalette();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("emitDisabledFeedback sets message / kind / seq (FR-005)", () => {
+    usePaletteStore.getState().emitDisabledFeedback("save", "No active session");
+    const s = usePaletteStore.getState();
+    expect(s.inlineStatus.message).toBe('"save" is unavailable: No active session');
+    expect(s.inlineStatus.kind).toBe("warning");
+    expect(s.inlineStatus.seq).toBe(1);
+  });
+
+  it("emitDisabledFeedback is a no-op while composing=true (FR-023)", () => {
+    usePaletteStore.setState({ composing: true });
+    usePaletteStore.getState().emitDisabledFeedback("save", "No active session");
+    const s = usePaletteStore.getState();
+    expect(s.inlineStatus.seq).toBe(0);
+    expect(s.inlineStatus.message).toBe("");
+  });
+
+  it("emitting same message twice increments seq by 2 (FR-031 re-announce)", () => {
+    usePaletteStore.getState().emitDisabledFeedback("save", "No active session");
+    usePaletteStore.getState().emitDisabledFeedback("save", "No active session");
+    expect(usePaletteStore.getState().inlineStatus.seq).toBe(2);
+  });
+
+  it("second emit resets the 4s timer window (FR-031)", () => {
+    usePaletteStore.getState().emitDisabledFeedback("save", "No active session");
+    // Advance 3 s — still within the first timer window.
+    vi.advanceTimersByTime(3000);
+    expect(usePaletteStore.getState().inlineStatus.message).not.toBe("");
+
+    // Second emit at t=3s resets the 4s window.
+    usePaletteStore.getState().emitDisabledFeedback("save", "No active session");
+    expect(usePaletteStore.getState().inlineStatus.seq).toBe(2);
+
+    // Advance another 3 s (total t=6s). The second emit's 4s window ends at t=7s.
+    vi.advanceTimersByTime(3000);
+    expect(usePaletteStore.getState().inlineStatus.message).not.toBe("");
+
+    // Advance past the second emit's window end (total t=7.1s).
+    vi.advanceTimersByTime(1100);
+    expect(usePaletteStore.getState().inlineStatus.message).toBe("");
+  });
+
+  it("4s auto-clear blanks message and keeps seq (FR-005 timer)", () => {
+    usePaletteStore.getState().emitDisabledFeedback("save", "No active session");
+    const seqBefore = usePaletteStore.getState().inlineStatus.seq;
+    vi.advanceTimersByTime(INLINE_STATUS_AUTO_CLEAR_MS);
+    const s = usePaletteStore.getState();
+    expect(s.inlineStatus.message).toBe("");
+    expect(s.inlineStatus.seq).toBe(seqBefore); // seq is NOT reset on auto-clear
+  });
+
+  it("clearInlineStatus blanks message immediately", () => {
+    usePaletteStore.getState().emitDisabledFeedback("save", "No active session");
+    usePaletteStore.getState().clearInlineStatus();
+    expect(usePaletteStore.getState().inlineStatus.message).toBe("");
+  });
+
+  it("close() cancels pending timer and resets inlineStatus to initial", () => {
+    usePaletteStore.getState().emitDisabledFeedback("save", "No active session");
+    usePaletteStore.getState().close();
+    // Timer cancelled — advancing time should not throw or change state.
+    vi.advanceTimersByTime(INLINE_STATUS_AUTO_CLEAR_MS);
+    const s = usePaletteStore.getState();
+    expect(s.inlineStatus.message).toBe("");
+    expect(s.inlineStatus.seq).toBe(0);
+    expect(s.inlineStatus.timerId).toBeNull();
+  });
+});
+
+// freeze slice tests removed (M1): FreezeSlice deleted per integration cleanup.
+// ADR-0055: submitting boolean is the sole freeze-epoch signal in the store.
+// frozenSnapshot lives in CommandPalette useRef via useFrozenSnapshot hook.

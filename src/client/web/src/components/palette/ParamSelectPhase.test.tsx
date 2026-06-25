@@ -1,10 +1,13 @@
-// Tests for ParamSelectPhase — exercises FR-011 / FR-012 / FR-013 /
-// FR-014 / FR-015 / FR-016 / FR-019 / FR-020 plus the palette-bugfix
-// extensions FR-A1 (leading-option preset on dynamic-options) / FR-A4
-// (empty dynamic-options renders ParamEmptyState + suppresses later
-// params) / FR-IME (composing gate on Enter/ArrowUp/ArrowDown) /
-// FR-Det (preselect-direct and toolSelect-then-confirm land on
-// identical DOM).
+// Tests for ParamSelectPhase — exercises FR-011 / FR-012 / FR-015 /
+// FR-019 / FR-020 plus the palette-bugfix extensions FR-A1
+// (leading-option preset on dynamic-options) / FR-A4 (empty
+// dynamic-options renders ParamEmptyState + suppresses later params) /
+// FR-IME (composing gate on Enter/ArrowUp/ArrowDown) / FR-Det
+// (preselect-direct and toolSelect-then-confirm land on identical DOM).
+//
+// Note: FR-013 / FR-014 / FR-016 Tab/Shift+Tab hijack tests removed per
+// ADR-0053 — Tab now performs natural focus traversal. ChipSwitch toggle
+// tests are added by the param-select-phase-chip-redesign task.
 //
 // We drive the store with setState() / openPalette() / confirmTool() to
 // put the palette in the precise phase ParamSelectPhase consumes, then
@@ -52,6 +55,7 @@ function makeFakeNotify(): NotificationsApi & {
     error(m) {
       errorCalls.push(m);
     },
+    add(_input) {},
     successCalls,
     errorCalls,
   };
@@ -109,7 +113,6 @@ function seedPalette(
   usePaletteStore.setState({
     open: true,
     phase: "paramSelect",
-    scope: "standard",
     selectedToolId,
     paramValues,
     paramCursor,
@@ -217,10 +220,11 @@ describe("ParamSelectPhase", () => {
 
     render(<ParamSelectPhase ctx={makeCtx()} />);
 
-    const groups = screen.getAllByRole("group");
-    expect(groups.length).toBe(2);
-    const [projectGroup, commandGroup] = groups;
-    if (!projectGroup || !commandGroup) throw new Error("missing param groups");
+    // At least the project fieldset (listbox) and command fieldset (text input)
+    // must be present. When a git project is selected (e.g. after preset fires)
+    // an additional chip-toggles group may appear — that is expected behavior.
+    const projectGroup = screen.getByRole("group", { name: "Project" });
+    const commandGroup = screen.getByRole("group", { name: "Command" });
     expect(projectGroup.querySelector("[role=listbox]")).not.toBeNull();
     expect(commandGroup.querySelector("input[type=text]")).not.toBeNull();
   });
@@ -426,105 +430,12 @@ describe("ParamSelectPhase", () => {
 
   // -------------------------------------------------------------------------
   // FR-013/014/015 command-field worktree/host toggles (visibility)
+  // ADR-0053: Tab hijack removed — Tab now performs natural focus traversal.
+  // Inline chip display (worktree: ON/OFF / sandbox=host: ON/OFF hint texts)
+  // removed from ParamTextInput. Toggle affordances moved to ChipSwitch
+  // (wired in ParamSelectPhase via param-select-phase-chip-redesign task).
   // -------------------------------------------------------------------------
 
-  it("shows worktree toggle when selected project is a git repo (FR-015)", () => {
-    setDaemonSnapshot(
-      mkSnapshot({
-        projects: [{ path: "/repo/git", isGit: true }],
-      }),
-    );
-    seedPalette("new-session", { project: "/repo/git" }, 1);
-
-    render(<ParamSelectPhase ctx={makeCtx()} />);
-
-    expect(screen.queryByText(/worktree:/i)).not.toBeNull();
-    expect(screen.queryByText(/sandbox=host:/i)).toBeNull();
-  });
-
-  it("shows host toggle when selected project is sandboxed (FR-015)", () => {
-    setDaemonSnapshot(
-      mkSnapshot({
-        projects: [{ path: "/repo/sb", isSandboxed: true }],
-      }),
-    );
-    seedPalette("new-session", { project: "/repo/sb" }, 1);
-
-    render(<ParamSelectPhase ctx={makeCtx()} />);
-
-    expect(screen.queryByText(/worktree:/i)).toBeNull();
-    expect(screen.queryByText(/sandbox=host:/i)).not.toBeNull();
-  });
-
-  it("hides both toggles when project is neither git nor sandboxed (FR-015)", () => {
-    setDaemonSnapshot(
-      mkSnapshot({
-        projects: [{ path: "/repo/plain" }],
-      }),
-    );
-    seedPalette("new-session", { project: "/repo/plain" }, 1);
-
-    render(<ParamSelectPhase ctx={makeCtx()} />);
-
-    expect(screen.queryByText(/worktree:/i)).toBeNull();
-    expect(screen.queryByText(/sandbox=host:/i)).toBeNull();
-  });
-
-  // -------------------------------------------------------------------------
-  // FR-013/014/016 command-field Tab / Shift+Tab key handling
-  // -------------------------------------------------------------------------
-
-  it("Tab on command field flips paramValues.worktree when project.isGit (FR-013)", () => {
-    setDaemonSnapshot(
-      mkSnapshot({
-        projects: [{ path: "/repo/git", isGit: true }],
-      }),
-    );
-    seedPalette("new-session", { project: "/repo/git" }, 1);
-
-    render(<ParamSelectPhase ctx={makeCtx()} />);
-
-    expect(usePaletteStore.getState().paramValues.worktree).toBeUndefined();
-    fireEvent.keyDown(commandInput(), { key: "Tab" });
-    expect(usePaletteStore.getState().paramValues.worktree).toBe(true);
-    fireEvent.keyDown(commandInput(), { key: "Tab" });
-    expect(usePaletteStore.getState().paramValues.worktree).toBe(false);
-  });
-
-  it("Tab on command field is pass-through (no toggle) when project is not git (FR-015/016)", () => {
-    setDaemonSnapshot(
-      mkSnapshot({
-        projects: [{ path: "/repo/plain" }],
-      }),
-    );
-    seedPalette("new-session", { project: "/repo/plain" }, 1);
-
-    render(<ParamSelectPhase ctx={makeCtx()} />);
-
-    const before = usePaletteStore.getState().paramValues.worktree;
-    const ev = fireEvent.keyDown(commandInput(), { key: "Tab" });
-    expect(usePaletteStore.getState().paramValues.worktree).toBe(before);
-    expect(ev).toBe(true); // RTL returns false only when preventDefault'd
-  });
-
-  it("Shift+Tab on command field flips paramValues.host when project.isSandboxed (FR-014)", () => {
-    setDaemonSnapshot(
-      mkSnapshot({
-        projects: [{ path: "/repo/sb", isSandboxed: true }],
-      }),
-    );
-    seedPalette("new-session", { project: "/repo/sb" }, 1);
-
-    render(<ParamSelectPhase ctx={makeCtx()} />);
-
-    expect(usePaletteStore.getState().paramValues.host).toBeUndefined();
-    fireEvent.keyDown(commandInput(), { key: "Tab", shiftKey: true });
-    expect(usePaletteStore.getState().paramValues.host).toBe(true);
-    fireEvent.keyDown(commandInput(), { key: "Tab", shiftKey: true });
-    expect(usePaletteStore.getState().paramValues.host).toBe(false);
-  });
-
-  // -------------------------------------------------------------------------
   // FR-011 / spec point 4 — Enter advances or submits
   // -------------------------------------------------------------------------
 
@@ -675,6 +586,229 @@ describe("ParamSelectPhase", () => {
     expect(input.disabled).toBe(true);
     const listbox = projectListbox();
     expect(listbox.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  // -------------------------------------------------------------------------
+  // FR-016 / UAC-008 — ChipSwitch visibility driven by selectedProject flags
+  // -------------------------------------------------------------------------
+
+  // UAC-008 / FR-016: renders Worktree + Host chips when project is git+sandboxed
+  it("renders Worktree chip and Host chip when selected project is git+sandboxed (UAC-008 / FR-016)", () => {
+    setDaemonSnapshot(
+      mkSnapshot({
+        projects: [{ path: "/repo/a", isGit: true, isSandboxed: true }],
+      }),
+    );
+    seedPalette("new-session", { project: "/repo/a" }, 1);
+
+    render(<ParamSelectPhase ctx={makeCtx()} />);
+
+    const worktreeChip = document.querySelector("[data-toggle='worktree']");
+    const hostChip = document.querySelector("[data-toggle='host']");
+    expect(worktreeChip).not.toBeNull();
+    expect(hostChip).not.toBeNull();
+  });
+
+  // UAC-008 / FR-016: no chips when project has no git or sandboxed capability
+  it("renders no chip when selected project is not git nor sandboxed (UAC-008 / FR-016)", () => {
+    setDaemonSnapshot(
+      mkSnapshot({
+        projects: [{ path: "/repo/plain", isGit: false, isSandboxed: false }],
+      }),
+    );
+    seedPalette("new-session", { project: "/repo/plain" }, 1);
+
+    render(<ParamSelectPhase ctx={makeCtx()} />);
+
+    expect(document.querySelector("[data-toggle='worktree']")).toBeNull();
+    expect(document.querySelector("[data-toggle='host']")).toBeNull();
+  });
+
+  // FR-016: only Worktree chip when project is git-only (not sandboxed)
+  it("renders only Worktree chip when project isGit=true and isSandboxed=false (FR-016)", () => {
+    setDaemonSnapshot(
+      mkSnapshot({
+        projects: [{ path: "/repo/git", isGit: true, isSandboxed: false }],
+      }),
+    );
+    seedPalette("new-session", { project: "/repo/git" }, 1);
+
+    render(<ParamSelectPhase ctx={makeCtx()} />);
+
+    expect(document.querySelector("[data-toggle='worktree']")).not.toBeNull();
+    expect(document.querySelector("[data-toggle='host']")).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // FR-017 / UAC-008 — pointer toggle path
+  // -------------------------------------------------------------------------
+
+  // UAC-008 / FR-017: pointerdown on Worktree chip toggles paramValues.worktree
+  it("pointerdown on Worktree chip toggles paramValues.worktree (UAC-008 / FR-017)", () => {
+    setDaemonSnapshot(
+      mkSnapshot({
+        projects: [{ path: "/repo/a", isGit: true, isSandboxed: false }],
+      }),
+    );
+    seedPalette("new-session", { project: "/repo/a" }, 1);
+
+    render(<ParamSelectPhase ctx={makeCtx()} />);
+
+    const chip = document.querySelector("[data-toggle='worktree']") as HTMLElement;
+    expect(chip).not.toBeNull();
+
+    fireEvent.pointerDown(chip);
+    expect(usePaletteStore.getState().paramValues.worktree).toBe(true);
+
+    fireEvent.pointerDown(chip);
+    expect(usePaletteStore.getState().paramValues.worktree).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // FR-018 / UAC-009 — Alt+W global hotkey via useChipHotkey mount
+  // -------------------------------------------------------------------------
+
+  // UAC-009 / FR-018: Alt+W (event.code=KeyW) toggles paramValues.worktree (smoke test: useChipHotkey is mounted)
+  it("Alt+W with event.code=KeyW toggles paramValues.worktree via useChipHotkey (UAC-009 / FR-018)", async () => {
+    setDaemonSnapshot(
+      mkSnapshot({
+        projects: [{ path: "/repo/a", isGit: true }],
+      }),
+    );
+    seedPalette("new-session", { project: "/repo/a" }, 1);
+
+    render(<ParamSelectPhase ctx={makeCtx()} />);
+
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { altKey: true, code: "KeyW", bubbles: true }),
+      );
+    });
+    expect(usePaletteStore.getState().paramValues.worktree).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // FR-019 / UAC-010 — Space / Enter on focused chip
+  // -------------------------------------------------------------------------
+
+  // UAC-010 / FR-019: chip with focus + Space toggles
+  it("chip with focus + Space toggles (UAC-010 / FR-019)", () => {
+    setDaemonSnapshot(
+      mkSnapshot({
+        projects: [{ path: "/repo/a", isGit: true }],
+      }),
+    );
+    seedPalette("new-session", { project: "/repo/a" }, 1);
+
+    render(<ParamSelectPhase ctx={makeCtx()} />);
+
+    const chip = document.querySelector("[data-toggle='worktree']") as HTMLElement;
+    expect(chip).not.toBeNull();
+
+    fireEvent.keyDown(chip, { key: " ", code: "Space" });
+    expect(usePaletteStore.getState().paramValues.worktree).toBe(true);
+  });
+
+  // UAC-010 / FR-020: chip with focus + Enter toggles and does not submit form
+  it("chip with focus + Enter toggles and does not submit form (UAC-010 / FR-020)", async () => {
+    const createSession = vi.fn().mockResolvedValue({ id: "sess-new" });
+    const ctx = makeCtx({ http: makeFakeHttp({ createSession }) });
+    setDaemonSnapshot(
+      mkSnapshot({
+        projects: [{ path: "/repo/a", isGit: true }],
+      }),
+    );
+    seedPalette("new-session", { project: "/repo/a" }, 1);
+
+    render(<ParamSelectPhase ctx={ctx} />);
+
+    const chip = document.querySelector("[data-toggle='worktree']") as HTMLElement;
+    expect(chip).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.keyDown(chip, { key: "Enter" });
+      await Promise.resolve();
+    });
+    expect(usePaletteStore.getState().paramValues.worktree).toBe(true);
+    // form was NOT submitted (Enter on chip must not advance or submit)
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // FR-022 / UAC-010 — focus fallback when chip visibility is lost
+  // -------------------------------------------------------------------------
+
+  // UAC-010 / FR-022: chip visibility lost while chip has focus → focus returns to command input
+  it("chip visibility lost while chip has focus returns focus to command input (UAC-010 / FR-022)", async () => {
+    setDaemonSnapshot(
+      mkSnapshot({
+        projects: [
+          { path: "/repo/git", isGit: true, isSandboxed: false },
+          { path: "/repo/plain", isGit: false, isSandboxed: false },
+        ],
+      }),
+    );
+    seedPalette("new-session", { project: "/repo/git" }, 1);
+
+    render(<ParamSelectPhase ctx={makeCtx()} />);
+
+    const chip = document.querySelector("[data-toggle='worktree']") as HTMLElement;
+    expect(chip).not.toBeNull();
+    chip.focus();
+    expect(document.activeElement).toBe(chip);
+
+    // Switch to a non-git project — chip disappears. FR-022 useEffect fires.
+    await act(async () => {
+      usePaletteStore.getState().setParam("project", "/repo/plain");
+    });
+
+    // Focus should have been redirected to the command input.
+    const cmdInput = commandInput();
+    expect(document.activeElement).toBe(cmdInput);
+  });
+
+  // UAC-010 / FR-022: selectedProject becomes null → both chips disappear → focus returns to command input
+  it("selectedProject becomes null while focused on a chip returns focus to command input (UAC-010 / FR-022)", async () => {
+    setDaemonSnapshot(
+      mkSnapshot({
+        projects: [{ path: "/repo/git", isGit: true }],
+      }),
+    );
+    seedPalette("new-session", { project: "/repo/git" }, 1);
+
+    render(<ParamSelectPhase ctx={makeCtx()} />);
+
+    const chip = document.querySelector("[data-toggle='worktree']") as HTMLElement;
+    expect(chip).not.toBeNull();
+    chip.focus();
+
+    // Clear project → selectedProject === null → chips disappear.
+    await act(async () => {
+      usePaletteStore.getState().setParam("project", null);
+    });
+
+    expect(document.activeElement).toBe(commandInput());
+  });
+
+  // -------------------------------------------------------------------------
+  // FR-021 / UAC-010 — Tab natural traversal (no Tab hijack)
+  // -------------------------------------------------------------------------
+
+  // UAC-010 / FR-021: Tab key from command input does not toggle chip (natural traversal)
+  it("Tab key from command input does not toggle chip (FR-021 / UAC-010)", () => {
+    setDaemonSnapshot(
+      mkSnapshot({
+        projects: [{ path: "/repo/git", isGit: true }],
+      }),
+    );
+    seedPalette("new-session", { project: "/repo/git" }, 1);
+
+    render(<ParamSelectPhase ctx={makeCtx()} />);
+
+    const input = commandInput();
+    // Tab from the command input should NOT toggle worktree.
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(usePaletteStore.getState().paramValues.worktree).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------

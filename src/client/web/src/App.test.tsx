@@ -431,8 +431,8 @@ describe("App", () => {
 
   // Blocker T1 regression guard: App on mount MUST call
   // GET /api/session-config and feed the result to
-  // useDaemonStore.setSessionConfig. Without this, ParamSelectPhase /
-  // ScopeSegment see empty projects + pushCommands forever (the production
+  // useDaemonStore.setSessionConfig. Without this, ParamSelectPhase
+  // sees empty projects + pushCommands forever (the production
   // code path otherwise never fires session-config-extension's REST hydrate).
   it("mount で GET /api/session-config を叩き、結果を daemon.setSessionConfig に渡す (T1)", async () => {
     // Replace the default hang-forever fetch stub with one that resolves

@@ -19,6 +19,7 @@
 
 import type { SessionsApi } from "../api/sessions";
 import type { SessionConfigProject } from "../api/sessions";
+import { type ActiveContextSnapshot, deriveActiveContext } from "../store/palette_active_context";
 import type { ActiveOccupant, SessionInfo } from "../wire/server";
 
 // ---------------------------------------------------------------------------
@@ -108,16 +109,24 @@ export interface DaemonSnapshot {
 // ("notify.success(...)") without leaking the store's action shape into
 // every tool. The palette-store adapter (later task) supplies the concrete
 // implementation by wrapping useNotificationsStore.getState().add.
+// `add` is the lower-level variant used by push submit (FR-014) to emit an
+// info toast with a structured title and message (UAC-011 / UAC-018).
 export interface NotificationsApi {
   success(message: string): void;
   error(message: string): void;
+  // FR-014: structured toast for push submit (info level, title + message).
+  add(input: {
+    level: "info" | "warn" | "error";
+    message: string;
+    title?: string;
+    body?: string;
+  }): void;
 }
 
-// ToolStoreCtx is the narrow PaletteActions slice ToolDef.submit consumes
-// through ctx.store. Renamed from `PaletteActions` to avoid a collision with
-// the broader interface of the same name in store/palette.ts (the full
-// PaletteState action set used by the React layer). We expose only the
-// callback ToolDef.submit needs today:
+// ToolStoreCtx is the narrow palette-store action slice ToolDef.submit
+// consumes through ctx.store. Distinct from the broader PaletteActions
+// interface in store/palette.ts (the full PaletteState action set used by
+// the React layer) so test fakes only implement what tools actually use:
 //   - close() — close the palette after a successful submit.
 // ToolStoreCtx stays minimal on purpose: every new method here is one more
 // thing test fakes must implement. Tools that need richer access should go
@@ -137,14 +146,6 @@ export interface ToolDaemonActions {
   selectSession(id: string | null): void;
 }
 
-// PaletteActions is the legacy name retained as a deprecated alias for
-// ToolStoreCtx so the existing imports in tools.test.ts compile without
-// churn. New code should reference ToolStoreCtx directly. We do NOT
-// re-export PaletteActions from store/palette through this name to keep
-// the two layers' contracts visibly distinct at the import site.
-/** @deprecated Use ToolStoreCtx instead. Kept for the existing test imports. */
-export type PaletteActions = ToolStoreCtx;
-
 export interface ToolCtx {
   http: SessionsApi;
   daemon: DaemonSnapshot;
@@ -154,6 +155,10 @@ export interface ToolCtx {
   daemonActions: ToolDaemonActions;
   notify: NotificationsApi;
   store: ToolStoreCtx;
+  // FR-014 / UAC-018: active context snapshot captured by CommandPalette at
+  // submit start time. When absent, makePushToolDef falls back to deriving
+  // from ctx.daemon. Aligned with lift-state (ADR-0055).
+  frozenActiveContext?: ActiveContextSnapshot;
 }
 
 export interface ToolDef {
@@ -163,7 +168,7 @@ export interface ToolDef {
   params: ParamDef[] | null;
   // disabledReason returns null when the tool is currently usable, and a
   // short human-readable English sentence when not. ADR-0047 makes this
-  // the single source of truth for both ScopeSegment "disabled" rendering
+  // the single source of truth for listbox "disabled" rendering
   // and submit-time re-validation. Standard scope is always null in this
   // task; push scope adds real predicates in tools-registry-dynamic-push.
   disabledReason(daemon: DaemonSnapshot): string | null;
@@ -294,8 +299,7 @@ export function projectOptions(daemon: DaemonSnapshot): ParamOption[] {
 
 // scopeDisabledReason is the single source of truth (ADR-0047) for whether a
 // given palette scope is currently usable, returning either a short English
-// reason (rendered as the disabled sub-text in ScopeSegment) or null when the
-// scope is enabled. The same helper is consumed by tools-registry-dynamic-push
+// reason or null when the scope is enabled. The same helper is consumed by tools-registry-dynamic-push
 // to gate per-push ToolDef.disabledReason — keeping the literal strings in one
 // place so the segment UI and the submit-time re-validation can never drift.
 //
@@ -327,7 +331,7 @@ export function scopeDisabledReason(scope: ToolScope, daemon: DaemonSnapshot): s
 //   - params=null marks the tool as paramless (FR-010): hitting Enter on the
 //     listbox entry fires submit() immediately without entering ParamSelectPhase
 //   - disabledReason delegates to scopeDisabledReason('push', daemon) so the
-//     ScopeSegment "disabled" sub-text and the per-ToolDef gate are the same
+//     listbox "disabled" row and the per-ToolDef gate use the same
 //     function call (ADR-0047). Standard tools have their own permanent-null
 //     disabledReason; push tools mirror the scope-level predicate exactly.
 //   - submit calls ctx.http.pushCommand(activeSessionID, command). The store
@@ -357,10 +361,34 @@ function makePushToolDef(command: string): ToolDef {
         throw new Error("no active session");
       }
       await ctx.http.pushCommand(sessionId, command);
+      // FR-014 / UAC-018: snapshot is captured at submit start time.
+      // frozenActiveContext comes from CommandPalette (command-palette-lift-state
+      // task). When absent, fall back to deriving from ctx.daemon — this keeps
+      // ToolSelectPhase (paramless push fast path) and direct test calls working
+      // without requiring the caller to pre-compute the snapshot.
+      const snap: ActiveContextSnapshot =
+        ctx.frozenActiveContext ??
+        deriveActiveContext(sessionId, ctx.daemon.sessions, ctx.daemon.projects);
       // Same ordering as standard tools: notify first, then close. If notify
       // throws the palette stays open with the error visible; ctx.store.close
       // is a no-op when the palette is already closed.
-      ctx.notify.success(`push: ${command}`);
+      if (snap.kind === "resolved") {
+        ctx.notify.add({
+          level: "info",
+          title: `${snap.fullPath}\n${snap.fullSessionId}`,
+          message: `Sent '${command}' → ${snap.projBase} · ${snap.sid8}`,
+        });
+      } else if (snap.kind === "unknown") {
+        ctx.notify.add({
+          level: "info",
+          title: snap.fullSessionId,
+          message: `Sent '${command}' → ??? · ${snap.sid8}`,
+        });
+      } else {
+        // kind === 'none': activeSessionID was null — normally blocked by
+        // the guard above (defensive branch for structural completeness).
+        ctx.notify.add({ level: "info", message: `Sent '${command}'` });
+      }
       ctx.store.close();
     },
   };
@@ -369,8 +397,8 @@ function makePushToolDef(command: string): ToolDef {
 // toolsForPush materializes one push ToolDef per entry in pushCommands. The
 // list is taken straight from the daemon snapshot's pushCommands (populated
 // by session-config-extension); we do NOT filter on disabledReason here so
-// that ScopeSegment can render the segment as "disabled with reason" rather
-// than disappearing the segment entirely when push is unavailable. Order
+// that the listbox can render disabled rows with reason text rather than
+// disappearing the entries entirely when push is unavailable. Order
 // preserves the configured pushCommands order — the curated server list is
 // the source of truth for surfacing priority.
 export function toolsForPush(

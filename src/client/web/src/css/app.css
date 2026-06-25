@@ -280,3 +280,190 @@ body {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ActiveContextHeader (FR-009 / FR-010 / FR-029 / FR-032) */
+.palette-active-context {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85em;
+  opacity: 0.9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color 150ms ease-in-out;
+  border-radius: 3px;
+  padding: 2px 4px;
+}
+.palette-active-context--flash {
+  background-color: rgba(74, 158, 255, 0.2);
+}
+.palette-active-context__icon {
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.palette-active-context__sid {
+  font-family: var(--mono, ui-monospace, monospace);
+  opacity: 0.8;
+}
+
+/* ─── ChipSwitch (FR-016 / FR-029) ─────────────────────────────────────── */
+.palette-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 0.85em;
+}
+.palette-chip--on {
+  background: var(--accent);
+  color: #0a0a0a;
+  border-color: var(--accent);
+}
+.palette-chip--off {
+  opacity: 0.75;
+}
+.palette-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.palette-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.palette-chip__hint {
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+.palette-chip__state {
+  font-size: 0.8em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+/* InlineStatus — single aria-live announce slot (ADR-0057 / FR-029). */
+.palette-inline-status {
+  min-height: 1.4em;
+  font-size: 0.85em;
+}
+.palette-inline-status__text--warning {
+  color: #fab387;
+}
+.palette-inline-status__text--info {
+  color: #89dceb;
+}
+.palette-inline-status__icon {
+  margin-right: 4px;
+  font-weight: bold;
+/* Unified listbox: separator, disabled row, flash (FR-001/FR-002/FR-003/FR-029) */
+.palette-listbox__separator {
+  height: 1px;
+  background: #45475a;
+  margin: 4px 0;
+}
+.palette-listbox__row--disabled {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.55;
+  cursor: default;
+}
+.palette-listbox__row--disabled:hover {
+  opacity: 0.7;
+}
+.palette-listbox__row--disabled-icon {
+  flex-shrink: 0;
+  font-size: 0.85em;
+}
+.palette-listbox__row--disabled-reason {
+  font-size: 0.8em;
+  opacity: 0.75;
+  margin-left: 4px;
+}
+.palette-listbox__row--flash {
+  background: rgba(243, 139, 168, 0.15);
+}
+
+/* ActiveContextHeader (FR-009 / FR-010 / FR-029 / FR-032) */
+.palette-active-context {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85em;
+  opacity: 0.9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color 150ms ease-in-out;
+  border-radius: 3px;
+  padding: 2px 4px;
+}
+.palette-active-context--flash {
+  background-color: rgba(74, 158, 255, 0.2);
+}
+.palette-active-context__icon {
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.palette-active-context__sid {
+  font-family: var(--mono, ui-monospace, monospace);
+  opacity: 0.8;
+}
+
+/* InlineStatus — single aria-live announce slot (ADR-0057 / FR-029). */
+.palette-inline-status {
+  min-height: 1.4em;
+  font-size: 0.85em;
+}
+.palette-inline-status__text--warning {
+  color: #fab387;
+}
+.palette-inline-status__text--info {
+  color: #89dceb;
+}
+.palette-inline-status__icon {
+  margin-right: 4px;
+  font-weight: bold;
+}
+
+/* ─── ChipSwitch (FR-016 / FR-029) ─────────────────────────────────────── */
+.palette-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 0.85em;
+}
+.palette-chip--on {
+  background: var(--accent);
+  color: #0a0a0a;
+  border-color: var(--accent);
+}
+.palette-chip--off {
+  opacity: 0.75;
+}
+.palette-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.palette-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.palette-chip__hint {
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+.palette-chip__state {
+  font-size: 0.8em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}

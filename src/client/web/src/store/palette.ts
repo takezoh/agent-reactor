@@ -1,36 +1,20 @@
 // usePaletteStore — pure state + actions for the command palette.
-//
 // Spec: docs/specs/2026-06-24-web-ui-command-palette
-// ADRs:
-//   - 0036 palette-2phase-store-architecture (this store holds only state and
-//     state-transition actions; HTTP / DOM live in ToolDef.submit / the
-//     CommandPalette component respectively)
-//   - 0040 palette-ime-suppression-in-store (`composing` is the single source
-//     of truth for IME suppression; every input action guards on it)
-//   - 0047 palette-disabledreason-single-source (submit re-evaluates
-//     tool.disabledReason(ctx.daemon) so a push tool that becomes invalid
-//     between open and confirm cannot fire the HTTP request)
-//
-// DOM-touching responsibilities deliberately deferred to the React layer:
-//   - input.focus() is triggered by CommandPalette observing `refocusSeq`
-//     (incremented by refocusInput()).
-//   - opener.focus() restoration on close lives in CommandPalette's effect
-//     cleanup, reading the `opener` field this store carries.
-//   - TerminalPane blur / cursor clamp inside listboxes live in the phase
-//     components.
-//
-// The store therefore has zero references to `document`, `window`, or any
-// HTMLElement member. The only HTMLElement value it touches is the opener
-// stored verbatim and handed back to the React layer.
+// ADR-0036: HTTP / DOM stay outside; no document/window/HTMLElement refs.
+// ADR-0040: `composing` is the single IME-suppression source of truth.
+// ADR-0047: disabledReason re-evaluated at submit time.
+// ADR-0055: frozenSnapshot lives in CommandPalette useRef; submitting boolean
+//           is the sole freeze-epoch signal in the store.
 
 import { create } from "zustand";
-import { type DaemonSnapshot, type ToolCtx, type ToolScope, listTools } from "../lib/tools";
+import { type DaemonSnapshot, type ToolCtx, listTools } from "../lib/tools";
+import { type ActiveContextSlice, createActiveContextSlice } from "./palette_active_context";
+import { classifySubmitError, findToolForSubmit, isParamless } from "./palette_helpers";
 import {
-  classifySubmitError,
-  findToolForSubmit,
-  initialScope,
-  isParamless,
-} from "./palette_helpers";
+  type InlineStatusSlice,
+  createInlineStatusSlice,
+  initialInlineStatusState,
+} from "./palette_inline_status";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -38,27 +22,19 @@ import {
 
 export type PalettePhase = "toolSelect" | "paramSelect";
 
-// PaletteScope is the palette-layer alias for ToolScope (lib/tools): both
-// describe the same "standard | push" axis (Y4 — keeping two literal unions
-// risked drifting when a new scope is added). Re-exporting the canonical
-// ToolScope keeps the type identity single-sourced while preserving the
-// PaletteScope name at every existing call site (store actions, tests).
-export type PaletteScope = ToolScope;
-
 export interface OpenPaletteOptions {
   opener?: HTMLElement | null;
-  // daemonSnapshot is provided by the opener (Header / hotkey hook) so the
-  // store can decide the initial scope at open time without sampling the
+  // daemonSnapshot is provided when preselectToolId is set so the store can
+  // resolve the tool against the live push-command set without sampling the
   // daemon store itself (keeps the openPalette transition deterministic in
   // unit tests — the test passes whatever snapshot it wants).
   daemonSnapshot?: DaemonSnapshot;
   // preselectToolId pre-selects a tool by id and skips ToolSelectPhase
   // (ADR-0043 / FR-021 — the Header's "New Session" CTA needs to land on
-  // 'new-session' regardless of the fuzzy query, since the Japanese label
-  // won't match an English search). When the id resolves under the chosen
-  // scope we advance to phase='paramSelect'; otherwise we fall back to the
-  // unfiltered toolSelect open with a console.warn (the alternative —
-  // closing immediately — would leave the CTA feeling broken).
+  // 'new-session' regardless of the fuzzy query). When the id resolves we
+  // advance to phase='paramSelect'; otherwise we fall back to the unfiltered
+  // toolSelect open with a console.warn (the alternative — closing immediately
+  // — would leave the CTA feeling broken).
   // Paramless tools are NOT auto-submitted because openPalette has no
   // ToolCtx; the user lands on a 0-field paramSelect whose Enter routes
   // through submit(ctx) normally.
@@ -68,7 +44,6 @@ export interface OpenPaletteOptions {
 export interface PaletteState {
   open: boolean;
   phase: PalettePhase;
-  scope: PaletteScope;
   selectedToolId: string | null;
   paramValues: Record<string, unknown>;
   paramCursor: number;
@@ -88,7 +63,6 @@ export interface PaletteActions {
   openPalette(opts?: OpenPaletteOptions): void;
   close(): void;
   back(): void;
-  setScope(scope: PaletteScope): void;
   setQuery(query: string): void;
   moveCursor(delta: number): void;
   // confirmTool optionally takes a ToolCtx so the paramless-tool fast path
@@ -119,7 +93,6 @@ const initialClosedState: Pick<
   PaletteState,
   | "open"
   | "phase"
-  | "scope"
   | "selectedToolId"
   | "paramValues"
   | "paramCursor"
@@ -131,7 +104,6 @@ const initialClosedState: Pick<
 > = {
   open: false,
   phase: "toolSelect",
-  scope: "standard",
   selectedToolId: null,
   paramValues: {},
   paramCursor: 0,
@@ -146,13 +118,17 @@ const initialClosedState: Pick<
 // Store
 // ---------------------------------------------------------------------------
 //
-// Pure helpers (initialScope, findToolForSubmit, isParamless, isApiHttpError,
+// Pure helpers (findToolForSubmit, isParamless, isApiHttpError,
 // messageOf) live in ./palette_helpers.ts so this file stays under the
 // 500-line limit; their bodies + rationale comments are unchanged.
 
-export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get) => ({
+export const usePaletteStore = create<
+  PaletteState & PaletteActions & ActiveContextSlice & InlineStatusSlice
+>()((set, get, store) => ({
   ...initialClosedState,
   refocusSeq: 0,
+  ...createActiveContextSlice(set, get, store),
+  ...createInlineStatusSlice(set, get, store),
 
   openPalette(opts) {
     const state = get();
@@ -162,17 +138,12 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
     // the hotkey handler call openPalette() unconditionally on Cmd/Ctrl+K
     // without disturbing in-progress param-select work.
     if (state.open) return;
-    const scope = initialScope(opts?.daemonSnapshot);
     // preselectToolId (ADR-0043 / FR-021 / FR-A2 / FR-Det): the Header's
-    // "New Session" CTA must land on 'new-session' regardless of the
-    // daemon's current occupant — when an active session has occupant
-    // 'frame' the initialScope would resolve to 'push' and the scope
-    // filter would never find a standard-scope tool. Bypass the scope
-    // filter and resolve against the full ToolDef set, then normalize
-    // scope to 'standard' so ParamSelectPhase renders against the right
-    // segment. We do NOT materialize options or hit HTTP here (ADR-0036
-    // keeps the store DOM/HTTP-free); ParamSelectPhase handles dynamic
-    // option materialization at render time.
+    // "New Session" CTA must land on 'new-session'. Resolve against the full
+    // ToolDef set (ADR-0050: scope removed — all tools visible at once). We do
+    // NOT materialize options or hit HTTP here (ADR-0036 keeps the store
+    // DOM/HTTP-free); ParamSelectPhase handles dynamic option materialization
+    // at render time.
     if (opts?.preselectToolId !== undefined) {
       const snap: DaemonSnapshot = opts.daemonSnapshot ?? {
         sessions: [],
@@ -185,7 +156,6 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
         set({
           ...initialClosedState,
           open: true,
-          scope: "standard",
           opener: opts?.opener ?? null,
           phase: "paramSelect",
           selectedToolId: tool.id,
@@ -193,18 +163,15 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
         return;
       }
       // Unknown preselect id is a contract miss but not a user-facing
-      // error: fall through to the unfiltered toolSelect open at the
-      // daemon-derived scope and leave a console.warn so the regression
-      // is traceable.
+      // error: fall through to the unfiltered toolSelect open and leave a
+      // console.warn so the regression is traceable.
       console.warn("[palette] openPalette preselectToolId did not resolve", {
         preselectToolId: opts.preselectToolId,
-        scope,
       });
     }
     set({
       ...initialClosedState,
       open: true,
-      scope,
       opener: opts?.opener ?? null,
     });
   },
@@ -214,7 +181,17 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
     // would let a stale "please focus" signal fire on the next open). We do
     // NOT increment refocusSeq here: close means "stop interacting with the
     // input"; the CommandPalette unmount effect handles opener.focus().
-    set({ ...initialClosedState });
+    // activeContextSnapshot is reset to { kind: 'none' }; flashSeq /
+    // announceSeq are preserved (monotonic counters, not reset on close).
+    // Defensive cleanup: cancel any pending inline-status timer so it does
+    // not fire against a closed (possibly re-opened) palette.
+    const cur = get().inlineStatus;
+    if (cur.timerId !== null) clearTimeout(cur.timerId);
+    set({
+      ...initialClosedState,
+      activeContextSnapshot: { kind: "none" },
+      ...initialInlineStatusState,
+    });
   },
 
   back() {
@@ -236,22 +213,14 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
     // From toolSelect, back closes the palette (FR-017). Same code path as
     // close() — kept as a single set() rather than a recursive call so the
     // intent ("back = close at the top level") is visible at the action site.
-    set({ ...initialClosedState });
-  },
-
-  setScope(scope) {
-    // Scope change always returns to the tool-select phase and drops the
-    // in-progress param form: the new scope has a different tool list, so any
-    // pending selectedToolId is by definition stale. paramCursor / query are
-    // reset because the ToolSelectPhase rebinds the listbox to a new source.
+    // activeContextSnapshot reset; flashSeq / announceSeq preserved (monotonic).
+    // Defensive cleanup: cancel any pending inline-status timer on close path.
+    const cur = get().inlineStatus;
+    if (cur.timerId !== null) clearTimeout(cur.timerId);
     set({
-      scope,
-      phase: "toolSelect",
-      selectedToolId: null,
-      paramValues: {},
-      paramCursor: 0,
-      query: "",
-      error: null,
+      ...initialClosedState,
+      activeContextSnapshot: { kind: "none" },
+      ...initialInlineStatusState,
     });
   },
 
@@ -304,8 +273,8 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
         // Unknown tool id with ctx: hard contract break. Surface loudly via
         // notify.error (user signal) + console.error (devtools/Sentry
         // attribution), leave state untouched (no fake paramSelect).
-        ctx.notify.error(`Unknown tool: ${id} (scope=${state.scope})`);
-        console.error("[palette] confirmTool unknown id", { id, scope: state.scope });
+        ctx.notify.error(`Unknown tool: ${id}`);
+        console.error("[palette] confirmTool unknown id", { id });
         return;
       }
       if (isParamless(tool)) {
@@ -323,10 +292,7 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
     // when driving confirm → paramSelect without firing submit; we leave a
     // warn breadcrumb so a later submit-time failure on a bogus id is
     // correlatable with this confirm.
-    console.warn("[palette] confirmTool without ctx; id not validated", {
-      id,
-      scope: state.scope,
-    });
+    console.warn("[palette] confirmTool without ctx; id not validated", { id });
     toParamSelect();
     return undefined;
   },
@@ -378,7 +344,6 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
     if (!state.open) {
       console.warn("[palette] submit() called while closed; ignoring", {
         selectedToolId: state.selectedToolId,
-        scope: state.scope,
       });
       return;
     }
@@ -398,81 +363,50 @@ export const usePaletteStore = create<PaletteState & PaletteActions>()((set, get
     // through the unified non-HTTP error branch instead of escaping as an
     // unhandledrejection without notify / state.error / submitting reset.
     set({ submitting: true, error: null });
+    // ADR-0055: submitting=true is the freeze-epoch signal; frozenSnapshot
+    // lives in CommandPalette useRef and is captured by useFrozenSnapshot hook.
     try {
       const tool = findToolForSubmit(ctx, state.selectedToolId);
       if (tool === null) {
-        // selectedToolId is null or the id no longer resolves (push tool
-        // list changed between confirm and submit). Notify + console.error
-        // + full close so a follow-up Cmd+K starts clean. "none" is the
-        // user-facing token for the null selectedToolId case so the toast
-        // reads as an English error message rather than a literal "null";
-        // the precise null is still in the console.error breadcrumb for
-        // attribution.
+        // selectedToolId is null or stale (push-tool list churned). "none"
+        // substitutes for null in the user-facing toast (ADR-0047).
         const idForUser = state.selectedToolId ?? "none";
-        ctx.notify.error(
-          `Internal error: selected tool (${idForUser}) not found (scope=${state.scope})`,
-        );
+        ctx.notify.error(`Internal error: selected tool (${idForUser}) not found`);
         console.error("[palette] submit() unresolved tool", {
           selectedToolId: state.selectedToolId,
-          scope: state.scope,
         });
-        set({ ...initialClosedState });
+        set({ ...initialClosedState, activeContextSnapshot: { kind: "none" } });
         return;
       }
 
-      // FR-023: re-evaluate disabledReason at submit time. The user may
-      // have opened the palette in a valid state but the daemon snapshot
-      // moved before confirm — push tools whose active session changed
-      // are the canonical case. ADR-0047 makes this the single source of
-      // truth shared with ScopeSegment's disabled rendering.
+      // FR-023 / ADR-0047: re-evaluate disabledReason at submit time.
       const reason = tool.disabledReason(ctx.daemon);
       if (reason !== null) {
         ctx.notify.error(reason);
-        // close() resets the entire state including selectedToolId, so
-        // the next open starts clean even if the disabledReason path
-        // tripped after a long-lived palette session.
-        set({ ...initialClosedState });
+        set({ ...initialClosedState, activeContextSnapshot: { kind: "none" } });
         return;
       }
 
       await tool.submit(ctx, state.paramValues);
-      // tool.submit may have already called ctx.store.close()
-      // (newSessionTool does) — close is idempotent because
-      // set({ ...initialClosedState }) is the same shape twice. Calling
-      // it here unconditionally makes the happy path independent of
-      // whether the tool's own close() ran.
-      set({ ...initialClosedState });
+      // close is idempotent; tools that call ctx.store.close() themselves
+      // (e.g. newSessionTool) are safe — the second reset is a no-op.
+      set({ ...initialClosedState, activeContextSnapshot: { kind: "none" } });
     } catch (e: unknown) {
-      // classifySubmitError (palette_helpers) maps an unknown thrown value
-      // onto a 3-arm discriminated union; each arm has its own side-effect
-      // recipe per FR-024 + ADR-0046. Keeping the recipes inline here (vs.
-      // pushing them into the helper) preserves the store-as-only-writer
-      // invariant — set() never leaves this file.
+      // classifySubmitError maps the throw onto auth / http / unknown.
+      // set() stays in this file (store-as-only-writer, ADR-0036).
       const branch = classifySubmitError(e);
       switch (branch.kind) {
         case "auth":
-          // 401 → fixed English toast and full close. Re-auth happens
-          // out-of-band (URL #token=…); leaving the palette open would
-          // suggest "try again here", which is wrong.
+          // 401: full close; re-auth is out-of-band (URL #token=…).
           ctx.notify.error("Authentication required");
-          set({ ...initialClosedState });
+          set({ ...initialClosedState, activeContextSnapshot: { kind: "none" } });
           return;
         case "http":
-          // Server-validated 4xx (non-401) / 5xx → inline-error treatment
-          // so the user can correct the input and retry without losing
-          // the form. The server message is passed through verbatim;
-          // classifySubmitError already substitutes the English fallback
-          // 'HTTP error' when the server returns an empty message. No
-          // notify.error: doubling the server message as a toast is noisy.
+          // 4xx/5xx: inline error only; palette stays open for retry.
           set({ error: branch.message, submitting: false });
           return;
         case "unknown":
-          // Synchronous bugs inside ToolDef.submit / findToolForSubmit /
-          // tool.disabledReason, network failures, wire-format errors.
-          // These are NOT user-actionable, so we route through
-          // notify.error AND console.error to capture both user-visible
-          // signal and developer stack context, plus inline error for
-          // anyone still looking at the open palette.
+          // Sync bugs / network failures: notify + console.error + inline.
           console.error("[palette] submit() non-HTTP error", branch.cause);
           ctx.notify.error(`Unexpected error: ${branch.message}`);
           set({ error: branch.message, submitting: false });
