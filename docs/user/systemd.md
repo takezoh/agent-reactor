@@ -101,26 +101,79 @@ systemctl --user restart agent-reactor-server
 # (existing browser tab keeps its session list; server reconnect happens transparently)
 ```
 
-## TLS / LAN exposure (out of the box: loopback only)
+## LAN / external exposure
 
 The shipped units bind `127.0.0.1` and pass `-insecure` — appropriate for
-single-user hosts where access is always via SSH tunnel. To expose externally:
+single-user hosts where access is always via SSH tunnel. The browser only
+talks to `agent-reactor-web`; `agent-reactor-server` is an internal backend
+the web unit reverse-proxies to. **For LAN access, override `-web` only and
+keep `-server` on loopback.**
 
-1. Drop a TLS certificate pair somewhere readable by your user (e.g.
-   `~/.config/agent-reactor/tls/`).
-2. Write `~/.local/state/agent-reactor/server.env`:
-   ```
-   # overrides ExecStart= via EnvironmentFile — server reads these in its env
-   ```
-   (the gateway flags `-tls-cert` / `-tls-key` / `-addr` are not env-aware
-   today; the cleanest path is `systemctl --user edit agent-reactor-server`
-   and override `ExecStart=` directly. The `server.env` file is reserved for
-   future env-aware knobs.)
-3. Mirror the change for `agent-reactor-web` if the browser will hit it
-   directly rather than via tunnel.
+### Bind `-web` to 0.0.0.0 (plain HTTP — loopback-grade trust required)
 
-A reverse proxy (nginx / caddy) in front of `agent-reactor-web` with
-Let's Encrypt is the most painless production fronting.
+Create a drop-in (`systemctl --user edit agent-reactor-web` opens an editor;
+or write the file directly):
+
+```sh
+mkdir -p ~/.config/systemd/user/agent-reactor-web.service.d
+cat > ~/.config/systemd/user/agent-reactor-web.service.d/override.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=%h/.local/bin/agent-reactor-web -addr 0.0.0.0:8080 -insecure -server http://127.0.0.1:8443
+EOF
+systemctl --user daemon-reload
+systemctl --user restart agent-reactor-web
+ss -tlnp | grep 8080   # expect *:8080
+```
+
+The empty `ExecStart=` line on its own is required — systemd refuses to
+append a second `ExecStart=` to a `Type=simple` unit, so without the reset
+the drop-in is silently ignored and the unit keeps the shipped
+`127.0.0.1:8080` binding. `systemctl --user show agent-reactor-web -p
+ExecStart -p DropInPaths` is the fastest way to confirm an override is in
+effect.
+
+Plain HTTP on `0.0.0.0` means the bearer token (`server.token`) crosses the
+LAN in cleartext. Acceptable only on a trusted segment; otherwise add TLS
+(below) or front with a reverse proxy.
+
+### TLS direct on `-web`
+
+1. Drop a certificate pair somewhere readable by your user (e.g.
+   `~/.config/agent-reactor/tls/{fullchain.pem,privkey.pem}`).
+2. Extend the drop-in:
+   ```ini
+   [Service]
+   ExecStart=
+   ExecStart=%h/.local/bin/agent-reactor-web \
+     -addr 0.0.0.0:8443 \
+     -tls-cert %h/.config/agent-reactor/tls/fullchain.pem \
+     -tls-key  %h/.config/agent-reactor/tls/privkey.pem \
+     -server http://127.0.0.1:8443
+   ```
+   (drop `-insecure`; `-tls-cert` / `-tls-key` / `-addr` are CLI flags, not
+   env-aware. A future `web.env` hook is reserved by `EnvironmentFile=-` but
+   has no env-aware knobs today.)
+3. `daemon-reload` + `restart agent-reactor-web`.
+
+### Reverse proxy in front (recommended for real production)
+
+Keep `-web` on `127.0.0.1:8080 -insecure` and front it with nginx / caddy +
+Let's Encrypt on the host. The proxy terminates TLS and forwards to
+loopback; no drop-in needed.
+
+### Firewall
+
+Binding to `0.0.0.0` is not enough on hosts with a firewall. Check + open:
+
+```sh
+sudo ufw status                       # if active:
+sudo ufw allow 8080/tcp               # (or 8443 for TLS)
+sudo iptables -nL INPUT | grep -E '8080|policy'
+```
+
+Cloud VMs additionally need the provider's security-group / VPC firewall
+open on the same port.
 
 ## Uninstall
 
