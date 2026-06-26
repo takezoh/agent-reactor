@@ -19,7 +19,7 @@
 // NOT modified by this file. The palette components remain unchanged; this
 // primitive is consumed by SessionList (m5-session-list-listbox).
 
-import { type KeyboardEvent, type ReactNode, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useId, useRef, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,6 +57,14 @@ function indexById(items: Array<UnifiedListboxItem>, id: string | null): number 
 
 export function UnifiedListbox(props: UnifiedListboxProps) {
   const { ariaLabel, items, activeId, onActiveChange, onActivate, onCompositionChange } = props;
+
+  // Per-instance DOM-id prefix. Without this, mounting the same listbox twice
+  // in one document (e.g. SessionList in the desktop sidebar AND inside
+  // SessionDrawer at the same time on a narrow viewport) emits duplicate
+  // element ids — browsers then break `aria-activedescendant` lookup and the
+  // first hidden copy can swallow taps targeted at the visible one.
+  const idScope = useId();
+  const optionDomId = (itemId: string): string => `${idScope}-${itemId}`;
 
   // IME composition state — local; mirrored to caller via onCompositionChange.
   const [isComposing, setIsComposing] = useState(false);
@@ -133,7 +141,7 @@ export function UnifiedListbox(props: UnifiedListboxProps) {
     <div
       role="listbox"
       aria-label={ariaLabel}
-      aria-activedescendant={activeId ?? undefined}
+      aria-activedescendant={activeId !== null ? optionDomId(activeId) : undefined}
       tabIndex={0}
       className="unified-listbox"
       onKeyDown={onKeyDown}
@@ -146,7 +154,8 @@ export function UnifiedListbox(props: UnifiedListboxProps) {
         return (
           <div
             key={item.id}
-            id={item.id}
+            id={optionDomId(item.id)}
+            data-item-id={item.id}
             // biome-ignore lint/a11y/useSemanticElements: ARIA listbox uses div+role=option; <option> only works inside <select>
             // biome-ignore lint/a11y/useFocusableInteractive: focus stays on parent listbox via aria-activedescendant; options are not individually tabbable
             role="option"

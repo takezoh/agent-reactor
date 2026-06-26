@@ -8,6 +8,8 @@
  *  - Desktop (>=768px): position:fixed, top-right.
  *  - Max 3 visible items; auto-dismiss in 5s; tap to dismiss.
  *  - notification-toast__undosnackbar-slot: reserved for UndoSnackbar (FR-TOAST-003).
+ *  - Per-level leading glyph (✓ / ! / × / i) rendered inside an aria-hidden
+ *    slot — purely visual, screen readers still read the message text.
  */
 
 import { useEffect } from "react";
@@ -22,6 +24,16 @@ type ToastItemProps = {
   onDismiss: (id: number) => void;
 };
 
+// Per-level glyph. Plain text glyphs keep the bundle SVG-free and inherit
+// font color, which lets the CSS layer style them per level without a JS
+// branch. Visual-only — the parent text content carries the SR-readable
+// message, so the glyph slot is aria-hidden.
+const LEVEL_GLYPH: Record<Notification["level"], string> = {
+  info: "i",
+  warn: "!",
+  error: "×",
+};
+
 // ─── ToastItem ─────────────────────────────────────────────────────────────────
 
 function ToastItem({ item, onDismiss }: ToastItemProps): JSX.Element {
@@ -31,20 +43,26 @@ function ToastItem({ item, onDismiss }: ToastItemProps): JSX.Element {
   }, [item.id, onDismiss]);
 
   const typeClass = `notification-toast__item--${item.level}`;
+  const glyph = LEVEL_GLYPH[item.level];
 
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: toast is supplemental UI; keyboard users rely on auto-dismiss
     <div className={`notification-toast__item ${typeClass}`} onClick={() => onDismiss(item.id)}>
-      {item.title != null && item.title !== "" ? (
-        <>
-          <div className="notification-toast__item-title">{item.title}</div>
-          {item.body != null && item.body !== "" && (
-            <div className="notification-toast__item-body">{item.body}</div>
-          )}
-        </>
-      ) : (
-        <div>{item.message}</div>
-      )}
+      <span className="notification-toast__item-icon" aria-hidden="true">
+        {glyph}
+      </span>
+      <div className="notification-toast__item-content">
+        {item.title != null && item.title !== "" ? (
+          <>
+            <div className="notification-toast__item-title">{item.title}</div>
+            {item.body != null && item.body !== "" && (
+              <div className="notification-toast__item-body">{item.body}</div>
+            )}
+          </>
+        ) : (
+          <div className="notification-toast__item-message">{item.message}</div>
+        )}
+      </div>
     </div>
   );
 }

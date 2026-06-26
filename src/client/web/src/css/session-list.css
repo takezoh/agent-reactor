@@ -104,6 +104,9 @@
   letter-spacing: 0.02em;
   transition: background-color 120ms ease-out, color 120ms ease-out;
 }
+.session-list__project-header:active {
+  background: var(--surface-row-selected);
+}
 .session-list__project-header:hover {
   background: var(--surface-row-hover);
 }
@@ -258,4 +261,85 @@
   border-radius: 3px;
   border: 1px solid var(--hairline);
   color: var(--fg-muted);
+}
+
+/* ─── Mobile (<768px) overrides ─────────────────────────────────────────────
+   The desktop tree was tuned for a 240–280px sidebar at a desk. Inside the
+   drawer on a phone the same tokens read as cramped: 12px project headers,
+   10.5px tags, 36px touch targets all fail FR-A11Y-001 (WCAG 2.5.5 — 44px
+   minimum) and discoverability. The block below opts the session list into
+   mobile-friendly sizing whenever the viewport is below the drawer
+   breakpoint (matches AppShell's MOBILE_BREAKPOINT_PX = 768). */
+@media (max-width: 767px) {
+  .session-list {
+    gap: 6px;
+  }
+
+  /* Workspace switcher: bigger chip targets, breathable spacing. */
+  .session-list__workspace-bar {
+    padding: 6px 0 10px;
+    margin-bottom: 4px;
+  }
+  .session-list__workspace-bar .segmented-control__segment {
+    min-height: 36px;
+    padding: 6px 14px;
+    font-size: 13px;
+  }
+
+  /* Project disclosure header: WCAG 2.5.5 44px floor + larger label. */
+  .session-list__project-header {
+    min-height: 44px;
+    padding: 10px 10px;
+    font-size: 14px;
+    border-radius: 10px;
+  }
+  .session-list__project-chevron {
+    width: 16px;
+    font-size: 12px;
+  }
+  .session-list__project-count {
+    min-width: 22px;
+    padding: 2px 8px;
+    font-size: 12px;
+  }
+
+  /* Each session row: keep 44px hit area, lift title to readable size, and
+     pull tags below at a stable cap-height so a row never visually collapses
+     to a thin strip when content is short. */
+  .session-list .unified-listbox__option {
+    min-height: 56px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    padding-left: 12px;
+    padding-right: 12px;
+    border-radius: 10px;
+    align-items: center;
+  }
+  .session-list__title {
+    font-size: 15px;
+    line-height: 1.35;
+  }
+  .session-list__driver {
+    font-size: 11px;
+    padding: 2px 8px;
+  }
+  .session-list__tag,
+  .session-list__badge {
+    font-size: 11.5px;
+    padding: 1px 7px;
+    line-height: 1.55;
+  }
+
+  /* Stronger committed-active surface so the user can locate the open
+     session at a glance once the drawer animates in. */
+  .session-list .unified-listbox__option:has(.session-list__row--active) {
+    background: var(--surface-row-selected);
+    box-shadow: inset 0 0 0 1px rgba(74, 158, 255, 0.35);
+  }
+  .session-list .unified-listbox__option:has(.session-list__row--active)::before {
+    left: 4px;
+    top: 10px;
+    bottom: 10px;
+    width: 3px;
+  }
 }

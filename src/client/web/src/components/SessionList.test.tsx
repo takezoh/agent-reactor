@@ -914,10 +914,15 @@ describe("SessionList listbox a11y (FR-TOKEN-002)", () => {
     const { container } = render(<SessionList conn={fakeConn} />);
     const listbox = container.querySelector('[role="listbox"]');
     expect(listbox).not.toBeNull();
-    expect(listbox?.getAttribute("aria-activedescendant")).toBe("s1");
+    // The listbox uses a per-instance id scope (useId) so two listboxes can
+    // coexist without DOM-id collisions; the option's data-item-id retains
+    // the logical session id.
+    const opt = (id: string) =>
+      container.querySelector<HTMLElement>(`[role="option"][data-item-id="${id}"]`);
+    expect(listbox?.getAttribute("aria-activedescendant")).toBe(opt("s1")?.id);
     if (listbox) fireEvent.keyDown(listbox, { key: "ArrowDown" });
     expect(useDaemonStore.getState().activeSessionID).toBe("s1");
-    expect(listbox?.getAttribute("aria-activedescendant")).toBe("s2");
+    expect(listbox?.getAttribute("aria-activedescendant")).toBe(opt("s2")?.id);
   });
 
   it("Enter key activates the cursor session and calls selectSession", () => {

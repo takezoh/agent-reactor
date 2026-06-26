@@ -95,8 +95,8 @@ describe("UnifiedListbox — FR-TOKEN-002: disabled row visibility", () => {
 
   it("disabled rows carry aria-disabled='true' (FR-TOKEN-002)", () => {
     const { options } = renderListbox();
-    const item2 = options().find((o) => o.id === "item2");
-    const item4 = options().find((o) => o.id === "item4");
+    const item2 = options().find((o) => o.dataset.itemId === "item2");
+    const item4 = options().find((o) => o.dataset.itemId === "item4");
     expect(item2?.getAttribute("aria-disabled")).toBe("true");
     expect(item4?.getAttribute("aria-disabled")).toBe("true");
   });
@@ -112,8 +112,8 @@ describe("UnifiedListbox — FR-TOKEN-002: disabled row visibility", () => {
 
   it("disabled rows contain reason text node child (UAC-009 / UAC-011)", () => {
     const { options } = renderListbox();
-    const item2 = options().find((o) => o.id === "item2");
-    const item4 = options().find((o) => o.id === "item4");
+    const item2 = options().find((o) => o.dataset.itemId === "item2");
+    const item4 = options().find((o) => o.dataset.itemId === "item4");
     const reason2 = item2?.querySelector(".unified-listbox__option-reason");
     const reason4 = item4?.querySelector(".unified-listbox__option-reason");
     expect(reason2).not.toBeNull();
@@ -122,9 +122,14 @@ describe("UnifiedListbox — FR-TOKEN-002: disabled row visibility", () => {
     expect(reason4?.textContent).toBe("Requires session");
   });
 
-  it("aria-activedescendant equals activeId (enabled item only)", () => {
-    const { listbox } = renderListbox({ activeId: "item1" });
-    expect(listbox.getAttribute("aria-activedescendant")).toBe("item1");
+  // aria-activedescendant now carries a per-instance prefix (useId) so two
+  // listboxes can coexist in the same document without colliding DOM ids;
+  // the value still ends with the logical item id (item1 here).
+  it("aria-activedescendant resolves to the activeId's option DOM id", () => {
+    const { listbox, options } = renderListbox({ activeId: "item1" });
+    const item1 = options().find((o) => o.dataset.itemId === "item1");
+    expect(item1).toBeDefined();
+    expect(listbox.getAttribute("aria-activedescendant")).toBe(item1?.id);
   });
 
   it("aria-activedescendant does not point to disabled item when activeId is null", () => {
@@ -329,23 +334,64 @@ describe("UnifiedListbox — FR-PALETTE-IME-001: IME suppression", () => {
 // ---------------------------------------------------------------------------
 
 describe("UnifiedListbox — ARIA sync", () => {
-  it("aria-activedescendant on listbox matches activeId", () => {
-    const { listbox } = renderListbox({ activeId: "item3" });
-    expect(listbox.getAttribute("aria-activedescendant")).toBe("item3");
+  it("aria-activedescendant on listbox matches activeId's scoped DOM id", () => {
+    const { listbox, options } = renderListbox({ activeId: "item3" });
+    const item3 = options().find((o) => o.dataset.itemId === "item3");
+    expect(item3).toBeDefined();
+    expect(listbox.getAttribute("aria-activedescendant")).toBe(item3?.id);
   });
 
   it("each option's aria-selected is true only for activeId", () => {
     const { options } = renderListbox({ activeId: "item3" });
     for (const opt of options()) {
-      const expected = opt.id === "item3" ? "true" : "false";
+      const expected = opt.dataset.itemId === "item3" ? "true" : "false";
       expect(opt.getAttribute("aria-selected")).toBe(expected);
     }
   });
 
-  it("option id attribute matches item.id", () => {
+  // data-item-id retains the logical id; the DOM id is now per-instance
+  // scoped via useId so two listboxes can coexist without collision.
+  it("data-item-id preserves the logical item id; DOM id is scoped to the instance", () => {
     const { options } = renderListbox();
-    const ids = options().map((o) => o.id);
-    expect(ids).toEqual(["item1", "item2", "item3", "item4", "item5"]);
+    const dataIds = options().map((o) => o.dataset.itemId);
+    expect(dataIds).toEqual(["item1", "item2", "item3", "item4", "item5"]);
+    const domIds = options().map((o) => o.id);
+    // every DOM id must end with the matching logical id, and all must share
+    // a common prefix (the per-instance useId scope).
+    for (let i = 0; i < domIds.length; i++) {
+      expect(domIds[i]).toMatch(new RegExp(`-${dataIds[i]}$`));
+    }
+    const prefixes = domIds.map((s) => s.replace(/-item\d+$/, ""));
+    expect(new Set(prefixes).size).toBe(1);
+  });
+
+  // Regression: two listboxes mounted in the same document MUST NOT emit
+  // duplicate element ids. This is the bug behind "session list taps don't
+  // respond" when SessionList is rendered both in the desktop sidebar and
+  // inside SessionDrawer on a narrow viewport.
+  it("two instances in one document do not collide on DOM ids", () => {
+    const utils = render(
+      <>
+        <UnifiedListbox
+          ariaLabel="A"
+          items={FIVE_ITEMS}
+          activeId="item1"
+          onActiveChange={() => {}}
+          onActivate={() => {}}
+        />
+        <UnifiedListbox
+          ariaLabel="B"
+          items={FIVE_ITEMS}
+          activeId="item1"
+          onActiveChange={() => {}}
+          onActivate={() => {}}
+        />
+      </>,
+    );
+    const allOpts = Array.from(utils.container.querySelectorAll('[role="option"]'));
+    const ids = allOpts.map((el) => (el as HTMLElement).id);
+    expect(ids.length).toBe(10);
+    expect(new Set(ids).size).toBe(10);
   });
 });
 

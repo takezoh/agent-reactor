@@ -156,7 +156,53 @@ body {
 
 /* ─── NotificationToast (FR-TOAST-001 / FR-TOAST-002 / FR-TOAST-003) ───── */
 
-/* Desktop (>=768px): top-right fixed — legacy layout preserved */
+/* UndoSnackbar slot: no visual output — purely a DOM landmark for FR-TOAST-003 */
+.notification-toast__undosnackbar-slot {
+  display: contents;
+}
+
+/* Toast item base — flex container so the level glyph sits beside the text.
+   Background still set by type modifier (no inline color, FR-TOAST-002).
+   Border-radius lifted to 14px to read as "card" not "banner"; the heavier
+   shadow + 1px inset highlight give the surface depth against the terminal
+   backdrop without depending on backdrop-filter (kept as an opt-in below).
+   This rule must remain the first selector of its kind in the file so the
+   FR-A11Y-001 CSS-source test in NotificationToast.test.tsx finds the
+   min-height/min-width contract on the first match. */
+.notification-toast__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  color: var(--fg);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 12px 14px;
+  cursor: pointer;
+  min-width: 240px;
+  max-width: 360px;
+  /* FR-A11Y-001 (m1): each toast item is the dismiss target on tap, so it
+     must meet WCAG 2.5.5 (44x44 minimum) — the existing 240px width already
+     satisfies width, but height needs an explicit floor for short messages. */
+  min-height: 44px;
+  box-shadow: 0 18px 36px -16px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.32), inset 0 1px 0
+    rgba(255, 255, 255, 0.05);
+  word-break: break-word;
+  position: relative;
+  overflow: hidden;
+  transform-origin: center;
+  transition: transform 140ms ease-out, box-shadow 140ms ease-out;
+}
+.notification-toast__item:active {
+  transform: scale(0.985);
+  box-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.55), 0 1px 3px rgba(0, 0, 0, 0.32), inset 0 1px 0
+    rgba(255, 255, 255, 0.05);
+}
+
+/* Container layout — desktop (>=768px): top-right fixed; mobile (<768px):
+   bottom-aligned with safe-area inset (FR-TOAST-002). The mobile container
+   is pointer-events:none so the user can still touch the terminal area
+   behind it; only the card surfaces themselves accept taps (re-enabled
+   below). */
 @media (min-width: 768px) {
   .notification-toast {
     position: fixed;
@@ -166,48 +212,66 @@ body {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
+    gap: 10px;
   }
 }
-
-/* Mobile (<768px): bottom-aligned with safe-area inset (FR-TOAST-002) */
 @media (max-width: 767px) {
   .notification-toast {
     position: fixed;
     bottom: calc(env(safe-area-inset-bottom) + 16px);
-    left: 16px;
-    right: 16px;
+    left: 12px;
+    right: 12px;
     z-index: 9999;
     display: flex;
-    flex-direction: column;
+    flex-direction: column-reverse;
     align-items: stretch;
+    gap: 10px;
+    pointer-events: none;
+  }
+  .notification-toast > .notification-toast__item {
+    pointer-events: auto;
   }
 }
 
-/* UndoSnackbar slot: no visual output — purely a DOM landmark for FR-TOAST-003 */
-.notification-toast__undosnackbar-slot {
-  display: contents;
+/* Enter animation — slide up + fade in on mobile, slide in from the right
+   on desktop. Both keep the toast subtle so it never steals focus from the
+   terminal. ADR-0064 reduced-motion guard at the bottom of view.css
+   suppresses these. */
+@media (max-width: 767px) {
+  .notification-toast__item {
+    animation: notification-toast-slide-up 260ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  }
+}
+@media (min-width: 768px) {
+  .notification-toast__item {
+    animation: notification-toast-slide-right 200ms ease-out both;
+  }
+}
+@keyframes notification-toast-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes notification-toast-slide-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
-/* Toast item base styles — background set by type modifier (no inline color) */
-.notification-toast__item {
-  display: block;
-  color: var(--fg);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 10px 14px;
-  margin-bottom: 8px;
-  cursor: pointer;
-  min-width: 240px;
-  max-width: 360px;
-  /* FR-A11Y-001 (m1): each toast item is the dismiss target on tap, so it
-     must meet WCAG 2.5.5 (44x44 minimum) — the existing 240px width already
-     satisfies width, but height needs an explicit floor for short messages. */
-  min-height: 44px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  word-break: break-word;
-}
-
-/* Type modifiers: background from --toast-bg-* tokens (FR-TOAST-002) */
+/* Type modifiers: background from --toast-bg-* tokens (FR-TOAST-002).
+   On supporting browsers an additional translucent + backdrop-blur layer
+   turns the card into "glass" so it sits cleanly over a busy terminal. The
+   solid token remains for browsers without backdrop-filter support. */
 .notification-toast__item--info {
   background: var(--toast-bg-info);
 }
@@ -220,14 +284,76 @@ body {
 .notification-toast__item--error {
   background: var(--toast-bg-error);
 }
+@supports ((backdrop-filter: blur(8px)) or (-webkit-backdrop-filter: blur(8px))) {
+  .notification-toast__item {
+    -webkit-backdrop-filter: saturate(160%) blur(14px);
+    backdrop-filter: saturate(160%) blur(14px);
+  }
+  .notification-toast__item--info {
+    background: linear-gradient(140deg, rgba(74, 158, 255, 0.32), rgba(26, 58, 92, 0.78));
+  }
+  .notification-toast__item--success {
+    background: linear-gradient(140deg, rgba(76, 197, 134, 0.32), rgba(26, 61, 43, 0.78));
+  }
+  .notification-toast__item--warn {
+    background: linear-gradient(140deg, rgba(240, 193, 75, 0.32), rgba(61, 46, 0, 0.78));
+  }
+  .notification-toast__item--error {
+    background: linear-gradient(140deg, rgba(255, 107, 107, 0.32), rgba(61, 26, 26, 0.82));
+  }
+}
 
+/* Leading glyph — a small color-tinted circle that signals level at a
+   glance. The slot is aria-hidden in the component, so it's pure
+   decoration; the message text is what the SR reads. */
+.notification-toast__item-icon {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: ui-monospace, monospace;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--fg);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+.notification-toast__item--info .notification-toast__item-icon {
+  background: rgba(137, 220, 235, 0.28);
+}
+.notification-toast__item--success .notification-toast__item-icon {
+  background: rgba(166, 227, 161, 0.32);
+}
+.notification-toast__item--warn .notification-toast__item-icon {
+  background: rgba(250, 179, 135, 0.32);
+}
+.notification-toast__item--error .notification-toast__item-icon {
+  background: rgba(255, 107, 107, 0.34);
+}
+
+.notification-toast__item-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 .notification-toast__item-title {
   font-weight: 600;
-  margin-bottom: 2px;
+  font-size: 0.95em;
+  letter-spacing: 0.01em;
 }
 .notification-toast__item-body {
-  font-size: 0.875em;
-  opacity: 0.8;
+  font-size: 0.85em;
+  opacity: 0.82;
+  line-height: 1.4;
+}
+.notification-toast__item-message {
+  font-size: 0.92em;
+  line-height: 1.4;
 }
 
 /* UndoSnackbar styles are in snackbar.css (imported separately to keep
