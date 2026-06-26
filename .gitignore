@@ -24,6 +24,12 @@ arc.log
 go.work
 go.work.sum
 
+# Node / web client build cache (root-level — created when running npm/pnpm/vite
+# from the repo root instead of src/client/web/). Sources live under src/client/
+# web/ where the package.json is; nothing at repo root needs tracking.
+node_modules/
+.pnpm-store/
+
 # Local tooling / editor / shell / agent configuration — not project-shared.
 .claude/
 .codex
