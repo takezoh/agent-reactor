@@ -29,6 +29,7 @@ import {
   useDaemonStore,
 } from "../store/daemon";
 import type { Card, SessionInfo } from "../wire/server";
+import { StatusIcon, normalizeStatus as toStatusKind } from "./StatusIcon";
 import { SegmentedControl } from "./primitives/SegmentedControl";
 import { TagPill } from "./primitives/TagPill";
 import { UnifiedListbox } from "./primitives/UnifiedListbox";
@@ -61,15 +62,13 @@ export function displayLabel(card: Card, _id: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Status helpers (ADR-0032)
+// Status helpers (ADR-0078, supersedes ADR-0032)
 // ---------------------------------------------------------------------------
-
-const KNOWN = new Set(["running", "waiting", "idle", "stopped", "pending"]);
-const ACTIVE = new Set(["running", "waiting"]);
-
-function normalizeStatus(status?: string): string {
-  return status && KNOWN.has(status) ? status : "unknown";
-}
+//
+// Status narrowing lives in StatusIcon (toStatusKind). The legacy
+// .session-status-spinner element appears for active states (running /
+// waiting) only — see StatusIcon.activeClass — preserving the ADR-0032
+// DOM contract while every status now renders a visible icon.
 
 // ---------------------------------------------------------------------------
 // SessionRow — one row rendered inside UnifiedListbox as label prop
@@ -95,8 +94,7 @@ interface SessionRowProps {
 function SessionRow({ session, isActive }: SessionRowProps) {
   const card = session.view.card;
   const status = session.view.status;
-  const normalized = normalizeStatus(status);
-  const activeRun = ACTIVE.has(normalized);
+  const normalized = toStatusKind(status);
   const title = titleText(card);
   const subtitle = subtitleText(card);
 
@@ -125,7 +123,11 @@ function SessionRow({ session, isActive }: SessionRowProps) {
         aria-label={`status: ${normalized}`}
         title={normalized}
       >
-        {activeRun && <span className="session-status-spinner" aria-hidden="true" />}
+        <StatusIcon
+          status={normalized}
+          activeClass="session-status-spinner"
+          inactiveClass="session-status-icon"
+        />
       </span>
       <div className="session-list__content">
         <div className="session-list__title-row">

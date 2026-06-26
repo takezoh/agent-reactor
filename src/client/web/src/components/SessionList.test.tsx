@@ -283,7 +283,7 @@ describe("SessionList status indicator", () => {
   });
 
   it.each(["idle", "stopped", "pending", undefined] as (string | undefined)[])(
-    "renders NO spinner for inactive status=%s",
+    "renders NO spinner for inactive status=%s (legacy ADR-0032 contract)",
     (status) => {
       useDaemonStore.setState({
         sessions: [
@@ -298,6 +298,49 @@ describe("SessionList status indicator", () => {
       });
       const { container } = render(<SessionList conn={fakeConn} />);
       expect(container.querySelectorAll(".session-status-spinner").length).toBe(0);
+    },
+  );
+
+  // ADR-0078 (supersedes ADR-0032 inactive-empty rule): every status renders
+  // a StatusIcon. Inactive states use .session-status-icon (no animation
+  // class), keeping the layout slot occupied so titles never jitter.
+  it.each(["running", "waiting", "idle", "stopped", "pending", undefined] as (
+    | string
+    | undefined
+  )[])("ADR-0078: every status=%s renders exactly one .status-icon in its slot", (status) => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "p",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const slot = container.querySelector(".session-status-slot");
+    expect(slot).not.toBeNull();
+    expect(slot?.querySelectorAll(".status-icon").length).toBe(1);
+  });
+
+  it.each(["idle", "stopped", "pending", undefined] as (string | undefined)[])(
+    "inactive status=%s carries .session-status-icon (not spinner)",
+    (status) => {
+      useDaemonStore.setState({
+        sessions: [
+          {
+            id: "s1",
+            project: "p",
+            command: "claude",
+            created_at: "2026-06-20T00:00:00Z",
+            view: { card: { title: "alpha" }, status },
+          },
+        ],
+      });
+      const { container } = render(<SessionList conn={fakeConn} />);
+      expect(container.querySelectorAll(".session-status-icon").length).toBe(1);
     },
   );
 

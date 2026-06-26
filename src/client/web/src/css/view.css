@@ -1,22 +1,9 @@
 /* view.css — component styles for RunStateBadge, DriverViewPanel, LogTabSelector */
 
 /* ─── RunStateBadge ─────────────────────────────────────────────────────── */
-.run-state-spinner {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border: 2px solid currentColor;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: run-state-spin 0.8s linear infinite;
-  margin-right: 4px;
-}
-
-@keyframes run-state-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+/* ADR-0078: spinner / inactive-icon visuals live in status-icon.css. The
+   .run-state-spinner / .run-state-icon classes here are layout-only hooks
+   (size + right-margin) so the SVG sits inline with the status text. */
 
 .run-state-badge {
   display: inline-block;
@@ -51,9 +38,11 @@
   color: var(--fg-muted);
 }
 
-/* ─── SessionList status slot (compact, spinner-only) ────────────────────── */
-/* 1em 幅の固定スロット。active 時のみ Spinner が描画され、inactive 時は
-   位置が動かないよう空のスロットが残る (タイトル位置のジッタ防止)。 */
+/* ─── SessionList status slot (per-status icon) ─────────────────────────── */
+/* ADR-0078: 1em 固定スロット。全 status で StatusIcon が描画されるため
+   位置ジッタは構造的に発生しない。active (running / waiting) のみ
+   .session-status-spinner 互換 class を持ち、ADR-0032 の DOM contract を
+   後方互換に保つ。 */
 .session-status-slot {
   display: inline-block;
   width: 1em;
@@ -61,15 +50,12 @@
   flex-shrink: 0;
   margin-top: 0.2em;
 }
-.session-status-spinner {
+.session-status-spinner,
+.session-status-icon {
   display: block;
   width: 100%;
   height: 100%;
   box-sizing: border-box;
-  border: 2px solid currentColor;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: run-state-spin 0.8s linear infinite;
 }
 .session-status-running {
   color: var(--session-status-running);
@@ -403,9 +389,16 @@
    here. Other CSS files (shell.css, snackbar.css, app.css) must NOT contain
    a prefers-reduced-motion media query — this file is the canonical location. */
 @media (prefers-reduced-motion: reduce) {
-  /* Spinners: RunStateBadge + SessionList compact spinner */
+  /* StatusIcon (ADR-0078): all animated status variants stop in place.
+     The .run-state-spinner / .session-status-spinner selectors are kept
+     for ADR-0064 documentation continuity — they remain valid hooks since
+     active StatusIcons still carry those classes via activeClass. */
   .run-state-spinner,
-  .session-status-spinner {
+  .session-status-spinner,
+  .status-icon--running,
+  .status-icon--pending,
+  .status-icon--waiting .status-icon__dot,
+  .status-icon--idle .status-icon__filled {
     animation: none !important;
   }
 

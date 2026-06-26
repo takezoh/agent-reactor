@@ -21,23 +21,54 @@ describe("RunStateBadge", () => {
     },
   );
 
-  // FR-009: running and waiting render aria-hidden spinner
+  // FR-009 (ADR-0078): all statuses render exactly one .status-icon — the
+  // visual differs per status but the slot is always populated.
+  it.each(["running", "waiting", "idle", "stopped", "pending", undefined] as (
+    | string
+    | undefined
+  )[])("status=%s renders one .status-icon", (status) => {
+    const { container } = render(<RunStateBadge status={status} />);
+    const icons = container.querySelectorAll(".status-icon");
+    expect(icons.length).toBe(1);
+  });
+
+  // FR-009 (ADR-0078): active states keep the legacy .run-state-spinner
+  // contract class so existing DOM queries continue to find them.
   it.each(["running", "waiting"] as string[])(
-    "active status=%s renders one aria-hidden .run-state-spinner",
+    "active status=%s carries .run-state-spinner on its icon",
     (status) => {
       const { container } = render(<RunStateBadge status={status} />);
-      const spinners = container.querySelectorAll("[aria-hidden=true].run-state-spinner");
+      const spinners = container.querySelectorAll(".run-state-spinner");
       expect(spinners.length).toBe(1);
     },
   );
 
-  // FR-009 negative: idle / stopped / pending / unknown render no spinner
+  // FR-009 (ADR-0078): inactive states never carry .run-state-spinner
+  // (they get .run-state-icon instead).
   it.each(["idle", "stopped", "pending", undefined] as (string | undefined)[])(
-    "inactive status=%s renders no .run-state-spinner",
+    "inactive status=%s carries .run-state-icon (not .run-state-spinner)",
     (status) => {
       const { container } = render(<RunStateBadge status={status} />);
-      const spinners = container.querySelectorAll(".run-state-spinner");
-      expect(spinners.length).toBe(0);
+      expect(container.querySelectorAll(".run-state-spinner").length).toBe(0);
+      expect(container.querySelectorAll(".run-state-icon").length).toBe(1);
+    },
+  );
+
+  // ADR-0078: every variant has a matching .status-icon--<kind> modifier
+  // so CSS can target it for per-status visuals.
+  it.each([
+    ["running", "status-icon--running"],
+    ["waiting", "status-icon--waiting"],
+    ["idle", "status-icon--idle"],
+    ["stopped", "status-icon--stopped"],
+    ["pending", "status-icon--pending"],
+    [undefined, "status-icon--unknown"],
+  ] as [string | undefined, string][])(
+    "status=%s renders .status-icon with modifier %s",
+    (status, modifier) => {
+      const { container } = render(<RunStateBadge status={status} />);
+      const icon = container.querySelector(`.status-icon.${modifier}`);
+      expect(icon).not.toBeNull();
     },
   );
 });
