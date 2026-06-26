@@ -1,6 +1,6 @@
 # ADR 0033 — セッションラベルのフォールバック空判定を undefined / 空文字の両方とし規約統一 (Web UI 問題6)
 
-Status: Accepted
+Status: Superseded by [ADR-0076](0076-session-card-title-subtitle-two-slot.md)
 
 Related: [spec](../specs/2026-06-24-web-ui-fixes/spec.md), [plan](../specs/2026-06-24-web-ui-fixes/plan.md)
 Related requirements: FR-011, FR-012

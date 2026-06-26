@@ -204,10 +204,10 @@
 }
 
 /* Title row: title (truncating) + optional colored driver chip pinned to the
-   top-right. `subtitle` is the *fallback* for an empty title via displayLabel
-   (ADR-0033), so the row never shows both at the same time. The driver chip's
-   bg/fg are inlined via `style` — colors come from lib/driverColor.ts (parity
-   with Go's driver/tags.go). */
+   top-right. Subtitle has its own row below (ADR-0076, complementary slots —
+   no longer a title fallback). The driver chip's bg/fg are inlined via
+   `style` — colors come from lib/driverColor.ts (parity with Go's
+   driver/tags.go). */
 .session-list__title-row {
   display: flex;
   align-items: flex-start;
@@ -221,6 +221,18 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
+}
+/* Subtitle row (ADR-0076). Width-capped at ~25 characters via max-width: 25ch.
+   The full string stays in the DOM (no JS truncation) so copy / find / screen
+   readers see the original text; the visual ellipsis is purely cosmetic. */
+.session-list__subtitle {
+  max-width: 25ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  opacity: 0.65;
+  line-height: 1.3;
 }
 .session-list__driver {
   flex-shrink: 0;
@@ -261,6 +273,16 @@
   border-radius: 3px;
   border: 1px solid var(--hairline);
   color: var(--fg-muted);
+}
+
+/* ADR-0076: content-header title / subtitle width clamp. Co-located here so
+   view.css stays under its 500-line cap; the cascade order is unaffected. */
+.driver-view-title,
+.driver-view-subtitle {
+  max-width: 100ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ─── Mobile (<768px) overrides ─────────────────────────────────────────────

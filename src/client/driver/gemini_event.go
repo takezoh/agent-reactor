@@ -120,7 +120,7 @@ func (d GeminiDriver) handleGeminiHookEvent(gs GeminiState, hp geminiHookPayload
 		gs.LastPrompt = strings.TrimSpace(hp.Prompt)
 		gs.Status = state.StatusRunning
 		gs.StatusChangedAt = statusTime(e.Timestamp, gs.StatusChangedAt)
-		turns := recentUserTurns(appendHookPromptTurn(gs.RecentTurns, hp.Prompt), 2)
+		turns := userOnlyTurns(appendHookPromptTurn(gs.RecentTurns, hp.Prompt), 2)
 		effs, gs.SummaryInFlight = enqueueSummaryJob(effs, gs.SummaryInFlight, formatSummaryPrompt(gs.Summary, turns))
 	case "BeforeTool":
 		gs.CurrentTool = strings.TrimSpace(hp.ToolName)

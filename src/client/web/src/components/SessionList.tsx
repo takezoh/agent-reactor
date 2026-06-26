@@ -11,7 +11,7 @@
 //     active-session highlight never drifts to a different project.
 //
 // ADRs retained:
-//   - ADR-0033 (displayLabel chain: title → subtitle → id)
+//   - ADR-0076 (2-slot Title + Subtitle, "New Session" placeholder, supersedes 0033)
 //   - ADR-0032 (session-status-slot + session-status-spinner kept)
 //   - ADR-0030 (conn prop retained for API compat; SessionList does not own
 //     subscriptions — TerminalPane owns them)
@@ -34,15 +34,30 @@ import { TagPill } from "./primitives/TagPill";
 import { UnifiedListbox } from "./primitives/UnifiedListbox";
 
 // ---------------------------------------------------------------------------
-// displayLabel (ADR-0033: title → subtitle → id chain)
+// Title / Subtitle slot policy (ADR-0076)
+//
+// The session ID is NEVER rendered as user-visible text — operators do not
+// need to read it to identify a session. When both Title and Subtitle are
+// empty the Title slot falls back to TITLE_PLACEHOLDER; the Subtitle row
+// is hidden entirely when there is nothing to show.
 // ---------------------------------------------------------------------------
 
-export function displayLabel(card: Card, id: string): string {
-  const t = card.title?.trim();
-  if (t) return t;
-  const s = card.subtitle?.trim();
-  if (s) return s;
-  return id;
+export const TITLE_PLACEHOLDER = "New Session";
+
+export function titleText(card: Card): string {
+  return card.title?.trim() || TITLE_PLACEHOLDER;
+}
+
+export function subtitleText(card: Card): string {
+  return card.subtitle?.trim() ?? "";
+}
+
+/**
+ * @deprecated Use {@link titleText} / {@link subtitleText} directly. Kept
+ * only for tests that still target the legacy 1-slot chain.
+ */
+export function displayLabel(card: Card, _id: string): string {
+  return titleText(card);
 }
 
 // ---------------------------------------------------------------------------
@@ -60,15 +75,17 @@ function normalizeStatus(status?: string): string {
 // SessionRow — one row rendered inside UnifiedListbox as label prop
 // ---------------------------------------------------------------------------
 //
-// Card layout (modernization — driver inlined into title row):
+// Card layout (ADR-0076 — Title + Subtitle as complementary slots):
 //
-//   ┃ ● <title or subtitle>           [driver]
+//   ┃ ● <title or "New Session">      [driver]
+//   ┃   <subtitle (CSS-clamped to ≈25ch, ellipsis)>
 //   ┃   [tag] [tag]  <border_badge>
 //
-// `subtitle` is only used as the title fallback via displayLabel (ADR-0033 chain
-// title → subtitle → id); we never render BOTH title and subtitle — they are
-// alternatives, not complements. So the per-card meta row collapses to a single
-// optional element: the driver chip, which lives on the title row itself.
+// Title is always shown (with TITLE_PLACEHOLDER fallback). Subtitle is a
+// separate row, rendered only when non-empty. Width clamping happens in
+// CSS (max-width + text-overflow: ellipsis) so the full string stays in
+// the DOM — copy/find/screen-readers all see the original text. The Go
+// driver layer also caps the raw value at 30 code-points as a backstop.
 
 interface SessionRowProps {
   session: SessionInfo;
@@ -80,7 +97,8 @@ function SessionRow({ session, isActive }: SessionRowProps) {
   const status = session.view.status;
   const normalized = normalizeStatus(status);
   const activeRun = ACTIVE.has(normalized);
-  const label = displayLabel(card, session.id);
+  const title = titleText(card);
+  const subtitle = subtitleText(card);
 
   const driver = session.root_driver?.trim() || undefined;
   // Memoize the chip style by driver name so the {backgroundColor, color}
@@ -100,6 +118,7 @@ function SessionRow({ session, isActive }: SessionRowProps) {
       className={["session-list__row", isActive ? "session-list__row--active" : ""]
         .filter(Boolean)
         .join(" ")}
+      data-session-id={session.id}
     >
       <span
         className={`session-status-slot session-status-${normalized}`}
@@ -110,7 +129,7 @@ function SessionRow({ session, isActive }: SessionRowProps) {
       </span>
       <div className="session-list__content">
         <div className="session-list__title-row">
-          <span className="session-list__title title">{label}</span>
+          <span className="session-list__title title">{title}</span>
           {driver && (
             <span
               className="session-list__driver"
@@ -122,6 +141,7 @@ function SessionRow({ session, isActive }: SessionRowProps) {
             </span>
           )}
         </div>
+        {subtitle && <div className="session-list__subtitle">{subtitle}</div>}
         {showTags && (
           <div className="session-list__tags" aria-label="session tags">
             {tags.map((t, i) => (

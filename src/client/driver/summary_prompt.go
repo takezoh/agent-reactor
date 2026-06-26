@@ -19,41 +19,57 @@ func appendHookPromptTurn(turns []SummaryTurn, hookPrompt string) []SummaryTurn 
 	return append(turns, SummaryTurn{Role: "user", Text: hookPrompt})
 }
 
-func recentUserTurns(turns []SummaryTurn, userTurns int) []SummaryTurn {
-	if userTurns <= 0 || len(turns) == 0 {
+// userOnlyTurns returns the most recent n turns whose Role == "user", in
+// chronological order. Assistant, tool, and system turns are filtered out
+// entirely — the summarizer must see ONLY user inputs (the session card's
+// Subtitle is meant to reflect user intent, not model output).
+func userOnlyTurns(turns []SummaryTurn, n int) []SummaryTurn {
+	if n <= 0 || len(turns) == 0 {
 		return nil
 	}
-	start := 0
-	seen := 0
-	for i := len(turns) - 1; i >= 0; i-- {
+	out := make([]SummaryTurn, 0, n)
+	for i := len(turns) - 1; i >= 0 && len(out) < n; i-- {
 		if turns[i].Role == "user" {
-			seen++
-			if seen >= userTurns {
-				start = i
-				break
-			}
+			out = append(out, turns[i])
 		}
 	}
-	out := make([]SummaryTurn, len(turns)-start)
-	copy(out, turns[start:])
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
 	return out
 }
 
 func formatSummaryPrompt(prev string, turns []SummaryTurn) string {
 	var b strings.Builder
-	b.WriteString("You are a session summarizer. From the conversation history and previous summary below, ")
-	b.WriteString("summarize the work or goal of this AI coding session ")
-	b.WriteString("into a single concise line (~30 characters). ")
+	b.WriteString("You are a session summarizer. From the user inputs and previous summary below, ")
+	b.WriteString("summarize the work or goal the user is driving in this AI coding session ")
+	b.WriteString("into a single concise line (about 25 characters). ")
+	b.WriteString("Use ONLY the user inputs below; never summarize assistant outputs, tool results, ")
+	b.WriteString("or any non-user content. ")
 	b.WriteString("Return only the body text, no headings, decoration, preamble, or quotes.\n\n")
 	if prev != "" {
 		b.WriteString("<previous_summary>\n")
 		b.WriteString(prev)
 		b.WriteString("\n</previous_summary>\n\n")
 	}
-	b.WriteString("<recent_turns>\n")
+	b.WriteString("<user_inputs>\n")
 	b.WriteString(renderRecentTurns(turns))
-	b.WriteString("</recent_turns>\n")
+	b.WriteString("</user_inputs>\n")
 	return b.String()
+}
+
+// clampGraphemes truncates s to at most n Unicode code points, appending "…"
+// when truncation actually occurred. Used as a defense-in-depth backstop in
+// case the LLM ignores the length instruction in formatSummaryPrompt.
+func clampGraphemes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 func renderRecentTurns(turns []SummaryTurn) string {

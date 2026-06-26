@@ -28,7 +28,7 @@ func (d CodexDriver) view(cs CodexState) state.View {
 	return state.View{
 		Card: state.Card{
 			Title:       cs.Title,
-			Subtitle:    firstNonEmpty(cs.Summary, cs.LastPrompt, cs.LastAssistantMessage),
+			Subtitle:    firstNonEmpty(cs.Summary, cs.LastPrompt),
 			Tags:        tags,
 			BorderTitle: CodexCommandTag(),
 			BorderBadge: fishpath.Shorten(cs.StartDir, ""),

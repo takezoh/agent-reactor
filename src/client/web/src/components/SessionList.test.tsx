@@ -3,59 +3,80 @@ import * as path from "node:path";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useDaemonStore } from "../store/daemon";
-import { SessionList, displayLabel } from "./SessionList";
+import {
+  SessionList,
+  TITLE_PLACEHOLDER,
+  displayLabel,
+  subtitleText,
+  titleText,
+} from "./SessionList";
 
 const fakeConn = {
   subscribe: vi.fn(async () => {}),
   unsubscribe: vi.fn(async () => {}),
 } as unknown as import("../socket/connection").Connection;
 
-describe("displayLabel", () => {
-  it("FR-011: returns title when title is present", () => {
+// ─── titleText / subtitleText (ADR-0076) ───────────────────────────────────
+describe("titleText", () => {
+  it("returns trimmed card.title when present", () => {
+    expect(titleText({ title: "My Session" })).toBe("My Session");
+    expect(titleText({ title: "  trimmed  " })).toBe("trimmed");
+  });
+
+  it("falls back to TITLE_PLACEHOLDER when title is empty / missing / whitespace", () => {
+    expect(titleText({})).toBe(TITLE_PLACEHOLDER);
+    expect(titleText({ title: "" })).toBe(TITLE_PLACEHOLDER);
+    expect(titleText({ title: "   " })).toBe(TITLE_PLACEHOLDER);
+    expect(titleText({ title: undefined })).toBe(TITLE_PLACEHOLDER);
+  });
+
+  it("does NOT fall back to subtitle (Subtitle has its own slot now)", () => {
+    expect(titleText({ subtitle: "sub" })).toBe(TITLE_PLACEHOLDER);
+    expect(titleText({ title: "", subtitle: "sub" })).toBe(TITLE_PLACEHOLDER);
+  });
+
+  it("TITLE_PLACEHOLDER is the literal 'New Session'", () => {
+    expect(TITLE_PLACEHOLDER).toBe("New Session");
+  });
+});
+
+describe("subtitleText", () => {
+  it("returns trimmed card.subtitle when present", () => {
+    expect(subtitleText({ subtitle: "  sub  " })).toBe("sub");
+  });
+
+  it("returns empty string when subtitle is missing / empty / whitespace", () => {
+    expect(subtitleText({})).toBe("");
+    expect(subtitleText({ subtitle: "" })).toBe("");
+    expect(subtitleText({ subtitle: "   " })).toBe("");
+  });
+
+  it("never references the session id (no leakage of internal identifiers)", () => {
+    expect(subtitleText({})).not.toMatch(/^[a-z0-9-]+$/);
+  });
+});
+
+describe("displayLabel (deprecated, kept for back-compat)", () => {
+  it("returns the title slot value (equivalent to titleText)", () => {
     expect(displayLabel({ title: "My Session" }, "s1")).toBe("My Session");
+    expect(displayLabel({ subtitle: "sub" }, "s1")).toBe(TITLE_PLACEHOLDER);
+    expect(displayLabel({}, "s1")).toBe(TITLE_PLACEHOLDER);
   });
 
-  it("FR-011: returns subtitle when title is absent", () => {
-    expect(displayLabel({ subtitle: "sub" }, "s1")).toBe("sub");
-  });
-
-  it("FR-011: returns subtitle when title is empty string", () => {
-    expect(displayLabel({ title: "", subtitle: "sub" }, "s1")).toBe("sub");
-  });
-
-  it("FR-012: returns id when both title and subtitle are absent", () => {
-    expect(displayLabel({}, "s1")).toBe("s1");
-  });
-
-  it("FR-012: returns id when title is undefined and subtitle is undefined", () => {
-    expect(displayLabel({ title: undefined, subtitle: undefined }, "s1")).toBe("s1");
-  });
-
-  it("FR-012: returns id when title is empty string and subtitle is empty string", () => {
-    expect(displayLabel({ title: "", subtitle: "" }, "s1")).toBe("s1");
-  });
-
-  it("FR-012: returns id when title is whitespace-only and subtitle is whitespace-only", () => {
-    expect(displayLabel({ title: "  ", subtitle: "   " }, "s1")).toBe("s1");
-  });
-
-  it("FR-011: trims title before returning it", () => {
-    expect(displayLabel({ title: "  trimmed  " }, "s1")).toBe("trimmed");
-  });
-
-  it("FR-011: trims subtitle before returning it", () => {
-    expect(displayLabel({ title: "", subtitle: "  sub  " }, "s1")).toBe("sub");
+  it("does NOT return the id under any input (sessionID is hidden from UI now)", () => {
+    expect(displayLabel({}, "raw-id")).not.toBe("raw-id");
+    expect(displayLabel({ title: "", subtitle: "" }, "raw-id")).not.toBe("raw-id");
   });
 });
 
 // ─── SessionRow rendering (per-session card) ──────────────────────────────
-describe("SessionList rendering", () => {
+describe("SessionList rendering — 2-slot Title + Subtitle (ADR-0076)", () => {
   beforeEach(() => {
     useDaemonStore.getState().reset();
     vi.clearAllMocks();
   });
 
-  it("renders session with title via displayLabel", () => {
+  it("renders title in the title slot", () => {
     useDaemonStore.setState({
       sessions: [
         {
@@ -67,11 +88,32 @@ describe("SessionList rendering", () => {
         },
       ],
     });
-    render(<SessionList conn={fakeConn} />);
-    expect(screen.getByText("alpha")).toBeDefined();
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const title = container.querySelector(".session-list__title");
+    expect(title?.textContent).toBe("alpha");
   });
 
-  it("renders session with subtitle when title is absent", () => {
+  it("renders both title and subtitle as separate rows when both are present", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "proj",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: {
+            card: { title: "alpha", subtitle: "refactor auth" },
+            status: "running",
+          },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelector(".session-list__title")?.textContent).toBe("alpha");
+    expect(container.querySelector(".session-list__subtitle")?.textContent).toBe("refactor auth");
+  });
+
+  it("falls back to 'New Session' in the title slot when title is absent", () => {
     useDaemonStore.setState({
       sessions: [
         {
@@ -83,12 +125,13 @@ describe("SessionList rendering", () => {
         },
       ],
     });
-    render(<SessionList conn={fakeConn} />);
-    // title slot shows "my-sub" (displayLabel fallback)
-    expect(screen.getAllByText("my-sub").length).toBeGreaterThan(0);
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelector(".session-list__title")?.textContent).toBe("New Session");
+    // Subtitle still surfaces in its own slot.
+    expect(container.querySelector(".session-list__subtitle")?.textContent).toBe("my-sub");
   });
 
-  it("FR-012: renders session id when both title and subtitle are absent", () => {
+  it("shows 'New Session' and NO subtitle row when both title and subtitle are absent", () => {
     useDaemonStore.setState({
       sessions: [
         {
@@ -100,11 +143,12 @@ describe("SessionList rendering", () => {
         },
       ],
     });
-    render(<SessionList conn={fakeConn} />);
-    expect(screen.getByText("s-raw-id")).toBeDefined();
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelector(".session-list__title")?.textContent).toBe("New Session");
+    expect(container.querySelector(".session-list__subtitle")).toBeNull();
   });
 
-  it("renders session id when title and subtitle are empty strings", () => {
+  it("shows 'New Session' and NO subtitle row for empty strings", () => {
     useDaemonStore.setState({
       sessions: [
         {
@@ -116,11 +160,12 @@ describe("SessionList rendering", () => {
         },
       ],
     });
-    render(<SessionList conn={fakeConn} />);
-    expect(screen.getByText("s-empty")).toBeDefined();
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelector(".session-list__title")?.textContent).toBe("New Session");
+    expect(container.querySelector(".session-list__subtitle")).toBeNull();
   });
 
-  it("renders session id when title and subtitle are whitespace-only", () => {
+  it("shows 'New Session' for whitespace-only inputs and hides the subtitle row", () => {
     useDaemonStore.setState({
       sessions: [
         {
@@ -132,8 +177,70 @@ describe("SessionList rendering", () => {
         },
       ],
     });
-    render(<SessionList conn={fakeConn} />);
-    expect(screen.getByText("s-ws")).toBeDefined();
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelector(".session-list__title")?.textContent).toBe("New Session");
+    expect(container.querySelector(".session-list__subtitle")).toBeNull();
+  });
+
+  it("never renders the raw session id as visible text", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "very-distinct-id-9000",
+          project: "proj",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: {}, status: "idle" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.textContent).not.toMatch(/very-distinct-id-9000/);
+  });
+
+  it("exposes the session id as data-session-id for devtools / e2e only", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "tracked-id-42",
+          project: "proj",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "running" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelector(".session-list__row")?.getAttribute("data-session-id")).toBe(
+      "tracked-id-42",
+    );
+  });
+
+  it("keeps the full subtitle text in the DOM (visual clamp is CSS-only)", () => {
+    const longSubtitle = "x".repeat(60);
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "proj",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha", subtitle: longSubtitle }, status: "idle" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const subtitle = container.querySelector(".session-list__subtitle");
+    expect(subtitle?.textContent).toBe(longSubtitle);
+  });
+
+  it("session-list.css clamps subtitle width with text-overflow: ellipsis", () => {
+    const cssDir = path.resolve(__dirname, "../css");
+    const css = fs.readFileSync(path.join(cssDir, "session-list.css"), "utf-8");
+    expect(css).toContain(".session-list__subtitle");
+    expect(css).toMatch(/text-overflow:\s*ellipsis/);
+    expect(css).toMatch(/max-width:\s*25ch/);
+    expect(css).toMatch(/white-space:\s*nowrap/);
   });
 });
 
@@ -250,8 +357,6 @@ describe("SessionList status indicator", () => {
     const { container } = render(<SessionList conn={fakeConn} />);
     const row = container.querySelector(".session-list__row");
     expect(row).not.toBeNull();
-    // The session row itself contains only status slot + title (+ optional
-    // meta/tags). No status word should appear as visible text.
     expect(row?.textContent).not.toMatch(/running/);
   });
 });
@@ -280,7 +385,6 @@ describe("SessionList driver chip (inlined into title row)", () => {
     const driver = container.querySelector(".session-list__driver");
     expect(driver).not.toBeNull();
     expect(driver?.textContent).toBe("claude");
-    // Driver must live inside the title-row, sibling of the title element.
     const titleRow = container.querySelector(".session-list__title-row");
     expect(titleRow?.querySelector(".session-list__driver")).not.toBeNull();
     expect(titleRow?.querySelector(".session-list__title")).not.toBeNull();
@@ -302,7 +406,6 @@ describe("SessionList driver chip (inlined into title row)", () => {
     const { container } = render(<SessionList conn={fakeConn} />);
     const chip = container.querySelector<HTMLElement>(".session-list__driver");
     expect(chip).not.toBeNull();
-    // OpenAI green for codex.
     expect(chip?.style.backgroundColor.toLowerCase()).toBe("#10a37f");
     expect(chip?.style.color.toLowerCase()).toBe("#ffffff");
   });
@@ -323,7 +426,6 @@ describe("SessionList driver chip (inlined into title row)", () => {
     const { container } = render(<SessionList conn={fakeConn} />);
     const chip = container.querySelector<HTMLElement>(".session-list__driver");
     expect(chip).not.toBeNull();
-    // Default command-tag bg (#D97757).
     expect(chip?.style.backgroundColor.toLowerCase()).toBe("#d97757");
   });
 
@@ -343,7 +445,7 @@ describe("SessionList driver chip (inlined into title row)", () => {
     expect(container.querySelector(".session-list__driver")).toBeNull();
   });
 
-  it("does NOT render a separate meta row (driver lives inline)", () => {
+  it("does NOT render a separate legacy meta row (driver lives inline)", () => {
     useDaemonStore.setState({
       sessions: [
         {
@@ -360,24 +462,6 @@ describe("SessionList driver chip (inlined into title row)", () => {
     expect(container.querySelector(".session-list__meta")).toBeNull();
     expect(container.querySelector(".session-list__meta-driver")).toBeNull();
     expect(container.querySelector(".session-list__meta-subtitle")).toBeNull();
-  });
-
-  it("does NOT duplicate subtitle when title is present (displayLabel chain handles it)", () => {
-    useDaemonStore.setState({
-      sessions: [
-        {
-          id: "s1",
-          project: "/repo/p",
-          command: "claude",
-          root_driver: "claude",
-          created_at: "2026-06-20T00:00:00Z",
-          view: { card: { title: "alpha", subtitle: "alpha summary" }, status: "idle" },
-        },
-      ],
-    });
-    const { container } = render(<SessionList conn={fakeConn} />);
-    // Title is "alpha"; subtitle MUST NOT also appear anywhere on the card.
-    expect(container.textContent).not.toMatch(/alpha summary/);
   });
 });
 
@@ -488,8 +572,6 @@ describe("WorkspaceSwitcher", () => {
     const { container } = render(<SessionList conn={fakeConn} />);
     const bar = container.querySelector("[data-role='workspace-switcher']");
     expect(bar).not.toBeNull();
-    // "default" is always present at index 0; "prod" appears second
-    // (collectWorkspaces parity).
     const chips = bar?.querySelectorAll('[role="radio"]');
     expect(chips?.length).toBe(2);
     expect(chips?.[0]?.textContent).toBe("default");
@@ -518,16 +600,13 @@ describe("WorkspaceSwitcher", () => {
       ],
     });
     const { container } = render(<SessionList conn={fakeConn} />);
-    // Initially: default workspace selected → only the "alpha" project is visible.
     expect(screen.getByText("alpha-default")).toBeDefined();
     expect(screen.queryByText("beta-prod")).toBeNull();
-    // Click the "prod" chip.
     const prodChip = Array.from(container.querySelectorAll('[role="radio"]')).find(
       (el) => el.textContent === "prod",
     );
     expect(prodChip).not.toBeUndefined();
     if (prodChip) fireEvent.click(prodChip);
-    // Now only the "beta" session is visible.
     expect(screen.queryByText("alpha-default")).toBeNull();
     expect(screen.getByText("beta-prod")).toBeDefined();
   });
@@ -633,14 +712,11 @@ describe("ProjectGroup", () => {
     const { container } = render(<SessionList conn={fakeConn} />);
     const header = container.querySelector(".session-list__project-header");
     expect(header?.getAttribute("aria-expanded")).toBe("true");
-    // panel exists and contains the session row.
     expect(container.querySelector(".session-list__project-panel")).not.toBeNull();
     expect(screen.getByText("a")).toBeDefined();
   });
 
   it("two repos sharing a basename are foldable independently (key=projectPath)", () => {
-    // Regression gate for the basename-collision bug: clicking the fold
-    // header on one of two same-basename groups must not collapse the other.
     useDaemonStore.setState({
       sessions: [
         {
@@ -662,7 +738,6 @@ describe("ProjectGroup", () => {
     const { container } = render(<SessionList conn={fakeConn} />);
     const headers = container.querySelectorAll<HTMLButtonElement>(".session-list__project-header");
     expect(headers.length).toBe(2);
-    // Click the first header. Only that group should collapse.
     const first = headers[0];
     expect(first).toBeDefined();
     if (first) fireEvent.click(first);
@@ -744,13 +819,7 @@ describe("SessionList empty state", () => {
       ],
       selectedWorkspace: "prod",
     });
-    // remove the only prod session so the workspace becomes empty but still selected
     useDaemonStore.setState({ sessions: [] });
-    // sessions = [] now removes "prod" from distinctWorkspaces but selectedWorkspace
-    // stays in store; the listView will fall back to no groups → empty message.
-    // But the empty message branch keys on selectedWorkspace, so it should now read
-    // "default" (since we never mutated selectedWorkspace directly here, but
-    // selectedWorkspace was set to "prod"). Force it explicitly:
     useDaemonStore.setState({ selectedWorkspace: "prod" });
     render(<SessionList conn={fakeConn} />);
     expect(screen.getByText(/No sessions in workspace "prod"/)).toBeDefined();
@@ -1019,64 +1088,7 @@ describe("SessionList active accent (caret rail signature)", () => {
   });
 });
 
-// ─── ADR-0032 / ADR-0033 invariants maintained ─────────────────────────────
-describe("ADR-0033: displayLabel chain maintained in SessionList render", () => {
-  beforeEach(() => {
-    useDaemonStore.getState().reset();
-    vi.clearAllMocks();
-  });
-
-  it("renders title when title is present (ADR-0033 chain: title first; subtitle suppressed)", () => {
-    useDaemonStore.setState({
-      sessions: [
-        {
-          id: "s1",
-          project: "/repo/p",
-          command: "claude",
-          created_at: "2026-06-20T00:00:00Z",
-          view: { card: { title: "My Title", subtitle: "My Sub" }, status: "idle" },
-        },
-      ],
-    });
-    const { container } = render(<SessionList conn={fakeConn} />);
-    expect(screen.getByText("My Title")).toBeDefined();
-    // subtitle is the title-fallback — it must NOT appear alongside the title.
-    expect(container.textContent).not.toMatch(/My Sub/);
-  });
-
-  it("renders subtitle when title is absent", () => {
-    useDaemonStore.setState({
-      sessions: [
-        {
-          id: "s1",
-          project: "/repo/p",
-          command: "claude",
-          created_at: "2026-06-20T00:00:00Z",
-          view: { card: { subtitle: "Only Sub" }, status: "idle" },
-        },
-      ],
-    });
-    render(<SessionList conn={fakeConn} />);
-    expect(screen.getAllByText("Only Sub").length).toBeGreaterThan(0);
-  });
-
-  it("renders id when title and subtitle both absent", () => {
-    useDaemonStore.setState({
-      sessions: [
-        {
-          id: "fallback-id",
-          project: "/repo/p",
-          command: "claude",
-          created_at: "2026-06-20T00:00:00Z",
-          view: { card: {}, status: "idle" },
-        },
-      ],
-    });
-    render(<SessionList conn={fakeConn} />);
-    expect(screen.getByText("fallback-id")).toBeDefined();
-  });
-});
-
+// ─── ADR-0032 / ADR-0076 invariants ────────────────────────────────────────
 describe("ADR-0032: session-status-slot and session-status-spinner are maintained", () => {
   beforeEach(() => {
     useDaemonStore.getState().reset();

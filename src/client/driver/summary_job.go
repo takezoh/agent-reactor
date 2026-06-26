@@ -31,7 +31,13 @@ func applySummaryJobResult(summary string, inFlight bool, e state.DEvJobResult) 
 		return summary, false, true
 	}
 	if r.Summary != "" {
-		summary = r.Summary
+		summary = clampGraphemes(r.Summary, summaryDisplayCap)
 	}
 	return summary, false, true
 }
+
+// summaryDisplayCap caps the final summary length in code-points. Defense-in-
+// depth: the LLM is asked for ~25 chars in formatSummaryPrompt, but models
+// frequently overshoot; capping at 30 keeps the value usable in 25-grapheme
+// SessionList cards (the web layer further clamps for display).
+const summaryDisplayCap = 30

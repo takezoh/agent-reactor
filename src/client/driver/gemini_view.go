@@ -22,7 +22,7 @@ func (d GeminiDriver) view(gs GeminiState) state.View {
 
 	return state.View{
 		Card: state.Card{
-			Subtitle:    firstNonEmpty(gs.Summary, gs.LastPrompt, gs.LastAssistantMessage),
+			Subtitle:    firstNonEmpty(gs.Summary, gs.LastPrompt),
 			Tags:        tags,
 			BorderTitle: GeminiCommandTag(),
 			BorderBadge: fishpath.Shorten(gs.StartDir, ""),

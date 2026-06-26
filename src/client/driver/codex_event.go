@@ -106,7 +106,7 @@ func (d CodexDriver) applySubsystemKind(cs CodexState, ctx state.FrameContext, e
 	case state.SubsystemPromptSubmitted:
 		cs.LastPrompt = strings.TrimSpace(p.Prompt)
 		cs = applyHookStatus(cs, state.StatusRunning, e.Timestamp)
-		turns := recentUserTurns(appendHookPromptTurn(cs.RecentTurns, p.Prompt), 2)
+		turns := userOnlyTurns(appendHookPromptTurn(cs.RecentTurns, p.Prompt), 2)
 		effs, cs.SummaryInFlight = enqueueSummaryJob(effs, cs.SummaryInFlight, formatSummaryPrompt(cs.Summary, turns))
 		effs = append(effs, d.startCodexTranscriptParse(&cs)...)
 	case state.SubsystemTurnStarted:
