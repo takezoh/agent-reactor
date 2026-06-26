@@ -67,8 +67,11 @@ export function ContentArea({ sessionId, kind, bearerToken, fetchFn }: ContentAr
     }
   }, [linesLength]);
 
+  // ADR-0065: ContentArea is a scroll container, NOT a tabpanel. The tabpanel
+  // role is owned by the parent (MainTabs panel wrapper or LogTabs' own
+  // wrapper below) so each tab maps to exactly one tabpanel role.
   return (
-    <div className="log-tab-content" role="tabpanel" ref={scrollRef}>
+    <div className="log-tab-content" ref={scrollRef}>
       <pre>{(buffer?.lines ?? []).join("\n")}</pre>
     </div>
   );
@@ -96,6 +99,8 @@ export function LogTabs({
   const kind = activeTab ? kindOfTab(activeTab) : null;
   const suppressed = activeTab ? isSuppressed(activeTab, suppressInfo) : false;
 
+  // ADR-0065: panel wrapper owns role="tabpanel"; ContentArea below is just a
+  // scroll container so we have a single tabpanel per tab.
   return (
     <div className="log-tab-selector">
       <div className="log-tab-row" role="tablist">
@@ -112,16 +117,16 @@ export function LogTabs({
           </button>
         ))}
       </div>
-      {!suppressed && kind !== null && activeTab ? (
-        <ContentArea
-          sessionId={sessionId}
-          kind={kind}
-          bearerToken={bearerToken}
-          fetchFn={fetchFn}
-        />
-      ) : (
-        <div className="log-tab-content" role="tabpanel" />
-      )}
+      <div className="log-tab-content" role="tabpanel">
+        {!suppressed && kind !== null && activeTab ? (
+          <ContentArea
+            sessionId={sessionId}
+            kind={kind}
+            bearerToken={bearerToken}
+            fetchFn={fetchFn}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }

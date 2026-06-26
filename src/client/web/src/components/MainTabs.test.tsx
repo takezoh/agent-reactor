@@ -60,10 +60,11 @@ describe("MainTabs", () => {
     expect(buttons).toHaveLength(1);
     expect(buttons[0]?.textContent).toBe("TERMINAL");
     // Terminal slot is always mounted and starts active.
+    // ADR-0065: active state is driven by data-active attribute (CSS overlay),
+    // not the legacy tab-panel--active flex modifier.
     const slot = screen.getByTestId(TERMINAL_TESTID).parentElement;
-    // Active state: carries tab-panel--active class
     expect(slot?.className).toContain("terminal-slot");
-    expect(slot?.className).toContain("tab-panel--active");
+    expect(slot?.getAttribute("data-active")).toBe("true");
   });
 
   it("starts with TERMINAL active by default", () => {
@@ -92,8 +93,8 @@ describe("MainTabs", () => {
       />,
     );
     const stub = screen.getByTestId(TERMINAL_TESTID);
-    // Initially active
-    expect(stub.parentElement?.className).toContain("tab-panel--active");
+    // Initially active (ADR-0065: data-active="true")
+    expect(stub.parentElement?.getAttribute("data-active")).toBe("true");
 
     act(() => {
       fireEvent.click(screen.getByRole("tab", { name: "TRANSCRIPT" }));
@@ -103,8 +104,8 @@ describe("MainTabs", () => {
     // scrollback survive the switch because the slot is never unmounted.
     const stubAfter = screen.getByTestId(TERMINAL_TESTID);
     expect(stubAfter).toBe(stub);
-    // Not active: no tab-panel--active, aria-hidden set
-    expect(stubAfter.parentElement?.className).not.toContain("tab-panel--active");
+    // Not active: data-active="false", aria-hidden set
+    expect(stubAfter.parentElement?.getAttribute("data-active")).toBe("false");
     expect(stubAfter.parentElement?.getAttribute("aria-hidden")).toBe("true");
   });
 
@@ -138,7 +139,7 @@ describe("MainTabs", () => {
     expect(preAfter?.textContent).toBe("e-line");
   });
 
-  it("clicking back to TERMINAL re-shows the slot (tab-panel--active restored, aria-hidden=false)", () => {
+  it("clicking back to TERMINAL re-shows the slot (data-active=true, aria-hidden=false)", () => {
     render(
       <MainTabs
         tabs={TABS}
@@ -157,7 +158,7 @@ describe("MainTabs", () => {
     });
 
     const stub = screen.getByTestId(TERMINAL_TESTID);
-    expect(stub.parentElement?.className).toContain("tab-panel--active");
+    expect(stub.parentElement?.getAttribute("data-active")).toBe("true");
     expect(stub.parentElement?.getAttribute("aria-hidden")).toBe("false");
   });
 
@@ -535,7 +536,7 @@ describe("MainTabs", () => {
       expect(stubAfter).toBe(stub);
     });
 
-    it("terminal-slot has tab-panel--active class when TERMINAL is active (height > 0 precondition)", () => {
+    it("terminal-slot has data-active='true' when TERMINAL is active (ADR-0065)", () => {
       const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
       HTMLElement.prototype.getBoundingClientRect = () => ({
         width: 800,
@@ -570,8 +571,10 @@ describe("MainTabs", () => {
         const stub = screen.getByTestId(TERMINAL_TESTID);
         const terminalSlot = stub.parentElement;
         expect(terminalSlot).not.toBeNull();
-        // Active class present → CSS visibility:visible + height:auto → height > 0
-        expect(terminalSlot?.className).toContain("tab-panel--active");
+        // ADR-0065: active state via data-active attribute. CSS makes the
+        // absolute-positioned overlay visible (visibility:visible + no
+        // pointer-events:none) so xterm's host has the full parent box.
+        expect(terminalSlot?.getAttribute("data-active")).toBe("true");
         if (terminalSlot) {
           const rect = terminalSlot.getBoundingClientRect();
           expect(rect.height).toBeGreaterThan(0);
@@ -579,6 +582,32 @@ describe("MainTabs", () => {
       } finally {
         HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
       }
+    });
+
+    // ADR-0065 regression: terminal-slot is a sibling of log panels in
+    // .main-tabs-body but takes no flex remainder (CSS absolute overlay).
+    // Without this guarantee, TRANSCRIPT/EVENTS content was pushed into
+    // the bottom half of the viewport and appeared "middle-aligned".
+    it("terminal-slot and log panels are siblings inside .main-tabs-body (ADR-0065 layering)", () => {
+      render(
+        <MainTabs
+          tabs={TABS}
+          sessionId="s1"
+          bearerToken="tok"
+          fetchFn={nopFetch}
+          terminalSlot={<TerminalStub />}
+        />,
+      );
+      const terminalSlot = screen.getByTestId(TERMINAL_TESTID).parentElement;
+      expect(terminalSlot?.className).toBe("terminal-slot");
+      const body = terminalSlot?.parentElement;
+      expect(body?.className).toBe("main-tabs-body");
+      // log panels (role=tabpanel, NOT the terminal one) are also direct
+      // children of .main-tabs-body — same parent, different layer.
+      const logPanels = Array.from(body?.children ?? []).filter(
+        (c) => c !== terminalSlot && (c as HTMLElement).getAttribute("role") === "tabpanel",
+      );
+      expect(logPanels.length).toBe(2);
     });
   });
 

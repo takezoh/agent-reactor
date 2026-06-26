@@ -9,12 +9,21 @@ import "../css/view.css";
  * visually active at a time:
  *
  *   - TERMINAL active   → terminal slot is visible, log tab content is hidden
- *   - log tab active    → log tab content is visible, terminal slot is visibility:hidden
+ *   - log tab active    → log tab content is visible, terminal slot is invisible
  *
- * The terminal slot is *always mounted* and toggled via CSS visibility so
- * xterm.js scrollback and the subscribe / unsubscribe lifecycle (ADR 0030)
- * survive tab switches. The ResizeObserver inside TerminalPane (ADR 0034)
- * picks up the visibility transition and re-runs fit().
+ * ADR-0065: the terminal slot is an absolute overlay over .main-tabs-body, NOT
+ * a flex sibling of the log panels. This decouples xterm's host size from the
+ * log-panel display state so the log panels and the terminal never compete for
+ * flex remainder. Without this separation, the inactive terminal-slot used to
+ * grab half of the flex remainder via `flex: 1 1 0` and push log content into
+ * the bottom half of the viewport ("middle-aligned content" regression).
+ *
+ * The terminal slot is *always mounted* and toggled via data-active +
+ * visibility/pointer-events/aria-hidden so xterm.js scrollback and the
+ * subscribe / unsubscribe lifecycle (ADR 0030) survive tab switches. The
+ * ResizeObserver inside TerminalPane (ADR 0034) only observes the host's
+ * own box, which now stays at the .main-tabs-body size regardless of which
+ * tab is active — no fit() needs to be re-driven on tab switch.
  *
  * Keyboard navigation follows WAI-ARIA APG Tabs Pattern (manual activation):
  *   - ArrowRight / ArrowLeft / Home / End → move focus among tabs only
@@ -142,23 +151,10 @@ export function MainTabs({
         })}
       </div>
       <div className="main-tabs-body">
-        {/* terminal-slot is always mounted; CSS visibility:hidden when not active
-            preserves xterm scrollback (ADR-0030) and height > 0 for fit() (ADR-0034).
-            We do NOT use the `hidden` attribute (display:none) here so the element
-            retains layout and xterm can measure height on restore. */}
-        <div
-          id="main-tabpanel-terminal"
-          role="tabpanel"
-          aria-labelledby="main-tab-terminal"
-          className={
-            isTerminalActive
-              ? "terminal-slot tab-panel--terminal tab-panel--active"
-              : "terminal-slot tab-panel--terminal"
-          }
-          aria-hidden={!isTerminalActive}
-        >
-          {terminalSlot}
-        </div>
+        {/* Log panels are normal-flow flex children: only the active one is
+            display:flex; others are display:none via the `hidden` attribute.
+            Because only one is ever in flow at a time, they never compete for
+            flex remainder with each other. */}
         {tabs.map((t, i) => {
           const selected = active.kind === "log" && active.index === i;
           const panelId = `main-tabpanel-log-${i}`;
@@ -187,6 +183,22 @@ export function MainTabs({
             </div>
           );
         })}
+        {/* ADR-0065: terminal-slot is an absolute overlay layer on
+            .main-tabs-body. It is always mounted (subscribe ownership /
+            ADR-0030) but takes no space in the flex column flow, so it
+            never pushes log content into the bottom half. data-active
+            drives visibility + pointer-events via view.css, and aria-hidden
+            mirrors it for AT. */}
+        <div
+          id="main-tabpanel-terminal"
+          role="tabpanel"
+          aria-labelledby="main-tab-terminal"
+          className="terminal-slot"
+          data-active={isTerminalActive ? "true" : "false"}
+          aria-hidden={!isTerminalActive}
+        >
+          {terminalSlot}
+        </div>
       </div>
     </div>
   );

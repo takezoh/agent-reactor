@@ -177,23 +177,34 @@
   flex: 1 1 0;
   min-height: 0;
 }
+/* ADR-0065: terminal-slot は absolute オーバーレイ。.main-tabs-body は
+   position:relative の "ステージ" として log panel (通常フロー) と
+   terminal-slot (絶対配置レイヤー) を重ねる。これで terminal-slot が
+   flex 残余を log panel と取り合わない構造になり、TRANSCRIPT/EVENTS の
+   コンテンツが上半分余白として中央に押し下げられる regression が
+   構造的に発生しなくなる。 */
 .main-tabs-body {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1 1 0;
   min-height: 0;
 }
-/* terminal-slot は TerminalPane (.terminal-host, flex:1 1 0) をラップする
-   flex item。inactive 時は display:none で完全に消し、ResizeObserver が
-   復帰時の display:flex 遷移を捕捉して fit() を再実行する (ADR 0034)。 */
+/* ADR-0065: terminal-slot は親 .main-tabs-body の box 全体を絶対配置で
+   占有する。常時マウントで subscribe 所有権 (ADR-0030) を保持し、active
+   時のみ可視。inactive 時は visibility:hidden + pointer-events:none で
+   フローと相互作用を遮断する。box サイズは log panel の表示状態に依存
+   しないため、ResizeObserver は親リサイズだけを観測すれば fit() が
+   常に正しい寸法で走る (ADR-0029 / ADR-0034)。 */
 .terminal-slot {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
-  min-height: 0;
 }
-.terminal-slot.hidden {
-  display: none;
+.terminal-slot[data-active="false"] {
+  visibility: hidden;
+  pointer-events: none;
 }
 /* .log-tab-content は TRANSCRIPT/EVENTS 選択時の <pre> 描画コンテナ。
    MainTabs body (flex column, flex:1) の子として残余高さを取り、内容が
@@ -264,7 +275,10 @@
   outline-offset: 2px;
 }
 
-/* tab-panel: log tabpanel wrapper. Active panel shown via tab-panel--active.  */
+/* tab-panel: log tabpanel wrapper. Active panel shown via tab-panel--active.
+   ADR-0065: TERMINAL は .terminal-slot (absolute オーバーレイ) として
+   .main-tabs-body 内の別レイヤーに居るので、.tab-panel は log タブ
+   (TRANSCRIPT / EVENTS) 専用。terminal 用 modifier は廃止された。 */
 .tab-panel {
   display: none;
   flex: 1 1 0;
@@ -273,24 +287,6 @@
 }
 .tab-panel--active {
   display: flex;
-}
-
-/* tab-panel--terminal: terminal slot stays in layout (never display:none) so
-   xterm can measure height on restore (ADR-0029 / ADR-0034). visibility:hidden
-   when inactive preserves scrollback while collapsing visual rendering.       */
-.tab-panel--terminal {
-  display: flex;
-  flex: 1 1 0;
-  min-height: 0;
-  flex-direction: column;
-  visibility: hidden;
-  height: 0;
-  overflow: hidden;
-}
-.tab-panel--terminal.tab-panel--active {
-  visibility: visible;
-  height: auto;
-  overflow: visible;
 }
 
 /* ─── CreateSession form (dialog + toggles + actions) ──────────────────── */
