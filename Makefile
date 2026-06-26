@@ -43,15 +43,37 @@ build-claude-app-server:
 build-server:
 	cd $(SRC_DIR) && go build -o ../$(SERVER) ./cmd/server
 
+WEB_DIR             := src/client/web
+WEB_DIST            := $(WEB_DIR)/dist/index.html
+WEB_NPM_STAMP       := $(WEB_DIR)/node_modules/.install-stamp
+# -prune skips the descent into node_modules / dist entirely (a post-filter
+# would still walk those subtrees — ~50k files for a React app — on every
+# make invocation, since $(shell …) evaluates at parse time).
+WEB_SRC_FILES       := $(shell find $(WEB_DIR) \
+                         \( -path '$(WEB_DIR)/node_modules' -o -path '$(WEB_DIR)/dist' \) -prune \
+                         -o -type f -print 2>/dev/null)
+
+# Stamp file owned by us — directory mtime is touched by IDE / npm internals
+# and can't be trusted as a "last install" signal.
+$(WEB_NPM_STAMP): $(WEB_DIR)/package-lock.json
+	cd $(WEB_DIR) && npm ci
+	@touch $@
+
+# dist/index.html is the artifact embedded by cmd/web (//go:embed dist).
+$(WEB_DIST): $(WEB_NPM_STAMP) $(WEB_SRC_FILES)
+	cd $(WEB_DIR) && npm run build
+
+# build-web-frontend: alias for $(WEB_DIST). Stays in the .PHONY list as a
+# discoverable target name; the real work lives in the file-target rule above.
+build-web-frontend: $(WEB_DIST)
+
 # build-web builds the web-client host (cmd/web): serves the browser UI and
-# reverse-proxies /api and /ws to the backend.
-build-web:
+# reverse-proxies /api and /ws to the backend. Depends on $(WEB_DIST) so the
+# //go:embed dist directive always picks up fresh CSS / JS.
+build-web: $(WEB_DIST)
 	cd $(SRC_DIR) && go build -o ../$(WEB) ./cmd/web
 
-build-web-frontend:
-	cd src/client/web && npm ci && npm run build
-
-build-all: build-web-frontend build build-orchestrator build-claude-app-server build-server build-web
+build-all: build build-orchestrator build-claude-app-server build-server build-web
 
 # run-dev builds and launches the backend + web-client together for local dev.
 run-dev: build-server build-web

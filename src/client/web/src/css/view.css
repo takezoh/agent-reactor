@@ -387,13 +387,14 @@
   /* StatusIcon (ADR-0078): all animated status variants stop in place.
      The .run-state-spinner / .session-status-spinner selectors are kept
      for ADR-0064 documentation continuity — they remain valid hooks since
-     active StatusIcons still carry those classes via activeClass. The rotor
-     selector targets the inner <g> that running/pending now animate (the
-     outer SVG no longer carries the animation). */
+     active StatusIcons still carry those classes via activeClass. running /
+     pending now animate the OUTER <span> directly (HTML-wrapper rotation
+     pattern), so the .status-icon--running / --pending selectors target
+     the animated element themselves. */
   .run-state-spinner,
   .session-status-spinner,
-  .status-icon--running .status-icon__rotor,
-  .status-icon--pending .status-icon__rotor,
+  .status-icon--running,
+  .status-icon--pending,
   .status-icon--waiting .status-icon__dot,
   .status-icon--idle .status-icon__filled {
     animation: none !important;

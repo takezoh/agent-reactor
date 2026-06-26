@@ -1,5 +1,8 @@
-/* status-icon.css — per-status SVG indicator (ADR-0078, supersedes ADR-0032
-   "active-only spinner" rule).
+/* status-icon.css — per-status indicator (ADR-0078).
+
+   Structure: <span class="status-icon ..."><svg>...</svg></span>. The OUTER
+   span is what running / pending rotates — rotating an inner SVG element via
+   CSS transform was unreliable on iOS Safari / older WebKit (ADR-0078).
 
    Reduced-motion suppression lives in view.css (ADR-0064 single-guard rule);
    this file MUST NOT contain its own @media (prefers-reduced-motion) block. */
@@ -14,6 +17,14 @@
   flex-shrink: 0;
   vertical-align: -0.15em;
   color: currentColor;
+  line-height: 0;
+}
+/* Inner SVG fills the wrapper span exactly. overflow: visible so a rotated
+   stroke at the bbox edge doesn't get clipped by the SVG viewport. */
+.status-icon > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
   overflow: visible;
 }
 
@@ -27,16 +38,10 @@
 }
 
 /* ─── running ───────────────────────────────────────────────────────────── */
-/* Modern Material-style sweep: faded full ring + 3/4 foreground arc. The
-   inner <g class="status-icon__rotor"> rotates (NOT the outer <svg>): SVG root
-   rotation via CSS transform is unreliable in Chromium and paints with an
-   identity matrix in some environments. Rotating an inner <g> in SVG
-   coordinates is the canonical, cross-browser pattern. transform-origin is in
-   SVG user units → 12 12 = viewBox center. */
-.status-icon--running .status-icon__rotor {
+/* Faded full ring + 3/4 foreground arc; the outer span rotates so only the
+   arc visibly sweeps (the ring is rotationally symmetric). */
+.status-icon--running {
   animation: status-icon-spin 0.8s linear infinite;
-  transform-box: view-box;
-  transform-origin: 12px 12px;
 }
 .status-icon--running .status-icon__ring {
   fill: none;
@@ -60,7 +65,10 @@
 }
 
 /* ─── waiting ──────────────────────────────────────────────────────────── */
-/* Three dots bounce in sequence (ellipsis wave). Stagger via animation-delay. */
+/* Three dots bounce in sequence (ellipsis wave). Stagger via animation-delay.
+   The dots animate translateY on the SVG <circle> elements directly — this
+   is a property-level animation (not a rotation), so SVG transform-box
+   quirks don't apply. */
 .status-icon--waiting .status-icon__dot {
   fill: currentColor;
   transform-origin: center;
@@ -89,12 +97,9 @@
 }
 
 /* ─── pending ──────────────────────────────────────────────────────────── */
-/* Dashed ring rotating slowly — signals "queued, waiting for scheduler".
-   Uses the same inner-<g> rotor pattern as running (see comment above). */
-.status-icon--pending .status-icon__rotor {
+/* Dashed ring rotating slowly — signals "queued, waiting for scheduler". */
+.status-icon--pending {
   animation: status-icon-spin 3.6s linear infinite;
-  transform-box: view-box;
-  transform-origin: 12px 12px;
 }
 .status-icon--pending .status-icon__dashed {
   fill: none;
@@ -105,10 +110,10 @@
 }
 
 /* ─── idle ─────────────────────────────────────────────────────────────── */
-/* Filled dot, subtle opacity breathing — alive but quiet. */
+/* Filled dot, subtle opacity breathing — alive but quiet. Pure opacity
+   animation on the inner <circle>; no transforms involved. */
 .status-icon--idle .status-icon__filled {
   fill: currentColor;
-  transform-origin: center;
   animation: status-icon-breathe 2.6s ease-in-out infinite;
 }
 @keyframes status-icon-breathe {

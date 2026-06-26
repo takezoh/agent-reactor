@@ -1,6 +1,13 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { StatusIcon, isActiveStatus, normalizeStatus } from "./StatusIcon";
+
+const STATUS_ICON_CSS = fs.readFileSync(
+  path.resolve(__dirname, "../css/status-icon.css"),
+  "utf-8",
+);
 
 describe("normalizeStatus", () => {
   it.each([
@@ -33,7 +40,9 @@ describe("isActiveStatus", () => {
 });
 
 describe("StatusIcon", () => {
-  // ADR-0078: every status renders an <svg> with status-icon + per-kind modifier.
+  // ADR-0078: every status renders a <span class="status-icon status-icon--<kind>">
+  // wrapping a <svg> with the geometry. The OUTER span is the element that
+  // carries any rotation animation (HTML-wrapper pattern — see StatusIcon.tsx).
   it.each([
     ["running", "status-icon--running"],
     ["waiting", "status-icon--waiting"],
@@ -41,26 +50,25 @@ describe("StatusIcon", () => {
     ["stopped", "status-icon--stopped"],
     ["pending", "status-icon--pending"],
     ["unknown", "status-icon--unknown"],
-  ] as const)("renders <svg.status-icon.%s> for status=%s", (kind, modifier) => {
+  ] as const)("renders <span.status-icon.%s> wrapping an <svg> for status=%s", (kind, modifier) => {
     const { container } = render(<StatusIcon status={kind} />);
-    const svg = container.querySelector(`svg.status-icon.${modifier}`);
-    expect(svg).not.toBeNull();
+    const span = container.querySelector(`span.status-icon.${modifier}`);
+    expect(span, `expected span.status-icon.${modifier}`).not.toBeNull();
+    expect(span?.querySelector("svg"), "expected nested <svg>").not.toBeNull();
   });
 
   // ADR-0078: distinctive inner elements per status so CSS can target them.
-  it("running renders ring + arc paths wrapped in a rotor <g>", () => {
+  it("running renders ring + arc paths inside the SVG", () => {
     const { container } = render(<StatusIcon status="running" />);
-    const rotor = container.querySelector(".status-icon--running .status-icon__rotor");
-    expect(rotor).not.toBeNull();
-    expect(rotor?.querySelector(".status-icon__ring")).not.toBeNull();
-    expect(rotor?.querySelector(".status-icon__arc")).not.toBeNull();
+    const span = container.querySelector(".status-icon--running");
+    expect(span?.querySelector("svg .status-icon__ring")).not.toBeNull();
+    expect(span?.querySelector("svg .status-icon__arc")).not.toBeNull();
   });
 
-  it("pending dashed ring is wrapped in a rotor <g>", () => {
+  it("pending renders a dashed ring inside the SVG", () => {
     const { container } = render(<StatusIcon status="pending" />);
-    const rotor = container.querySelector(".status-icon--pending .status-icon__rotor");
-    expect(rotor).not.toBeNull();
-    expect(rotor?.querySelector(".status-icon__dashed")).not.toBeNull();
+    const span = container.querySelector(".status-icon--pending");
+    expect(span?.querySelector("svg .status-icon__dashed")).not.toBeNull();
   });
 
   it("waiting renders three .status-icon__dot circles with stagger modifiers", () => {
@@ -69,11 +77,6 @@ describe("StatusIcon", () => {
     expect(container.querySelector(".status-icon__dot--1")).not.toBeNull();
     expect(container.querySelector(".status-icon__dot--2")).not.toBeNull();
     expect(container.querySelector(".status-icon__dot--3")).not.toBeNull();
-  });
-
-  it("pending renders a dashed ring", () => {
-    const { container } = render(<StatusIcon status="pending" />);
-    expect(container.querySelector(".status-icon__dashed")).not.toBeNull();
   });
 
   it("idle renders a filled dot", () => {
@@ -92,7 +95,8 @@ describe("StatusIcon", () => {
   });
 
   // activeClass / inactiveClass: caller-supplied class layered for legacy
-  // DOM contracts (run-state-spinner / session-status-spinner).
+  // DOM contracts (run-state-spinner / session-status-spinner). Now applied
+  // to the OUTER span (where the rotation animation lives).
   it("layers activeClass on active states (running)", () => {
     const { container } = render(
       <StatusIcon
@@ -101,7 +105,7 @@ describe("StatusIcon", () => {
         inactiveClass="run-state-icon"
       />,
     );
-    expect(container.querySelector(".run-state-spinner")).not.toBeNull();
+    expect(container.querySelector("span.run-state-spinner")).not.toBeNull();
     expect(container.querySelector(".run-state-icon")).toBeNull();
   });
 
@@ -109,13 +113,23 @@ describe("StatusIcon", () => {
     const { container } = render(
       <StatusIcon status="idle" activeClass="run-state-spinner" inactiveClass="run-state-icon" />,
     );
-    expect(container.querySelector(".run-state-icon")).not.toBeNull();
+    expect(container.querySelector("span.run-state-icon")).not.toBeNull();
     expect(container.querySelector(".run-state-spinner")).toBeNull();
   });
 
-  it("svg carries aria-hidden=true so screen readers ignore the decorative icon", () => {
+  it("wrapper span carries aria-hidden=true so screen readers ignore the decorative icon", () => {
     const { container } = render(<StatusIcon status="running" />);
-    const svg = container.querySelector("svg");
-    expect(svg?.getAttribute("aria-hidden")).toBe("true");
+    const span = container.querySelector("span.status-icon");
+    expect(span?.getAttribute("aria-hidden")).toBe("true");
   });
+
+  // ADR-0078 rotation contract: animation rule must target the wrapper span
+  // directly (.status-icon--running / .status-icon--pending), not a child.
+  it.each(["running", "pending"] as const)(
+    "%s animation rule targets the wrapper span, not a child element",
+    (kind) => {
+      const rule = new RegExp(`\\.status-icon--${kind}\\s*\\{[^}]*animation:\\s*status-icon-spin`);
+      expect(STATUS_ICON_CSS).toMatch(rule);
+    },
+  );
 });

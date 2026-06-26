@@ -1,27 +1,10 @@
-// StatusIcon — per-status SVG indicator (ADR-0078, supersedes ADR-0032
-// "active-only spinner" rule).
+// StatusIcon — per-status indicator (ADR-0078, supersedes ADR-0032).
 //
-// Every status renders an icon — active states (running / waiting) animate,
-// terminal states (idle / stopped / pending / unknown) sit still or breathe
-// gently. The element is always present in the DOM so callers get a stable
-// layout slot regardless of status.
-//
-// Designs (24×24 viewBox, currentColor):
-//   running  — faded full ring + 3/4 foreground arc, inner <g> rotates
-//   waiting  — three dots that bounce in sequence (ellipsis wave)
-//   pending  — dashed ring rotating slowly
-//   idle     — filled dot breathing (opacity pulse)
-//   stopped  — solid rounded square, no motion (terminal state)
-//   unknown  — short horizontal dash, no motion
-//
-// Caller contract:
-//   - Color is currentColor; parent controls it via
-//     .session-status-<status> / .run-state-<status>
-//   - Size is 1em × 1em by default; parent can override
-//   - active states ALSO carry the caller-supplied `activeClass` (typically
-//     `run-state-spinner` or `session-status-spinner`) so existing DOM
-//     contracts that query those class names continue to hold
+// running / pending rotation lives on the outer <span> because SVG-element
+// rotation is unreliable on Safari / older WebKit. The <span> is a plain
+// inline-block whose CSS transform is universally supported.
 
+import type { ReactNode } from "react";
 import "../css/status-icon.css";
 
 export type StatusKind = "running" | "waiting" | "idle" | "stopped" | "pending" | "unknown";
@@ -37,6 +20,28 @@ export function isActiveStatus(kind: StatusKind): boolean {
   return ACTIVE.has(kind);
 }
 
+// `satisfies` enforces exhaustive coverage at compile time: adding a new
+// StatusKind without a GEOMETRY entry is a type error, not silent breakage.
+const GEOMETRY = {
+  running: (
+    <>
+      <circle className="status-icon__ring" cx="12" cy="12" r="9" />
+      <path className="status-icon__arc" d="M21 12 A 9 9 0 1 1 12 3" />
+    </>
+  ),
+  waiting: (
+    <>
+      <circle className="status-icon__dot status-icon__dot--1" cx="5" cy="12" r="2.4" />
+      <circle className="status-icon__dot status-icon__dot--2" cx="12" cy="12" r="2.4" />
+      <circle className="status-icon__dot status-icon__dot--3" cx="19" cy="12" r="2.4" />
+    </>
+  ),
+  pending: <circle className="status-icon__dashed" cx="12" cy="12" r="8" />,
+  idle: <circle className="status-icon__filled" cx="12" cy="12" r="5" />,
+  stopped: <rect className="status-icon__square" x="6" y="6" width="12" height="12" rx="2" />,
+  unknown: <line className="status-icon__dash" x1="6" y1="12" x2="18" y2="12" />,
+} satisfies Record<StatusKind, ReactNode>;
+
 export interface StatusIconProps {
   status: StatusKind;
   /** Class layered on active states only (e.g. legacy spinner contract). */
@@ -50,53 +55,9 @@ export function StatusIcon({ status, activeClass, inactiveClass }: StatusIconPro
   const className = ["status-icon", `status-icon--${status}`, active ? activeClass : inactiveClass]
     .filter(Boolean)
     .join(" ");
-  switch (status) {
-    case "running":
-      // Rotor pattern (ADR-0078): rotating the outer <svg> via CSS transform is
-      // unreliable across browsers — Chromium in particular often paints the
-      // root SVG with an identity matrix even while animation-play-state is
-      // "running". Rotate an inner <g> using the SVG coordinate system instead.
-      return (
-        <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <g className="status-icon__rotor">
-            <circle className="status-icon__ring" cx="12" cy="12" r="9" />
-            <path className="status-icon__arc" d="M21 12 A 9 9 0 1 1 12 3" />
-          </g>
-        </svg>
-      );
-    case "waiting":
-      return (
-        <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle className="status-icon__dot status-icon__dot--1" cx="5" cy="12" r="2.4" />
-          <circle className="status-icon__dot status-icon__dot--2" cx="12" cy="12" r="2.4" />
-          <circle className="status-icon__dot status-icon__dot--3" cx="19" cy="12" r="2.4" />
-        </svg>
-      );
-    case "pending":
-      return (
-        <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <g className="status-icon__rotor">
-            <circle className="status-icon__dashed" cx="12" cy="12" r="8" />
-          </g>
-        </svg>
-      );
-    case "idle":
-      return (
-        <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle className="status-icon__filled" cx="12" cy="12" r="5" />
-        </svg>
-      );
-    case "stopped":
-      return (
-        <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <rect className="status-icon__square" x="6" y="6" width="12" height="12" rx="2" />
-        </svg>
-      );
-    default:
-      return (
-        <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <line className="status-icon__dash" x1="6" y1="12" x2="18" y2="12" />
-        </svg>
-      );
-  }
+  return (
+    <span className={className} aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false">{GEOMETRY[status]}</svg>
+    </span>
+  );
 }
