@@ -59,6 +59,17 @@
   --palette-input-bg: #11111b;
   --palette-border: #45475a;
 
+  /* Palette modernization aliases — caret-rail signature + layered surfaces.
+     Opt-in by .palette-* selectors only so other components stay on
+     --bg / --bg-elevated / --border-color (FR-TOKEN-001 boundary). */
+  --surface-canvas: #1c1c26;
+  --surface-input: #11121b;
+  --surface-row-hover: rgba(255, 255, 255, 0.04);
+  --surface-row-selected: rgba(74, 158, 255, 0.12);
+  --rail-accent: #4a9eff;
+  --hairline: rgba(255, 255, 255, 0.06);
+  --elevation-card: 0 24px 48px -12px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
+
   /* Input / elevated surface */
   --input-bg: #2a2a2a;
   --input-border: #444;
@@ -116,6 +127,13 @@
   --palette-bg: #ffffff;
   --palette-input-bg: #f0f0f0;
   --palette-border: #cccccc;
+  --surface-canvas: #ffffff;
+  --surface-input: #f5f5f7;
+  --surface-row-hover: rgba(0, 0, 0, 0.04);
+  --surface-row-selected: rgba(0, 102, 204, 0.1);
+  --rail-accent: #0066cc;
+  --hairline: rgba(0, 0, 0, 0.08);
+  --elevation-card: 0 20px 40px -16px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.04);
   --input-bg: #ffffff;
   --input-border: #aaaaaa;
   --on-accent: #ffffff;
@@ -158,6 +176,13 @@
   --palette-bg: #1e1e2e;
   --palette-input-bg: #11111b;
   --palette-border: #45475a;
+  --surface-canvas: #1c1c26;
+  --surface-input: #11121b;
+  --surface-row-hover: rgba(255, 255, 255, 0.04);
+  --surface-row-selected: rgba(74, 158, 255, 0.12);
+  --rail-accent: #4a9eff;
+  --hairline: rgba(255, 255, 255, 0.06);
+  --elevation-card: 0 24px 48px -12px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
   --input-bg: #2a2a2a;
   --input-border: #444;
   --on-accent: #0a0a0a;

@@ -429,6 +429,18 @@
     transition: none !important;
   }
 
+  /* Palette modernization (caret rail, dialog entry, row caret, spinner).
+     New animations introduced in palette.css are suppressed here per the
+     ADR-0064 single-guard rule. */
+  .palette-overlay,
+  .palette-dialog,
+  .palette-dialog::before,
+  #palette-listbox [role="option"][aria-selected="true"]::before,
+  .palette-status-badge__spinner {
+    animation: none !important;
+    transition: none !important;
+  }
+
   /* UndoSnackbar: slide-in animation / transition */
   .undo-snackbar {
     transition: none !important;
