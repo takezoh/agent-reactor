@@ -97,46 +97,9 @@ body {
   margin-left: 4px;
 }
 
-/* ─── SessionList container ─────────────────────────────────────────────── */
-.session-list {
-  padding: 0;
-  margin: 8px 0;
-}
-.session-list .unified-listbox {
-  outline: none;
-}
-/* FR-A11Y-001: SessionList rows must meet the 44×44px minimum touch target.
-   The shared --row-min-height token (2rem = 32px) is intentionally compact for
-   the command palette; the SessionList overrides to 44px so the sidebar rows
-   satisfy the touch-target floor without changing the palette. */
-.session-list .unified-listbox__option {
-  min-height: 44px;
-}
+/* SessionList styles live in session-list.css (imported after app.css). */
 
-/* ─── SessionList row — derived from .unified-listbox__option ───────────── */
-/* session-list__row is the inner content div of each UnifiedListbox option. */
-.session-list__row {
-  width: 100%;
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-}
-.session-list__row--active .session-list__label--clamped {
-  color: var(--accent);
-}
-
-/* ─── 2-line ellipsis for long displayLabel (ADR-0033 / FR-A11Y-001) ────── */
-.session-list__label--clamped {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  word-break: normal;
-}
-/* Command palette styles live in palette.css (imported after app.css).
-   Caret-rail signature + listbox row caret + refreshed surfaces.            */
+/* Command palette styles live in palette.css (imported after app.css). */
 
 /* ─── SegmentedControl primitive (FR-THEME-007 / FR-A11Y-001) ──────────── */
 .segmented-control {

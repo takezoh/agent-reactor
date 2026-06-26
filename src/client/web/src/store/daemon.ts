@@ -3,6 +3,16 @@ import type { SessionConfig, SessionConfigProject } from "../api/sessions";
 import type { DaemonOccupant, DaemonSnapshot } from "../lib/tools";
 import type { HelloFrame, SessionInfo, ViewUpdateFrame } from "../wire/server";
 
+// Mirror of Go's config.DefaultWorkspaceName — the daemon emits this literal
+// when a project has no named workspace in its settings.toml.
+export const DEFAULT_WORKSPACE = "default";
+
+/** workspaceOf — TUI parity (workspace.go). Empty string → DEFAULT_WORKSPACE. */
+export function workspaceOf(s: SessionInfo): string {
+  const ws = s.workspace?.trim();
+  return ws ? ws : DEFAULT_WORKSPACE;
+}
+
 export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "closed";
 
 // SessionConfigSlice mirrors the subset of GET /api/session-config the
@@ -44,12 +54,27 @@ export type DaemonState = {
   // as "empty projects, empty pushCommands" rather than blocking the UI.
   sessionConfig: SessionConfigSlice | null;
 
+  // selectedWorkspace mirrors TUI Model.selectedWorkspace (workspace.go).
+  // The session list is partitioned by workspace; this picks which
+  // partition is visible. Defaults to DEFAULT_WORKSPACE. When the user
+  // selects a session belonging to a different workspace, the store
+  // automatically follows (TUI sidebar_events.go parity).
+  selectedWorkspace: string;
+
+  // foldedProjects collects project names whose children are currently
+  // collapsed in the sidebar. Persists across view-updates so the user's
+  // fold state isn't reset by every daemon push. TUI parity:
+  // Model.folded (sidebar_items.go:74).
+  foldedProjects: ReadonlySet<string>;
+
   // actions
   seedHello: (frame: HelloFrame) => void;
   applyViewUpdate: (frame: ViewUpdateFrame) => void;
   selectSession: (id: string | null) => void;
   setStatus: (status: ConnectionStatus) => void;
   setDaemonDisconnected: (v: boolean) => void;
+  setSelectedWorkspace: (workspace: string) => void;
+  toggleProjectFold: (project: string) => void;
   // setSessionConfig replaces the cached REST snapshot. Callers pass the
   // result of makeSessionsApi().getSessionConfig() (already normalized into
   // {projects: SessionConfigProject[], pushCommands: string[]} by the api-
@@ -70,7 +95,77 @@ const initialState = {
   status: "connecting" as ConnectionStatus,
   daemonDisconnected: false,
   sessionConfig: null as SessionConfigSlice | null,
+  selectedWorkspace: DEFAULT_WORKSPACE,
+  foldedProjects: new Set<string>() as ReadonlySet<string>,
 };
+
+/** Workspaces currently represented by at least one session, sorted with
+ *  DEFAULT_WORKSPACE first, then alphabetical (TUI collectWorkspaces parity).
+ *  DEFAULT_WORKSPACE is always included even when no session belongs to it,
+ *  so the user always has a "home" partition to return to after deleting
+ *  the last session in a named workspace. */
+export function selectDistinctWorkspaces(sessions: readonly SessionInfo[]): string[] {
+  const set = new Set<string>([DEFAULT_WORKSPACE]);
+  for (const s of sessions) {
+    set.add(workspaceOf(s));
+  }
+  const arr = Array.from(set);
+  arr.sort((a, b) => {
+    if (a === DEFAULT_WORKSPACE) return -1;
+    if (b === DEFAULT_WORKSPACE) return 1;
+    return a.localeCompare(b);
+  });
+  return arr;
+}
+
+/** Project basename — last non-empty path component of session.project. */
+export function projectBasename(project: string): string {
+  const trimmed = project.replace(/\/+$/, "");
+  const i = trimmed.lastIndexOf("/");
+  return i < 0 ? trimmed : trimmed.slice(i + 1);
+}
+
+export type ProjectGroup = {
+  /** Display name (basename of project path). */
+  project: string;
+  /** Full project path. Distinct paths sharing a basename are kept apart
+   *  via this field, so /a/repo and /b/repo become two groups (with the
+   *  same display name) rather than collapsing into one. */
+  projectPath: string;
+  sessions: SessionInfo[];
+};
+
+/** Sessions belonging to the given workspace, grouped by project path
+ *  (NOT just basename — distinct paths sharing a basename stay separate;
+ *  TUI sidebar_items.go:50-62 uses byProject keyed on s.Name() which is
+ *  also basename, but the wire's `project` field is the source of truth
+ *  for identity here). Groups are sorted alphabetically by display name. */
+export function groupSessionsByProject(
+  sessions: readonly SessionInfo[],
+  workspace: string,
+): ProjectGroup[] {
+  const groups = new Map<string, ProjectGroup>();
+  for (const s of sessions) {
+    if (workspaceOf(s) !== workspace) continue;
+    const projectPath = s.project ?? "";
+    const basename = projectBasename(projectPath);
+    if (!basename) continue;
+    const existing = groups.get(projectPath);
+    if (existing) {
+      existing.sessions.push(s);
+    } else {
+      groups.set(projectPath, {
+        project: basename,
+        projectPath: projectPath || basename,
+        sessions: [s],
+      });
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => {
+    const c = a.project.localeCompare(b.project);
+    return c !== 0 ? c : a.projectPath.localeCompare(b.projectPath);
+  });
+}
 
 // DaemonSnapshotSource is the structural subset of DaemonState that
 // selectDaemonSnapshot consumes. Defining it as a structural type (not as
@@ -117,22 +212,50 @@ export function selectDaemonSnapshot(state: DaemonSnapshotSource): DaemonSnapsho
 export const useDaemonStore = create<DaemonState>()((set) => ({
   ...initialState,
   seedHello: (frame) =>
-    set((s) => ({
-      sessions: frame.sessions,
-      activeSessionID: frame.activeSessionID,
-      features: frame.features,
-      serverTime: frame.serverTime,
-      // activeOccupant: HelloFrame.activeOccupant is optional. When the
-      // server emits it (post 2026-06-24), seed the daemon-global occupant
-      // so the palette's push scope (FR-005/FR-006) can gate correctly on
-      // the very first connection. When absent (legacy server) we leave
-      // the existing value alone — `undefined` already maps to "no frame"
-      // via the fail-closed path in scopeDisabledReason, so reading a
-      // stale value is safer than overwriting with undefined here.
-      activeOccupant: frame.activeOccupant ?? s.activeOccupant,
-    })),
+    set((s) => {
+      // Follow the daemon's active session into its workspace on hello so
+      // the partition matching activeSessionID is what the user sees first
+      // (TUI sidebar_events.go parity — `m.selectedWorkspace = workspaceOf(s)`).
+      let ws = s.selectedWorkspace;
+      if (frame.activeSessionID !== null) {
+        const active = frame.sessions.find((x) => x.id === frame.activeSessionID);
+        if (active) ws = workspaceOf(active);
+      }
+      // Reset to DEFAULT_WORKSPACE if the previously selected workspace no
+      // longer exists in the seeded session set (TUI rebuildItems:38-47).
+      const known = selectDistinctWorkspaces(frame.sessions);
+      if (!known.includes(ws)) ws = DEFAULT_WORKSPACE;
+      return {
+        sessions: frame.sessions,
+        activeSessionID: frame.activeSessionID,
+        features: frame.features,
+        serverTime: frame.serverTime,
+        activeOccupant: frame.activeOccupant ?? s.activeOccupant,
+        selectedWorkspace: ws,
+      };
+    }),
   applyViewUpdate: (frame) =>
     set((s) => {
+      // Resolve effective activeSessionID.
+      const nextActiveId =
+        frame.activeSessionID === undefined ? s.activeSessionID : frame.activeSessionID;
+      // selectedWorkspace policy: this is a USER preference (set by chip click
+      // / selectSession). On view-update we leave it alone unless:
+      //   (a) the workspace no longer exists in the pushed session set → reset
+      //       to DEFAULT_WORKSPACE so the UI never shows an empty unreachable
+      //       partition (TUI rebuildItems:38-47 parity);
+      //   (b) the active session actually CHANGED via the wire (another tab
+      //       switched it) AND that change crosses workspaces → follow, so the
+      //       partition matching the new active is visible (TUI parity).
+      // The pre-fix code re-applied (b) on every push regardless of whether
+      // activeId changed, silently undoing chip clicks. (code-review #1.)
+      let ws = s.selectedWorkspace;
+      const known = selectDistinctWorkspaces(frame.sessions);
+      if (!known.includes(ws)) ws = DEFAULT_WORKSPACE;
+      if (nextActiveId !== null && nextActiveId !== s.activeSessionID) {
+        const active = frame.sessions.find((x) => x.id === nextActiveId);
+        if (active) ws = workspaceOf(active);
+      }
       // best-effort identity preservation: keep the previous SessionInfo
       // object when its JSON shape is structurally unchanged. Cheap deep
       // compare via JSON.stringify is fine here (sessions[] is small —
@@ -147,8 +270,7 @@ export const useDaemonStore = create<DaemonState>()((set) => ({
       });
       return {
         sessions: next,
-        activeSessionID:
-          frame.activeSessionID === undefined ? s.activeSessionID : frame.activeSessionID,
+        activeSessionID: nextActiveId,
         // ViewUpdateFrame.activeOccupant is optional. When the frame
         // carries it (post 2026-06-24 server emit), we overwrite the
         // current value live so a frame pushed / popped by another driver
@@ -159,9 +281,21 @@ export const useDaemonStore = create<DaemonState>()((set) => ({
         // field.
         activeOccupant:
           frame.activeOccupant === undefined ? s.activeOccupant : frame.activeOccupant,
+        selectedWorkspace: ws,
       };
     }),
-  selectSession: (id) => set({ activeSessionID: id }),
+  selectSession: (id) =>
+    set((s) => {
+      // TUI parity (sidebar_events.go:49-58): when the user picks a session
+      // belonging to a different workspace, follow it. The switcher then
+      // shows the partition the picked session lives in.
+      let ws = s.selectedWorkspace;
+      if (id !== null) {
+        const sess = s.sessions.find((x) => x.id === id);
+        if (sess) ws = workspaceOf(sess);
+      }
+      return { activeSessionID: id, selectedWorkspace: ws };
+    }),
   setStatus: (status) => set({ status }),
   setDaemonDisconnected: (v) => set({ daemonDisconnected: v }),
   setSessionConfig: (cfg) =>
@@ -172,5 +306,20 @@ export const useDaemonStore = create<DaemonState>()((set) => ({
         pushCommands: cfg.pushCommands,
       },
     }),
-  reset: () => set(initialState),
+  setSelectedWorkspace: (workspace) => set({ selectedWorkspace: workspace }),
+  toggleProjectFold: (project) =>
+    set((s) => {
+      const next = new Set(s.foldedProjects);
+      if (next.has(project)) next.delete(project);
+      else next.add(project);
+      return { foldedProjects: next };
+    }),
+  reset: () =>
+    set(() => ({
+      ...initialState,
+      // Fresh Set so a reset never aliases the module-level instance —
+      // toggleProjectFold always replaces the Set, but a future caller that
+      // mutates in place would otherwise leak across reset boundaries.
+      foldedProjects: new Set<string>(),
+    })),
 }));

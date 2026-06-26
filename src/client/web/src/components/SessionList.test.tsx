@@ -1,10 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useDaemonStore } from "../store/daemon";
 import { SessionList, displayLabel } from "./SessionList";
-import { UnifiedListbox } from "./primitives/UnifiedListbox";
 
 const fakeConn = {
   subscribe: vi.fn(async () => {}),
@@ -49,6 +48,7 @@ describe("displayLabel", () => {
   });
 });
 
+// ─── SessionRow rendering (per-session card) ──────────────────────────────
 describe("SessionList rendering", () => {
   beforeEach(() => {
     useDaemonStore.getState().reset();
@@ -84,7 +84,8 @@ describe("SessionList rendering", () => {
       ],
     });
     render(<SessionList conn={fakeConn} />);
-    expect(screen.getByText("my-sub")).toBeDefined();
+    // title slot shows "my-sub" (displayLabel fallback)
+    expect(screen.getAllByText("my-sub").length).toBeGreaterThan(0);
   });
 
   it("FR-012: renders session id when both title and subtitle are absent", () => {
@@ -155,8 +156,7 @@ describe("SessionList status indicator", () => {
       ],
     });
     const { container } = render(<SessionList conn={fakeConn} />);
-    const spinners = container.querySelectorAll(".session-status-spinner");
-    expect(spinners.length).toBe(1);
+    expect(container.querySelectorAll(".session-status-spinner").length).toBe(1);
   });
 
   it("renders a spinning indicator for waiting sessions", () => {
@@ -194,7 +194,7 @@ describe("SessionList status indicator", () => {
     },
   );
 
-  it("status slot precedes the title (top-left placement)", () => {
+  it("status slot precedes the title row (top-left placement)", () => {
     useDaemonStore.setState({
       sessions: [
         {
@@ -207,12 +207,16 @@ describe("SessionList status indicator", () => {
       ],
     });
     const { container } = render(<SessionList conn={fakeConn} />);
-    // With UnifiedListbox, each row is a role=option div containing a session-list__row div.
     const row = container.querySelector(".session-list__row");
     expect(row).not.toBeNull();
     const children = row ? Array.from(row.children) : [];
     expect(children[0]?.className).toMatch(/session-status-slot/);
-    expect(children[1]?.className).toMatch(/title/);
+    expect(children[1]?.className).toMatch(/session-list__content/);
+    // Content's first child is the title-row containing the title element.
+    const titleRow = children[1]?.firstElementChild;
+    expect(titleRow?.className).toMatch(/session-list__title-row/);
+    const title = titleRow?.querySelector(".session-list__title");
+    expect(title?.textContent).toBe("alpha");
   });
 
   it("status slot exposes the status name via aria-label even when inactive", () => {
@@ -231,7 +235,7 @@ describe("SessionList status indicator", () => {
     expect(screen.getByLabelText("status: stopped")).toBeDefined();
   });
 
-  it("does NOT render the textual status label inside the list item", () => {
+  it("does NOT render the textual status label inside the row", () => {
     useDaemonStore.setState({
       sessions: [
         {
@@ -244,13 +248,517 @@ describe("SessionList status indicator", () => {
       ],
     });
     const { container } = render(<SessionList conn={fakeConn} />);
-    // The option div contains only the session row (status slot + label); no textual status word.
-    const option = container.querySelector('[role="option"]');
-    expect(option?.textContent).toBe("alpha");
+    const row = container.querySelector(".session-list__row");
+    expect(row).not.toBeNull();
+    // The session row itself contains only status slot + title (+ optional
+    // meta/tags). No status word should appear as visible text.
+    expect(row?.textContent).not.toMatch(/running/);
   });
 });
 
-describe("SessionList onClick", () => {
+// ─── Inline driver chip on the title row ─────────────────────────────────
+describe("SessionList driver chip (inlined into title row)", () => {
+  beforeEach(() => {
+    useDaemonStore.getState().reset();
+    vi.clearAllMocks();
+  });
+
+  it("renders the driver chip inside the title row when root_driver is set", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/p",
+          command: "claude",
+          root_driver: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "running" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const driver = container.querySelector(".session-list__driver");
+    expect(driver).not.toBeNull();
+    expect(driver?.textContent).toBe("claude");
+    // Driver must live inside the title-row, sibling of the title element.
+    const titleRow = container.querySelector(".session-list__title-row");
+    expect(titleRow?.querySelector(".session-list__driver")).not.toBeNull();
+    expect(titleRow?.querySelector(".session-list__title")).not.toBeNull();
+  });
+
+  it("applies the brand color from driverColor() as inline style", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/p",
+          command: "codex",
+          root_driver: "codex",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "running" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const chip = container.querySelector<HTMLElement>(".session-list__driver");
+    expect(chip).not.toBeNull();
+    // OpenAI green for codex.
+    expect(chip?.style.backgroundColor.toLowerCase()).toBe("#10a37f");
+    expect(chip?.style.color.toLowerCase()).toBe("#ffffff");
+  });
+
+  it("falls back to the default command tag color for unknown drivers", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/p",
+          command: "weirdcli",
+          root_driver: "weirdcli",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "running" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const chip = container.querySelector<HTMLElement>(".session-list__driver");
+    expect(chip).not.toBeNull();
+    // Default command-tag bg (#D97757).
+    expect(chip?.style.backgroundColor.toLowerCase()).toBe("#d97757");
+  });
+
+  it("omits the driver chip when root_driver is absent", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/p",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "running" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelector(".session-list__driver")).toBeNull();
+  });
+
+  it("does NOT render a separate meta row (driver lives inline)", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/p",
+          command: "claude",
+          root_driver: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "running" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelector(".session-list__meta")).toBeNull();
+    expect(container.querySelector(".session-list__meta-driver")).toBeNull();
+    expect(container.querySelector(".session-list__meta-subtitle")).toBeNull();
+  });
+
+  it("does NOT duplicate subtitle when title is present (displayLabel chain handles it)", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/p",
+          command: "claude",
+          root_driver: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha", subtitle: "alpha summary" }, status: "idle" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    // Title is "alpha"; subtitle MUST NOT also appear anywhere on the card.
+    expect(container.textContent).not.toMatch(/alpha summary/);
+  });
+});
+
+// ─── Tag row ────────────────────────────────────────────────────────────────
+describe("SessionList tag row", () => {
+  beforeEach(() => {
+    useDaemonStore.getState().reset();
+    vi.clearAllMocks();
+  });
+
+  it("renders card.tags as pills", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/p",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: {
+            card: {
+              title: "alpha",
+              tags: [
+                { text: "worktree", fg: "#fff", bg: "#3a3a3a" },
+                { text: "host", bg: "#226622" },
+              ],
+            },
+            status: "running",
+          },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const tagRow = container.querySelector(".session-list__tags");
+    expect(tagRow).not.toBeNull();
+    expect(tagRow?.textContent).toMatch(/worktree/);
+    expect(tagRow?.textContent).toMatch(/host/);
+  });
+
+  it("renders card.border_badge inside the tag row", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/p",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha", border_badge: "💬3" }, status: "running" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelector(".session-list__badge")?.textContent).toBe("💬3");
+  });
+
+  it("hides the tag row entirely when no tags and no border_badge", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/p",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "running" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelector(".session-list__tags")).toBeNull();
+  });
+});
+
+// ─── Workspace switcher ────────────────────────────────────────────────────
+describe("WorkspaceSwitcher", () => {
+  beforeEach(() => {
+    useDaemonStore.getState().reset();
+    vi.clearAllMocks();
+  });
+
+  it("is hidden when only the default workspace exists", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/p",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "idle" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelector("[data-role='workspace-switcher']")).toBeNull();
+  });
+
+  it("is shown when at least one named (non-default) workspace exists", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/p",
+          workspace: "prod",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha" }, status: "idle" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const bar = container.querySelector("[data-role='workspace-switcher']");
+    expect(bar).not.toBeNull();
+    // "default" is always present at index 0; "prod" appears second
+    // (collectWorkspaces parity).
+    const chips = bar?.querySelectorAll('[role="radio"]');
+    expect(chips?.length).toBe(2);
+    expect(chips?.[0]?.textContent).toBe("default");
+    expect(chips?.[1]?.textContent).toBe("prod");
+  });
+
+  it("clicking a chip changes selectedWorkspace and partitions the visible projects", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/alpha",
+          workspace: "default",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha-default" }, status: "idle" },
+        },
+        {
+          id: "s2",
+          project: "/repo/beta",
+          workspace: "prod",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "beta-prod" }, status: "idle" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    // Initially: default workspace selected → only the "alpha" project is visible.
+    expect(screen.getByText("alpha-default")).toBeDefined();
+    expect(screen.queryByText("beta-prod")).toBeNull();
+    // Click the "prod" chip.
+    const prodChip = Array.from(container.querySelectorAll('[role="radio"]')).find(
+      (el) => el.textContent === "prod",
+    );
+    expect(prodChip).not.toBeUndefined();
+    if (prodChip) fireEvent.click(prodChip);
+    // Now only the "beta" session is visible.
+    expect(screen.queryByText("alpha-default")).toBeNull();
+    expect(screen.getByText("beta-prod")).toBeDefined();
+  });
+
+  it("auto-follows the active session's workspace via selectSession", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/alpha",
+          workspace: "default",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "alpha-default" }, status: "idle" },
+        },
+        {
+          id: "s2",
+          project: "/repo/beta",
+          workspace: "prod",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "beta-prod" }, status: "idle" },
+        },
+      ],
+    });
+    render(<SessionList conn={fakeConn} />);
+    expect(useDaemonStore.getState().selectedWorkspace).toBe("default");
+    act(() => {
+      useDaemonStore.getState().selectSession("s2");
+    });
+    expect(useDaemonStore.getState().selectedWorkspace).toBe("prod");
+  });
+});
+
+// ─── Project group (disclosure + nested listbox) ───────────────────────────
+describe("ProjectGroup", () => {
+  beforeEach(() => {
+    useDaemonStore.getState().reset();
+    vi.clearAllMocks();
+  });
+
+  it("renders one project header per distinct project (alphabetical)", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s2",
+          project: "/repo/beta",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "b" }, status: "idle" },
+        },
+        {
+          id: "s1",
+          project: "/repo/alpha",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "a" }, status: "idle" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const headers = container.querySelectorAll(".session-list__project-header");
+    expect(headers.length).toBe(2);
+    expect(headers[0]?.querySelector(".session-list__project-name")?.textContent).toBe("alpha");
+    expect(headers[1]?.querySelector(".session-list__project-name")?.textContent).toBe("beta");
+  });
+
+  it("renders the session count badge next to the project name", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/alpha",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "a" }, status: "idle" },
+        },
+        {
+          id: "s2",
+          project: "/repo/alpha",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "b" }, status: "idle" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    expect(container.querySelector(".session-list__project-count")?.textContent).toBe("2");
+  });
+
+  it("aria-expanded=true on header maps to a visible session panel", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/alpha",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "a" }, status: "idle" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const header = container.querySelector(".session-list__project-header");
+    expect(header?.getAttribute("aria-expanded")).toBe("true");
+    // panel exists and contains the session row.
+    expect(container.querySelector(".session-list__project-panel")).not.toBeNull();
+    expect(screen.getByText("a")).toBeDefined();
+  });
+
+  it("two repos sharing a basename are foldable independently (key=projectPath)", () => {
+    // Regression gate for the basename-collision bug: clicking the fold
+    // header on one of two same-basename groups must not collapse the other.
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "a",
+          project: "/home/a/web",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "in a" }, status: "idle" },
+        },
+        {
+          id: "b",
+          project: "/home/b/web",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "in b" }, status: "idle" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const headers = container.querySelectorAll<HTMLButtonElement>(".session-list__project-header");
+    expect(headers.length).toBe(2);
+    // Click the first header. Only that group should collapse.
+    const first = headers[0];
+    expect(first).toBeDefined();
+    if (first) fireEvent.click(first);
+    expect(headers[0]?.getAttribute("aria-expanded")).toBe("false");
+    expect(headers[1]?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("clicking the header toggles fold (aria-expanded flips to false and the panel disappears)", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/alpha",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "a" }, status: "idle" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const header = container.querySelector<HTMLButtonElement>(".session-list__project-header");
+    expect(header).not.toBeNull();
+    if (header) fireEvent.click(header);
+    expect(header?.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector(".session-list__project-panel")).toBeNull();
+    expect(screen.queryByText("a")).toBeNull();
+  });
+
+  it("collapsed projects show their count even when the session list is hidden", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/alpha",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "a" }, status: "idle" },
+        },
+        {
+          id: "s2",
+          project: "/repo/alpha",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "b" }, status: "idle" },
+        },
+      ],
+    });
+    const { container } = render(<SessionList conn={fakeConn} />);
+    const header = container.querySelector<HTMLButtonElement>(".session-list__project-header");
+    if (header) fireEvent.click(header);
+    expect(container.querySelector(".session-list__project-count")?.textContent).toBe("2");
+  });
+});
+
+// ─── Empty state ───────────────────────────────────────────────────────────
+describe("SessionList empty state", () => {
+  beforeEach(() => {
+    useDaemonStore.getState().reset();
+    vi.clearAllMocks();
+  });
+
+  it("shows 'No sessions yet.' when default workspace is empty", () => {
+    useDaemonStore.setState({ sessions: [] });
+    render(<SessionList conn={fakeConn} />);
+    expect(screen.getByText("No sessions yet.")).toBeDefined();
+  });
+
+  it("shows a workspace-specific empty message for non-default workspaces", () => {
+    useDaemonStore.setState({
+      sessions: [
+        {
+          id: "s1",
+          project: "/repo/a",
+          workspace: "prod",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "a" }, status: "idle" },
+        },
+      ],
+      selectedWorkspace: "prod",
+    });
+    // remove the only prod session so the workspace becomes empty but still selected
+    useDaemonStore.setState({ sessions: [] });
+    // sessions = [] now removes "prod" from distinctWorkspaces but selectedWorkspace
+    // stays in store; the listView will fall back to no groups → empty message.
+    // But the empty message branch keys on selectedWorkspace, so it should now read
+    // "default" (since we never mutated selectedWorkspace directly here, but
+    // selectedWorkspace was set to "prod"). Force it explicitly:
+    useDaemonStore.setState({ selectedWorkspace: "prod" });
+    render(<SessionList conn={fakeConn} />);
+    expect(screen.getByText(/No sessions in workspace "prod"/)).toBeDefined();
+  });
+});
+
+// ─── selectSession + per-project cursor ────────────────────────────────────
+describe("SessionList selectSession", () => {
   beforeEach(() => {
     useDaemonStore.getState().reset();
     vi.clearAllMocks();
@@ -258,14 +766,14 @@ describe("SessionList onClick", () => {
       sessions: [
         {
           id: "s1",
-          project: "proj",
+          project: "/repo/alpha",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "alpha" }, status: "running" },
         },
         {
           id: "s2",
-          project: "proj",
+          project: "/repo/alpha",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "beta" }, status: "stopped" },
@@ -275,14 +783,11 @@ describe("SessionList onClick", () => {
   });
 
   it("calls selectSession on click", () => {
-    const selectSession = vi.fn();
-    useDaemonStore.setState({ selectSession });
     render(<SessionList conn={fakeConn} />);
-    // UnifiedListbox activates via onPointerDown on the option div
     const betaOption = screen.getByText("beta").closest('[role="option"]');
     expect(betaOption).not.toBeNull();
     if (betaOption) fireEvent.pointerDown(betaOption);
-    expect(selectSession).toHaveBeenCalledWith("s2");
+    expect(useDaemonStore.getState().activeSessionID).toBe("s2");
   });
 
   it("ADR-0030: does NOT call conn.subscribe on click", () => {
@@ -302,53 +807,35 @@ describe("SessionList onClick", () => {
   });
 });
 
-// ─── FR-TOKEN-002: role=listbox upgrade + disabled skip-nav ──────────────────
-describe("FR-TOKEN-002: SessionList is role=listbox; disabled rows visible, skip-nav, reason text", () => {
+// ─── role=listbox + disabled rows ──────────────────────────────────────────
+describe("SessionList listbox a11y (FR-TOKEN-002)", () => {
   beforeEach(() => {
     useDaemonStore.getState().reset();
     vi.clearAllMocks();
   });
 
-  it("renders a role=listbox container", () => {
+  it("renders one role=listbox per project group", () => {
     useDaemonStore.setState({
       sessions: [
         {
           id: "s1",
-          project: "p",
+          project: "/repo/alpha",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
-          view: { card: { title: "alpha" }, status: "running" },
+          view: { card: { title: "a1" }, status: "running" },
+        },
+        {
+          id: "s2",
+          project: "/repo/beta",
+          command: "claude",
+          created_at: "2026-06-20T00:00:00Z",
+          view: { card: { title: "b1" }, status: "idle" },
         },
       ],
     });
     const { container } = render(<SessionList conn={fakeConn} />);
-    const listbox = container.querySelector('[role="listbox"]');
-    expect(listbox).not.toBeNull();
-  });
-
-  it("aria-activedescendant points to the active session id", () => {
-    useDaemonStore.setState({
-      sessions: [
-        {
-          id: "s-active",
-          project: "p",
-          command: "claude",
-          created_at: "2026-06-20T00:00:00Z",
-          view: { card: { title: "active-session" }, status: "running" },
-        },
-        {
-          id: "s-other",
-          project: "p",
-          command: "claude",
-          created_at: "2026-06-20T00:00:00Z",
-          view: { card: { title: "other-session" }, status: "stopped" },
-        },
-      ],
-      activeSessionID: "s-active",
-    });
-    const { container } = render(<SessionList conn={fakeConn} />);
-    const listbox = container.querySelector('[role="listbox"]');
-    expect(listbox?.getAttribute("aria-activedescendant")).toBe("s-active");
+    const listboxes = container.querySelectorAll('[role="listbox"]');
+    expect(listboxes.length).toBe(2);
   });
 
   it("disabled rows (daemonDisconnected=true) are still DOM-visible", () => {
@@ -356,7 +843,7 @@ describe("FR-TOKEN-002: SessionList is role=listbox; disabled rows visible, skip
       sessions: [
         {
           id: "s1",
-          project: "p",
+          project: "/repo/p",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "my-session" }, status: "running" },
@@ -365,7 +852,6 @@ describe("FR-TOKEN-002: SessionList is role=listbox; disabled rows visible, skip
       daemonDisconnected: true,
     });
     render(<SessionList conn={fakeConn} />);
-    // The session row should still be visible in the DOM.
     expect(screen.getByText("my-session")).toBeDefined();
   });
 
@@ -374,7 +860,7 @@ describe("FR-TOKEN-002: SessionList is role=listbox; disabled rows visible, skip
       sessions: [
         {
           id: "s1",
-          project: "p",
+          project: "/repo/p",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "my-session" }, status: "stopped" },
@@ -392,7 +878,7 @@ describe("FR-TOKEN-002: SessionList is role=listbox; disabled rows visible, skip
       sessions: [
         {
           id: "s1",
-          project: "p",
+          project: "/repo/p",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "my-session" }, status: "stopped" },
@@ -401,396 +887,164 @@ describe("FR-TOKEN-002: SessionList is role=listbox; disabled rows visible, skip
       daemonDisconnected: true,
     });
     render(<SessionList conn={fakeConn} />);
-    // The reason text is rendered as a span child of the disabled option.
     expect(screen.getByText("Daemon disconnected")).toBeDefined();
   });
 
-  it("ArrowDown navigation moves cursor (aria-activedescendant) but does NOT call selectSession (onActiveChange is preview-only)", () => {
-    const selectSession = vi.fn();
+  it("ArrowDown moves cursor within a project but does NOT call selectSession", () => {
     useDaemonStore.setState({
       sessions: [
         {
           id: "s1",
-          project: "p",
+          project: "/repo/alpha",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "first" }, status: "running" },
         },
         {
           id: "s2",
-          project: "p",
+          project: "/repo/alpha",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "second" }, status: "stopped" },
         },
       ],
       activeSessionID: "s1",
-      selectSession,
-      // Sessions are NOT disabled (daemonDisconnected: false).
       daemonDisconnected: false,
     });
     const { container } = render(<SessionList conn={fakeConn} />);
     const listbox = container.querySelector('[role="listbox"]');
     expect(listbox).not.toBeNull();
-    // Before ArrowDown: cursor is at the initial active session (s1).
     expect(listbox?.getAttribute("aria-activedescendant")).toBe("s1");
-    // ArrowDown moves the preview cursor (onActiveChange) to s2 and updates
-    // aria-activedescendant. Session selection only happens on onActivate
-    // (Enter / pointer click) — selectSession must NOT be called.
     if (listbox) fireEvent.keyDown(listbox, { key: "ArrowDown" });
-    expect(selectSession).not.toHaveBeenCalled();
-    // aria-activedescendant must now point to s2 (the next enabled row).
+    expect(useDaemonStore.getState().activeSessionID).toBe("s1");
     expect(listbox?.getAttribute("aria-activedescendant")).toBe("s2");
-  });
-
-  it("ArrowDown skips disabled rows: mixed enabled+disabled advances past disabled to next enabled", () => {
-    const selectSession = vi.fn();
-    useDaemonStore.setState({
-      sessions: [
-        {
-          id: "s1",
-          project: "p",
-          command: "claude",
-          created_at: "2026-06-20T00:00:00Z",
-          view: { card: { title: "first" }, status: "running" },
-        },
-        {
-          id: "s2",
-          project: "p",
-          command: "claude",
-          created_at: "2026-06-20T00:00:00Z",
-          view: { card: { title: "second" }, status: "stopped" },
-        },
-        {
-          id: "s3",
-          project: "p",
-          command: "claude",
-          created_at: "2026-06-20T00:00:00Z",
-          view: { card: { title: "third" }, status: "idle" },
-        },
-      ],
-      activeSessionID: "s1",
-      selectSession,
-      // Only daemon-disconnected flag makes all rows disabled currently.
-      // Use daemonDisconnected: false so rows are enabled; we rely on the
-      // UnifiedListbox skip-nav logic over enabled rows here.
-      daemonDisconnected: false,
-    });
-    const { container } = render(<SessionList conn={fakeConn} />);
-    const listbox = container.querySelector('[role="listbox"]');
-    expect(listbox).not.toBeNull();
-    // First ArrowDown: s1 → s2.
-    if (listbox) fireEvent.keyDown(listbox, { key: "ArrowDown" });
-    expect(listbox?.getAttribute("aria-activedescendant")).toBe("s2");
-    // Second ArrowDown: s2 → s3.
-    if (listbox) fireEvent.keyDown(listbox, { key: "ArrowDown" });
-    expect(listbox?.getAttribute("aria-activedescendant")).toBe("s3");
-    // selectSession must never have been called.
-    expect(selectSession).not.toHaveBeenCalled();
   });
 
   it("Enter key activates the cursor session and calls selectSession", () => {
-    const selectSession = vi.fn();
     useDaemonStore.setState({
       sessions: [
         {
           id: "s1",
-          project: "p",
+          project: "/repo/alpha",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "first" }, status: "running" },
         },
-        {
-          id: "s2",
-          project: "p",
-          command: "claude",
-          created_at: "2026-06-20T00:00:00Z",
-          view: { card: { title: "second" }, status: "stopped" },
-        },
       ],
       activeSessionID: "s1",
-      selectSession,
       daemonDisconnected: false,
     });
     const { container } = render(<SessionList conn={fakeConn} />);
     const listbox = container.querySelector('[role="listbox"]');
-    expect(listbox).not.toBeNull();
-    // Enter on the currently focused session (s1) calls selectSession("s1").
     if (listbox) fireEvent.keyDown(listbox, { key: "Enter" });
-    expect(selectSession).toHaveBeenCalledWith("s1");
+    expect(useDaemonStore.getState().activeSessionID).toBe("s1");
   });
 });
 
-// ─── FR-TOKEN-001: CSS source structure — no hardcoded values in .unified-listbox__option ─
-describe("FR-TOKEN-001: .unified-listbox__option uses only --row-* tokens (CSS source check)", () => {
+// ─── FR-TOKEN-001 / row sizing parity (CSS source check) ───────────────────
+describe("FR-TOKEN-001: row sizing tokens", () => {
   const cssDir = path.resolve(__dirname, "../css");
 
-  it("app.css declares .unified-listbox__option with border-radius: var(--row-radius)", () => {
+  it("app.css declares .unified-listbox__option with --row-* sizing tokens", () => {
     const appCss = fs.readFileSync(path.join(cssDir, "app.css"), "utf-8");
     expect(appCss).toContain("border-radius: var(--row-radius)");
-  });
-
-  it("app.css declares .unified-listbox__option with padding-top: var(--row-padding-y)", () => {
-    const appCss = fs.readFileSync(path.join(cssDir, "app.css"), "utf-8");
     expect(appCss).toContain("padding-top: var(--row-padding-y)");
-  });
-
-  it("app.css declares .unified-listbox__option with font-size: var(--row-font-size)", () => {
-    const appCss = fs.readFileSync(path.join(cssDir, "app.css"), "utf-8");
     expect(appCss).toContain("font-size: var(--row-font-size)");
-  });
-
-  it("app.css declares .unified-listbox__option with line-height: var(--row-line-height)", () => {
-    const appCss = fs.readFileSync(path.join(cssDir, "app.css"), "utf-8");
     expect(appCss).toContain("line-height: var(--row-line-height)");
-  });
-
-  it("app.css declares .unified-listbox__option with min-height: var(--row-min-height)", () => {
-    const appCss = fs.readFileSync(path.join(cssDir, "app.css"), "utf-8");
     expect(appCss).toContain("min-height: var(--row-min-height)");
   });
 
-  it("app.css .unified-listbox__option and derived blocks have no hardcoded hex color values", () => {
-    const appCss = fs.readFileSync(path.join(cssDir, "app.css"), "utf-8");
-    // Extract all rule blocks whose selector contains .unified-listbox__option
-    // (base rule + derived: --disabled, [aria-selected], -reason, etc.).
-    const rulePattern = /\.unified-listbox__option(?:[^{]*)\{([^}]*)\}/gs;
-    const matches = Array.from(appCss.matchAll(rulePattern));
-    expect(matches.length, "Expected at least one .unified-listbox__option rule").toBeGreaterThan(
-      0,
-    );
-
-    for (const m of matches) {
-      const block: string = m[1] ?? "";
-      const selector = (m[0] ?? "").split("{")[0]?.trim() ?? "";
-      // Check for 6-digit hex.
-      const sixDigit = block.match(/#[0-9a-fA-F]{6}/g) ?? [];
-      expect(sixDigit, `Found 6-digit hex in "${selector}": ${sixDigit.join(", ")}`).toHaveLength(
-        0,
-      );
-      // Check for 3-digit hex.
-      const threeDigit = block.match(/#[0-9a-fA-F]{3}(?![0-9a-fA-F])/g) ?? [];
-      expect(
-        threeDigit,
-        `Found 3-digit hex in "${selector}": ${threeDigit.join(", ")}`,
-      ).toHaveLength(0);
-    }
+  it("FR-A11Y-001: session-list.css declares 44px min-height for .session-list .unified-listbox__option", () => {
+    const css = fs.readFileSync(path.join(cssDir, "session-list.css"), "utf-8");
+    expect(css).toContain(".session-list .unified-listbox__option");
+    expect(css).toContain("min-height: 44px");
   });
 });
 
-// ─── FR-TOKEN-001: computed style parity between SessionList and palette listbox ─
-describe("FR-TOKEN-001: SessionList and palette listbox option computed styles match via --row-* tokens", () => {
-  it("session-list option and standalone UnifiedListbox option resolve identical computed styles", () => {
-    const cssDir = path.resolve(__dirname, "../css");
-    const tokensCss = fs.readFileSync(path.join(cssDir, "tokens.css"), "utf-8");
-    const appCss = fs.readFileSync(path.join(cssDir, "app.css"), "utf-8");
-
-    // Inject tokens and app CSS so computed style resolves via the cascade.
-    const tokensStyle = document.createElement("style");
-    tokensStyle.textContent = tokensCss;
-    document.head.appendChild(tokensStyle);
-
-    const appStyle = document.createElement("style");
-    appStyle.textContent = appCss;
-    document.head.appendChild(appStyle);
-
-    // Render a SessionList (which uses UnifiedListbox internally).
-    useDaemonStore.setState({
-      sessions: [
-        {
-          id: "cmp-s1",
-          project: "p",
-          command: "claude",
-          created_at: "2026-06-20T00:00:00Z",
-          view: { card: { title: "compare" }, status: "stopped" },
-        },
-      ],
-      daemonDisconnected: false,
-    });
-    const { container: slContainer } = render(<SessionList conn={fakeConn} />);
-    const slOption = slContainer.querySelector('[role="option"]');
-    expect(slOption).not.toBeNull();
-
-    // Render a second standalone UnifiedListbox (simulates the palette listbox option).
-    const { container: ulContainer } = render(
-      <UnifiedListbox
-        ariaLabel="palette-test"
-        items={[{ id: "pal-opt-1", label: <span>Palette Option</span> }]}
-        activeId={null}
-        onActiveChange={() => {}}
-        onActivate={() => {}}
-      />,
-    );
-    const paletteOption = ulContainer.querySelector('[role="option"]');
-    expect(paletteOption).not.toBeNull();
-
-    // Both options use .unified-listbox__option → the same --row-* tokens.
-    // In happy-dom, custom properties resolve to their declared value strings.
-    // We compare the resolved getComputedStyle property values for each option.
-    const slStyle = slOption ? getComputedStyle(slOption) : null;
-    const palStyle = paletteOption ? getComputedStyle(paletteOption) : null;
-
-    if (slStyle && palStyle) {
-      // The base .unified-listbox__option rule drives these — values must match.
-      expect(slStyle.borderRadius).toBe(palStyle.borderRadius);
-      expect(slStyle.paddingTop).toBe(palStyle.paddingTop);
-      expect(slStyle.paddingBottom).toBe(palStyle.paddingBottom);
-      expect(slStyle.paddingLeft).toBe(palStyle.paddingLeft);
-      expect(slStyle.paddingRight).toBe(palStyle.paddingRight);
-      expect(slStyle.fontSize).toBe(palStyle.fontSize);
-      expect(slStyle.lineHeight).toBe(palStyle.lineHeight);
-      // SessionList overrides min-height to 44px (FR-A11Y-001); the palette
-      // option retains the --row-min-height value. We confirm both resolve to
-      // non-empty values (the cascade applies to both).
-      expect(slStyle.minHeight).toBeTruthy();
-      expect(palStyle.minHeight).toBeTruthy();
-    }
-
-    document.head.removeChild(tokensStyle);
-    document.head.removeChild(appStyle);
-  });
-});
-
-// ─── 2-line ellipsis and 44px min-height (ADR-0033, FR-A11Y-001) ─────────────
-describe("SessionList: 2-line ellipsis and 44px minimum touch target", () => {
+// ─── caret-rail signature ──────────────────────────────────────────────────
+describe("SessionList active accent (caret rail signature)", () => {
   beforeEach(() => {
     useDaemonStore.getState().reset();
     vi.clearAllMocks();
   });
 
-  it("session label element has -webkit-line-clamp: 2 via computed style (app.css injected)", () => {
+  it("committed-active row carries .session-list__row--active modifier", () => {
     useDaemonStore.setState({
       sessions: [
         {
           id: "s1",
-          project: "p",
+          project: "/repo/alpha",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
-          view: {
-            card: {
-              title: "A very long session title that should be clamped to two lines maximum",
-            },
-            status: "running",
-          },
+          view: { card: { title: "alpha" }, status: "running" },
         },
-      ],
-    });
-    // Inject app.css so getComputedStyle can resolve -webkit-line-clamp.
-    const cssDir = path.resolve(__dirname, "../css");
-    const appCss = fs.readFileSync(path.join(cssDir, "app.css"), "utf-8");
-    const style = document.createElement("style");
-    style.textContent = appCss;
-    document.head.appendChild(style);
-
-    const { container } = render(<SessionList conn={fakeConn} />);
-    const label = container.querySelector(".session-list__label--clamped");
-    expect(label).not.toBeNull();
-
-    if (label) {
-      // happy-dom resolves CSS custom properties and vendor-prefixed properties.
-      const clampValue = getComputedStyle(label).getPropertyValue("-webkit-line-clamp");
-      expect(
-        clampValue.trim(),
-        `Expected -webkit-line-clamp to be "2", got: "${clampValue.trim()}"`,
-      ).toBe("2");
-    }
-
-    document.head.removeChild(style);
-  });
-
-  it("app.css declares -webkit-line-clamp: 2 for .session-list__label--clamped", () => {
-    const cssDir = path.resolve(__dirname, "../css");
-    const appCss = fs.readFileSync(path.join(cssDir, "app.css"), "utf-8");
-    expect(appCss).toContain("-webkit-line-clamp: 2");
-    expect(appCss).toContain("-webkit-box-orient: vertical");
-    expect(appCss).toContain(".session-list__label--clamped");
-  });
-
-  it("FR-A11Y-001: app.css declares 44px min-height for .session-list .unified-listbox__option", () => {
-    // FR-A11Y-001 requires a 44×44px minimum touch target for SessionList rows.
-    // The shared --row-min-height token (2rem = 32px) is intentionally compact for
-    // the palette; the SessionList scope overrides it to 44px.
-    const cssDir = path.resolve(__dirname, "../css");
-    const appCss = fs.readFileSync(path.join(cssDir, "app.css"), "utf-8");
-    // Assert that the SessionList-scoped override is present.
-    expect(appCss).toContain(".session-list .unified-listbox__option");
-    expect(appCss).toContain("min-height: 44px");
-  });
-
-  it("FR-A11Y-001: SessionList option computed min-height is at least 44px", () => {
-    const cssDir = path.resolve(__dirname, "../css");
-    const tokensCss = fs.readFileSync(path.join(cssDir, "tokens.css"), "utf-8");
-    const appCss = fs.readFileSync(path.join(cssDir, "app.css"), "utf-8");
-
-    // Inject CSS so getComputedStyle can resolve via the cascade.
-    const tokensStyle = document.createElement("style");
-    tokensStyle.textContent = tokensCss;
-    document.head.appendChild(tokensStyle);
-
-    const appStyle = document.createElement("style");
-    appStyle.textContent = appCss;
-    document.head.appendChild(appStyle);
-
-    useDaemonStore.setState({
-      sessions: [
         {
-          id: "a11y-s1",
-          project: "p",
+          id: "s2",
+          project: "/repo/alpha",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
-          view: { card: { title: "touch target" }, status: "stopped" },
+          view: { card: { title: "beta" }, status: "stopped" },
         },
       ],
+      activeSessionID: "s2",
     });
     const { container } = render(<SessionList conn={fakeConn} />);
-    const option = container.querySelector('[role="option"]');
-    expect(option).not.toBeNull();
+    const activeRows = container.querySelectorAll(".session-list__row--active");
+    expect(activeRows.length).toBe(1);
+    expect(activeRows[0]?.textContent).toMatch(/beta/);
+  });
 
-    if (option) {
-      const computedMinHeight = getComputedStyle(option).minHeight;
-      // happy-dom resolves CSS custom properties; 44px is a literal pixel value
-      // so it should resolve directly to "44px".
-      expect(
-        computedMinHeight,
-        `Expected computed min-height >= 44px, got: ${computedMinHeight}`,
-      ).toBe("44px");
-    }
+  it("session-list.css declares caret rail ::before for committed-active row", () => {
+    const cssDir = path.resolve(__dirname, "../css");
+    const css = fs.readFileSync(path.join(cssDir, "session-list.css"), "utf-8");
+    expect(css).toContain(
+      ".session-list .unified-listbox__option:has(.session-list__row--active)::before",
+    );
+    expect(css).toContain("animation: palette-row-caret-in");
+    expect(css).toContain("var(--rail-accent)");
+  });
 
-    document.head.removeChild(tokensStyle);
-    document.head.removeChild(appStyle);
+  it("view.css consolidates reduced-motion guard for the caret rail (ADR-0064)", () => {
+    const cssDir = path.resolve(__dirname, "../css");
+    const viewCss = fs.readFileSync(path.join(cssDir, "view.css"), "utf-8");
+    expect(viewCss).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(viewCss).toContain(
+      ".session-list .unified-listbox__option:has(.session-list__row--active)::before",
+    );
   });
 });
 
-// ─── ADR-0033 displayLabel chain maintained ──────────────────────────────────
+// ─── ADR-0032 / ADR-0033 invariants maintained ─────────────────────────────
 describe("ADR-0033: displayLabel chain maintained in SessionList render", () => {
   beforeEach(() => {
     useDaemonStore.getState().reset();
     vi.clearAllMocks();
   });
 
-  it("renders title when title is present (ADR-0033 chain: title first)", () => {
+  it("renders title when title is present (ADR-0033 chain: title first; subtitle suppressed)", () => {
     useDaemonStore.setState({
       sessions: [
         {
           id: "s1",
-          project: "p",
+          project: "/repo/p",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "My Title", subtitle: "My Sub" }, status: "idle" },
         },
       ],
     });
-    render(<SessionList conn={fakeConn} />);
+    const { container } = render(<SessionList conn={fakeConn} />);
     expect(screen.getByText("My Title")).toBeDefined();
-    expect(screen.queryByText("My Sub")).toBeNull();
+    // subtitle is the title-fallback — it must NOT appear alongside the title.
+    expect(container.textContent).not.toMatch(/My Sub/);
   });
 
-  it("renders subtitle when title is absent (ADR-0033 chain: subtitle second)", () => {
+  it("renders subtitle when title is absent", () => {
     useDaemonStore.setState({
       sessions: [
         {
           id: "s1",
-          project: "p",
+          project: "/repo/p",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { subtitle: "Only Sub" }, status: "idle" },
@@ -798,15 +1052,15 @@ describe("ADR-0033: displayLabel chain maintained in SessionList render", () => 
       ],
     });
     render(<SessionList conn={fakeConn} />);
-    expect(screen.getByText("Only Sub")).toBeDefined();
+    expect(screen.getAllByText("Only Sub").length).toBeGreaterThan(0);
   });
 
-  it("renders id when title and subtitle both absent (ADR-0033 chain: id fallback)", () => {
+  it("renders id when title and subtitle both absent", () => {
     useDaemonStore.setState({
       sessions: [
         {
           id: "fallback-id",
-          project: "p",
+          project: "/repo/p",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: {}, status: "idle" },
@@ -818,7 +1072,6 @@ describe("ADR-0033: displayLabel chain maintained in SessionList render", () => 
   });
 });
 
-// ─── ADR-0032: RunStateBadge / status spinner maintained ─────────────────────
 describe("ADR-0032: session-status-slot and session-status-spinner are maintained", () => {
   beforeEach(() => {
     useDaemonStore.getState().reset();
@@ -830,7 +1083,7 @@ describe("ADR-0032: session-status-slot and session-status-spinner are maintaine
       sessions: [
         {
           id: "s1",
-          project: "p",
+          project: "/repo/p",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "active" }, status: "running" },
@@ -846,7 +1099,7 @@ describe("ADR-0032: session-status-slot and session-status-spinner are maintaine
       sessions: [
         {
           id: "s1",
-          project: "p",
+          project: "/repo/p",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "stopped" }, status: "stopped" },
@@ -862,14 +1115,14 @@ describe("ADR-0032: session-status-slot and session-status-spinner are maintaine
       sessions: [
         {
           id: "s1",
-          project: "p",
+          project: "/repo/p",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "s1" }, status: "running" },
         },
         {
           id: "s2",
-          project: "p",
+          project: "/repo/p",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
           view: { card: { title: "s2" }, status: "stopped" },

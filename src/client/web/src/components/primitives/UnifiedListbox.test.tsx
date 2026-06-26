@@ -392,13 +392,16 @@ describe("UnifiedListbox — CSS token classes", () => {
   // We assert both rules so the listbox sidebar (44px) and the palette
   // listbox (--row-min-height fallback) both stay observable.
   it("FR-A11Y-001 (m1): listbox option CSS contract — 44x44 minimum target", () => {
-    const cssPath = resolve(__dirname, "..", "..", "css", "app.css");
-    const css = readFileSync(cssPath, "utf-8");
-    // Base .unified-listbox__option declaration uses --row-min-height var.
-    const baseMatch = css.match(/\.unified-listbox__option \{([^}]+)\}/);
+    const appCssPath = resolve(__dirname, "..", "..", "css", "app.css");
+    const appCss = readFileSync(appCssPath, "utf-8");
+    // Base .unified-listbox__option declaration uses --row-min-height var
+    // (still owned by app.css).
+    const baseMatch = appCss.match(/\.unified-listbox__option \{([^}]+)\}/);
     expect(baseMatch).not.toBeNull();
     expect(baseMatch?.[1] ?? "").toMatch(/min-height:\s*var\(--row-min-height\)/);
-    // SessionList override locks to 44px so the sidebar hits WCAG 2.5.5.
-    expect(css).toMatch(/\.session-list \.unified-listbox__option \{[^}]*min-height:\s*44px/);
+    // SessionList override locks to 44px (moved to session-list.css).
+    const slCssPath = resolve(__dirname, "..", "..", "css", "session-list.css");
+    const slCss = readFileSync(slCssPath, "utf-8");
+    expect(slCss).toMatch(/\.session-list \.unified-listbox__option \{[^}]*min-height:\s*44px/);
   });
 });

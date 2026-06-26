@@ -1,0 +1,261 @@
+/* session-list.css — sidebar session picker (workspace bar + project tree).
+   Import order: tokens.css → app.css → session-list.css → palette.css → snackbar.css → shell.css → view.css
+
+   Structure mirrors arc TUI sidebar:
+     1. Workspace switcher row (rendered only when ≥ 2 workspaces exist)
+     2. Project sections: disclosure header + nested UnifiedListbox
+   Same DOM on desktop / tablet / mobile drawer — only spacing and the
+   workspace-bar's horizontal-scroll behavior shift via the host container's
+   media queries (shell.css). */
+
+/* ─── SessionList container ─────────────────────────────────────────────── */
+.session-list {
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Workspace bar: sticky chip row. SegmentedControl primitive reused with
+   chip-style overrides. */
+.session-list__workspace-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 4px 0 6px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) transparent;
+}
+.session-list__workspace-bar .segmented-control {
+  gap: 4px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  border-radius: 999px;
+  padding: 2px;
+  background: var(--surface-canvas);
+  border: 1px solid var(--hairline);
+  display: inline-flex;
+}
+.session-list__workspace-bar .segmented-control__segment {
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  transition: color 120ms ease-out, background-color 120ms ease-out;
+}
+.session-list__workspace-bar .segmented-control__segment:hover:not(:disabled) {
+  background: var(--surface-row-hover);
+  color: var(--fg);
+}
+.session-list__workspace-bar .segmented-control__segment[aria-checked="true"] {
+  background: var(--rail-accent);
+  color: var(--on-accent);
+  border: 0;
+}
+
+/* Empty state shown when the current workspace has no sessions. */
+.session-list__empty {
+  padding: 12px 8px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-style: italic;
+}
+
+/* ─── Project sections ─────────────────────────────────────────────────── */
+.session-list__projects {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.session-list__project {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-list__project-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 8px;
+  background: transparent;
+  color: var(--fg);
+  border: 0;
+  border-radius: var(--row-radius);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+.session-list__project-header:hover {
+  background: var(--surface-row-hover);
+}
+.session-list__project-header:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.session-list__project-chevron {
+  flex-shrink: 0;
+  width: 12px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--fg-muted);
+  font-size: 10px;
+  line-height: 1;
+}
+.session-list__project-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-list__project-count {
+  flex-shrink: 0;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-row-hover);
+  color: var(--fg-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.session-list__project-panel {
+  padding-left: 8px;
+  border-left: 1px solid var(--hairline);
+  margin-left: 6px;
+}
+
+/* ─── Nested listbox (per project) ─────────────────────────────────────── */
+.session-list .unified-listbox {
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+/* FR-A11Y-001: 44×44px touch target. Modernization tokens overlay --row-*. */
+.session-list .unified-listbox__option {
+  position: relative;
+  min-height: 44px;
+  transition: background-color 120ms ease-out;
+}
+/* aria-selected = cursor preview (lighter tint); committed-active row = strong
+   tint + caret rail (palette-row-caret-in keyframe reused). */
+.session-list .unified-listbox__option:not([aria-disabled="true"]):hover,
+.session-list .unified-listbox__option[aria-selected="true"] {
+  background: var(--surface-row-hover);
+}
+.session-list .unified-listbox__option:has(.session-list__row--active) {
+  background: var(--surface-row-selected);
+}
+/* Active row caret rail (palette parity, ADR-0064 keyframe reuse). */
+.session-list .unified-listbox__option:has(.session-list__row--active)::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: var(--rail-accent);
+  border-radius: 2px;
+  transform-origin: center;
+  animation: palette-row-caret-in 80ms ease-out;
+  pointer-events: none;
+}
+
+/* ─── Session row (one option inside a project's listbox) ──────────────── */
+.session-list__row {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.session-list__content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.session-list__row--active .session-list__title {
+  color: var(--accent);
+}
+
+/* Title row: title (truncating) + optional colored driver chip pinned to the
+   top-right. `subtitle` is the *fallback* for an empty title via displayLabel
+   (ADR-0033), so the row never shows both at the same time. The driver chip's
+   bg/fg are inlined via `style` — colors come from lib/driverColor.ts (parity
+   with Go's driver/tags.go). */
+.session-list__title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.session-list__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.session-list__driver {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  line-height: 1.4;
+  white-space: nowrap;
+  /* bg/color resolved at render time via lib/driverColor.ts inline style. */
+}
+
+/* Tag row: pills + border_badge. Only rendered when at least one is present. */
+.session-list__tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+.session-list__tag {
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: 3px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+}
+.session-list__badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  line-height: 1.5;
+  padding: 0 5px;
+  border-radius: 3px;
+  border: 1px solid var(--hairline);
+  color: var(--fg-muted);
+}

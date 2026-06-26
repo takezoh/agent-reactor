@@ -1,20 +1,36 @@
-// SessionList — sidebar session picker upgraded to role=listbox (FR-TOKEN-001/002, FR-A11Y-001).
+// SessionList — sidebar session picker, partitioned by workspace and grouped
+// by project. Mirrors the arc TUI sidebar structure (workspace switcher row
+// → alphabetical project headers with fold toggles → sessions under each).
 //
-// Uses UnifiedListbox primitive (m5-unified-listbox-primitive) to provide:
-//   - role=listbox + aria-activedescendant skip-disabled navigation (FR-TOKEN-002)
-//   - --row-* token sizing so palette rows and SessionList rows compute identically (FR-TOKEN-001)
-//   - 2-line ellipsis on long displayLabel (-webkit-line-clamp:2) (ADR-0033)
-//   - minimum 44x44px touch target (FR-A11Y-001)
+// Layered listbox model:
+//   - Workspace switcher: SegmentedControl (radiogroup) — only rendered when
+//     ≥ 2 workspaces exist (TUI workspaceBarVisible parity).
+//   - Per-project section: disclosure button (aria-expanded) + nested
+//     UnifiedListbox of sessions. Each project has its own cursor; this is
+//     deliberate — keeps keyboard nav contained inside a project so the
+//     active-session highlight never drifts to a different project.
 //
-// ADR-0033 (displayLabel chain): title → subtitle → id
-// ADR-0032 (RunStateBadge multi-encoding): session-status-slot / session-status-spinner kept
-// ADR-0030: conn prop retained for API compat; SessionList does NOT own subscriptions
+// ADRs retained:
+//   - ADR-0033 (displayLabel chain: title → subtitle → id)
+//   - ADR-0032 (session-status-slot + session-status-spinner kept)
+//   - ADR-0030 (conn prop retained for API compat; SessionList does not own
+//     subscriptions — TerminalPane owns them)
+//   - FR-A11Y-001 (44×44px touch target on every interactive row)
+//   - FR-TOKEN-001/002 (--row-* sizing tokens shared with palette listbox)
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { driverColor } from "../lib/driverColor";
 import type { Connection } from "../socket/connection";
 import "../css/view.css";
-import { useDaemonStore } from "../store/daemon";
-import type { Card } from "../wire/server";
+import {
+  DEFAULT_WORKSPACE,
+  groupSessionsByProject,
+  selectDistinctWorkspaces,
+  useDaemonStore,
+} from "../store/daemon";
+import type { Card, SessionInfo } from "../wire/server";
+import { SegmentedControl } from "./primitives/SegmentedControl";
+import { TagPill } from "./primitives/TagPill";
 import { UnifiedListbox } from "./primitives/UnifiedListbox";
 
 // ---------------------------------------------------------------------------
@@ -43,18 +59,41 @@ function normalizeStatus(status?: string): string {
 // ---------------------------------------------------------------------------
 // SessionRow — one row rendered inside UnifiedListbox as label prop
 // ---------------------------------------------------------------------------
+//
+// Card layout (modernization — driver inlined into title row):
+//
+//   ┃ ● <title or subtitle>           [driver]
+//   ┃   [tag] [tag]  <border_badge>
+//
+// `subtitle` is only used as the title fallback via displayLabel (ADR-0033 chain
+// title → subtitle → id); we never render BOTH title and subtitle — they are
+// alternatives, not complements. So the per-card meta row collapses to a single
+// optional element: the driver chip, which lives on the title row itself.
 
 interface SessionRowProps {
-  sessionId: string;
-  card: Card;
-  status?: string;
+  session: SessionInfo;
   isActive: boolean;
 }
 
-function SessionRow({ sessionId, card, status, isActive }: SessionRowProps) {
+function SessionRow({ session, isActive }: SessionRowProps) {
+  const card = session.view.card;
+  const status = session.view.status;
   const normalized = normalizeStatus(status);
-  const active = ACTIVE.has(normalized);
-  const label = displayLabel(card, sessionId);
+  const activeRun = ACTIVE.has(normalized);
+  const label = displayLabel(card, session.id);
+
+  const driver = session.root_driver?.trim() || undefined;
+  // Memoize the chip style by driver name so the {backgroundColor, color}
+  // literal keeps stable identity across renders (React's reconciler can
+  // skip the style attribute update when the object hasn't changed).
+  const driverStyle = useMemo(() => {
+    if (!driver) return undefined;
+    const c = driverColor(driver);
+    return { backgroundColor: c.bg, color: c.fg };
+  }, [driver]);
+  const tags = card.tags ?? [];
+  const borderBadge = card.border_badge;
+  const showTags = tags.length > 0 || Boolean(borderBadge);
 
   return (
     <div
@@ -67,10 +106,159 @@ function SessionRow({ sessionId, card, status, isActive }: SessionRowProps) {
         aria-label={`status: ${normalized}`}
         title={normalized}
       >
-        {active && <span className="session-status-spinner" aria-hidden="true" />}
+        {activeRun && <span className="session-status-spinner" aria-hidden="true" />}
       </span>
-      <span className="session-list__label--clamped title">{label}</span>
+      <div className="session-list__content">
+        <div className="session-list__title-row">
+          <span className="session-list__title title">{label}</span>
+          {driver && (
+            <span
+              className="session-list__driver"
+              aria-label={`driver: ${driver}`}
+              title={driver}
+              style={driverStyle}
+            >
+              {driver}
+            </span>
+          )}
+        </div>
+        {showTags && (
+          <div className="session-list__tags" aria-label="session tags">
+            {tags.map((t, i) => (
+              <TagPill key={`${i}-${t.text}`} tag={t} className="session-list__tag" />
+            ))}
+            {borderBadge && <span className="session-list__badge">{borderBadge}</span>}
+          </div>
+        )}
+      </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// WorkspaceSwitcher — segmented control wrapping the daemon store's
+// selectedWorkspace state. Renders nothing when ≤ 1 workspace exists.
+// ---------------------------------------------------------------------------
+
+interface WorkspaceSwitcherProps {
+  workspaces: string[];
+  selected: string;
+  onChange: (next: string) => void;
+}
+
+function WorkspaceSwitcher({ workspaces, selected, onChange }: WorkspaceSwitcherProps) {
+  if (workspaces.length < 2) return null;
+  return (
+    <div className="session-list__workspace-bar" data-role="workspace-switcher">
+      <SegmentedControl
+        ariaLabel="workspaces"
+        segments={workspaces.map((w) => ({ value: w, label: w }))}
+        value={selected}
+        onChange={onChange}
+        idPrefix="ws"
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ProjectGroup — disclosure header + nested UnifiedListbox of sessions
+// ---------------------------------------------------------------------------
+
+interface ProjectGroupProps {
+  /** Display name (basename of projectPath). */
+  project: string;
+  /** Full path — the unique identity used as fold-state key. */
+  projectPath: string;
+  sessions: SessionInfo[];
+  folded: boolean;
+  /** Receives the projectPath (not the display name) so distinct paths
+   *  with the same basename can be folded independently. */
+  onToggleFold: (projectPath: string) => void;
+  activeId: string | null;
+  daemonDisconnected: boolean;
+  selectSession: (id: string) => void;
+}
+
+function ProjectGroup({
+  project,
+  projectPath,
+  sessions,
+  folded,
+  onToggleFold,
+  activeId,
+  daemonDisconnected,
+  selectSession,
+}: ProjectGroupProps) {
+  // Per-project cursor (aria-activedescendant). Independent from
+  // activeSessionID so ArrowDown/Up navigates without committing. When the
+  // committed selection lands in this project, sync the cursor onto it.
+  const activeInGroup = sessions.some((s) => s.id === activeId);
+  const [cursorId, setCursorId] = useState<string | null>(
+    activeInGroup ? activeId : (sessions[0]?.id ?? null),
+  );
+  // Re-sync cursorId on activeId / session-set changes. Uses a functional
+  // update so cursorId itself doesn't need to be in the dep list — that
+  // would re-trigger the effect on every ArrowDown and snap the cursor
+  // back to activeId. Two branches:
+  //   - active session is in this group → cursor follows it
+  //   - current cursor target was removed → reset to first row (code-review
+  //     #4: view-update can delete the cursored session while active lives
+  //     elsewhere; without this the cursor would dangle on an unknown id)
+  useEffect(() => {
+    setCursorId((prev) => {
+      if (activeInGroup) return activeId;
+      if (prev !== null && !sessions.some((s) => s.id === prev)) {
+        return sessions[0]?.id ?? null;
+      }
+      return prev;
+    });
+  }, [activeId, activeInGroup, sessions]);
+
+  // useId gives a stable, valid id token without exposing the (possibly
+  // free-form) project path to HTML id / aria-controls IDREF rules
+  // (code-review #3). The static suffixes make the relation between the
+  // disclosure button and its panel readable in devtools.
+  const uid = useId();
+  const headerId = `${uid}-header`;
+  const panelId = `${uid}-panel`;
+
+  return (
+    <section className="session-list__project" data-role="project-group">
+      <button
+        type="button"
+        id={headerId}
+        className="session-list__project-header"
+        aria-expanded={!folded}
+        aria-controls={panelId}
+        onClick={() => onToggleFold(projectPath)}
+        title={projectPath}
+      >
+        <span className="session-list__project-chevron" aria-hidden="true">
+          {folded ? "▶" : "▼"}
+        </span>
+        <span className="session-list__project-name">{project}</span>
+        <span className="session-list__project-count" aria-hidden="true">
+          {sessions.length}
+        </span>
+      </button>
+      {!folded && (
+        <section id={panelId} aria-labelledby={headerId} className="session-list__project-panel">
+          <UnifiedListbox
+            ariaLabel={`sessions in ${project}`}
+            items={sessions.map((s) => ({
+              id: s.id,
+              label: <SessionRow session={s} isActive={s.id === activeId} />,
+              disabled: daemonDisconnected,
+              disabledReason: daemonDisconnected ? "Daemon disconnected" : undefined,
+            }))}
+            activeId={cursorId}
+            onActiveChange={(id) => setCursorId(id)}
+            onActivate={(id) => selectSession(id)}
+          />
+        </section>
+      )}
+    </section>
   );
 }
 
@@ -85,46 +273,57 @@ export function SessionList({ conn: _conn }: { conn: Connection }) {
   const activeId = useDaemonStore((s) => s.activeSessionID);
   const selectSession = useDaemonStore((s) => s.selectSession);
   const daemonDisconnected = useDaemonStore((s) => s.daemonDisconnected);
+  const selectedWorkspace = useDaemonStore((s) => s.selectedWorkspace);
+  const setSelectedWorkspace = useDaemonStore((s) => s.setSelectedWorkspace);
+  const foldedProjects = useDaemonStore((s) => s.foldedProjects);
+  const toggleProjectFold = useDaemonStore((s) => s.toggleProjectFold);
 
-  // cursorId tracks the preview cursor for aria-activedescendant navigation.
-  // It is separate from the committed selection (activeId) so ArrowDown/Up can
-  // move the cursor without calling selectSession (FR-TOKEN-002).
-  // When the committed selection changes externally (e.g. another tab), sync
-  // the cursor so it doesn't drift away from the active row.
-  const [cursorId, setCursorId] = useState<string | null>(activeId);
-  useEffect(() => {
-    setCursorId(activeId);
-  }, [activeId]);
+  // Identity-stable sessions (applyViewUpdate preserves refs when content
+  // is unchanged) → useMemo can skip these passes on unrelated store updates
+  // (status / occupant / sessionConfig). Without memoization every SessionRow
+  // re-renders on a 1Hz tick from elsewhere in the tree (code-review #6).
+  const workspaces = useMemo(() => selectDistinctWorkspaces(sessions), [sessions]);
+  const groups = useMemo(
+    () => groupSessionsByProject(sessions, selectedWorkspace),
+    [sessions, selectedWorkspace],
+  );
 
-  const items = sessions.map((s) => ({
-    id: s.id,
-    label: (
-      <SessionRow
-        sessionId={s.id}
-        card={s.view.card}
-        status={s.view.status}
-        isActive={s.id === activeId}
-      />
-    ),
-    disabled: daemonDisconnected,
-    disabledReason: daemonDisconnected ? "Daemon disconnected" : undefined,
-  }));
+  const empty = groups.length === 0;
 
   return (
-    <div className="session-list">
-      <UnifiedListbox
-        ariaLabel="sessions"
-        items={items}
-        activeId={cursorId}
-        onActiveChange={(id) => {
-          // Preview / hover cursor movement — updates aria-activedescendant only.
-          // Actual session selection is committed only via onActivate (click/Enter).
-          setCursorId(id);
-        }}
-        onActivate={(id) => {
-          selectSession(id);
-        }}
+    <div className="session-list" data-workspace={selectedWorkspace}>
+      <WorkspaceSwitcher
+        workspaces={workspaces}
+        selected={selectedWorkspace}
+        onChange={setSelectedWorkspace}
       />
+      {empty ? (
+        <output className="session-list__empty">
+          {selectedWorkspace === DEFAULT_WORKSPACE
+            ? "No sessions yet."
+            : `No sessions in workspace "${selectedWorkspace}".`}
+        </output>
+      ) : (
+        <div className="session-list__projects">
+          {groups.map((g) => (
+            <ProjectGroup
+              // projectPath is the unique identity (basenames can collide
+              // across distinct paths). React key + foldedProjects key both
+              // ride projectPath so two repos named 'web' don't merge nor
+              // share a fold state.
+              key={g.projectPath}
+              project={g.project}
+              projectPath={g.projectPath}
+              sessions={g.sessions}
+              folded={foldedProjects.has(g.projectPath)}
+              onToggleFold={toggleProjectFold}
+              activeId={activeId}
+              daemonDisconnected={daemonDisconnected}
+              selectSession={selectSession}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

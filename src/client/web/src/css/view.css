@@ -409,6 +409,28 @@
     animation: none !important;
   }
 
+  /* SessionList caret rail (modernization parity with palette row caret).
+     Suppresses palette-row-caret-in keyframe on the committed-active row.
+     Single-guard rule (ADR-0064): defined here, NOT in app.css. */
+  .session-list .unified-listbox__option:has(.session-list__row--active)::before {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  /* SessionList option surface transitions (modernization). */
+  .session-list .unified-listbox__option {
+    transition: none !important;
+  }
+
+  /* SessionList tree transitions: workspace switcher chips + project
+     disclosure headers introduced color/background fades that bypass the
+     existing option guard. ADR-0064 single-guard rule: declare them here,
+     not in session-list.css. */
+  .session-list__workspace-bar .segmented-control__segment,
+  .session-list__project-header {
+    transition: none !important;
+  }
+
   /* SessionDrawer: slide transition (shell.css defines transform: translateX) */
   .session-drawer,
   .session-drawer__slide,

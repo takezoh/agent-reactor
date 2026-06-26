@@ -76,7 +76,11 @@ export function TerminalPane({
     // (settings.toml [terminal] scrollback_lines, default 10000 — ADR-0066).
     // Otherwise the seed frame for a late-joining client carries lines the
     // browser silently discards before the user can scroll them into view.
-    const term = new Terminal({ convertEol: true, scrollback: 10000, theme: xtermThemeRef.current });
+    const term = new Terminal({
+      convertEol: true,
+      scrollback: 10000,
+      theme: xtermThemeRef.current,
+    });
     termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
