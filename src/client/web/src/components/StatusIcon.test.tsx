@@ -48,10 +48,19 @@ describe("StatusIcon", () => {
   });
 
   // ADR-0078: distinctive inner elements per status so CSS can target them.
-  it("running renders ring + arc paths", () => {
+  it("running renders ring + arc paths wrapped in a rotor <g>", () => {
     const { container } = render(<StatusIcon status="running" />);
-    expect(container.querySelector(".status-icon__ring")).not.toBeNull();
-    expect(container.querySelector(".status-icon__arc")).not.toBeNull();
+    const rotor = container.querySelector(".status-icon--running .status-icon__rotor");
+    expect(rotor).not.toBeNull();
+    expect(rotor?.querySelector(".status-icon__ring")).not.toBeNull();
+    expect(rotor?.querySelector(".status-icon__arc")).not.toBeNull();
+  });
+
+  it("pending dashed ring is wrapped in a rotor <g>", () => {
+    const { container } = render(<StatusIcon status="pending" />);
+    const rotor = container.querySelector(".status-icon--pending .status-icon__rotor");
+    expect(rotor).not.toBeNull();
+    expect(rotor?.querySelector(".status-icon__dashed")).not.toBeNull();
   });
 
   it("waiting renders three .status-icon__dot circles with stagger modifiers", () => {

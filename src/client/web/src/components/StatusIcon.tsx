@@ -7,7 +7,7 @@
 // layout slot regardless of status.
 //
 // Designs (24×24 viewBox, currentColor):
-//   running  — faded full ring + 3/4 foreground arc, whole svg rotates
+//   running  — faded full ring + 3/4 foreground arc, inner <g> rotates
 //   waiting  — three dots that bounce in sequence (ellipsis wave)
 //   pending  — dashed ring rotating slowly
 //   idle     — filled dot breathing (opacity pulse)
@@ -52,10 +52,16 @@ export function StatusIcon({ status, activeClass, inactiveClass }: StatusIconPro
     .join(" ");
   switch (status) {
     case "running":
+      // Rotor pattern (ADR-0078): rotating the outer <svg> via CSS transform is
+      // unreliable across browsers — Chromium in particular often paints the
+      // root SVG with an identity matrix even while animation-play-state is
+      // "running". Rotate an inner <g> using the SVG coordinate system instead.
       return (
         <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle className="status-icon__ring" cx="12" cy="12" r="9" />
-          <path className="status-icon__arc" d="M21 12 A 9 9 0 0 1 12 21" />
+          <g className="status-icon__rotor">
+            <circle className="status-icon__ring" cx="12" cy="12" r="9" />
+            <path className="status-icon__arc" d="M21 12 A 9 9 0 1 1 12 3" />
+          </g>
         </svg>
       );
     case "waiting":
@@ -69,7 +75,9 @@ export function StatusIcon({ status, activeClass, inactiveClass }: StatusIconPro
     case "pending":
       return (
         <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle className="status-icon__dashed" cx="12" cy="12" r="8" />
+          <g className="status-icon__rotor">
+            <circle className="status-icon__dashed" cx="12" cy="12" r="8" />
+          </g>
         </svg>
       );
     case "idle":

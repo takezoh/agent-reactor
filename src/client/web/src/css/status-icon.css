@@ -28,22 +28,26 @@
 
 /* ─── running ───────────────────────────────────────────────────────────── */
 /* Modern Material-style sweep: faded full ring + 3/4 foreground arc. The
-   whole svg rotates — because the ring is rotationally symmetric, only the
-   arc visibly sweeps. */
-.status-icon--running {
-  animation: status-icon-spin 0.9s linear infinite;
-  transform-origin: center;
+   inner <g class="status-icon__rotor"> rotates (NOT the outer <svg>): SVG root
+   rotation via CSS transform is unreliable in Chromium and paints with an
+   identity matrix in some environments. Rotating an inner <g> in SVG
+   coordinates is the canonical, cross-browser pattern. transform-origin is in
+   SVG user units → 12 12 = viewBox center. */
+.status-icon--running .status-icon__rotor {
+  animation: status-icon-spin 0.8s linear infinite;
+  transform-box: view-box;
+  transform-origin: 12px 12px;
 }
 .status-icon--running .status-icon__ring {
   fill: none;
   stroke: currentColor;
-  stroke-width: 2.4;
-  opacity: 0.22;
+  stroke-width: 3;
+  opacity: 0.28;
 }
 .status-icon--running .status-icon__arc {
   fill: none;
   stroke: currentColor;
-  stroke-width: 2.4;
+  stroke-width: 3;
   stroke-linecap: round;
 }
 @keyframes status-icon-spin {
@@ -85,10 +89,12 @@
 }
 
 /* ─── pending ──────────────────────────────────────────────────────────── */
-/* Dashed ring rotating slowly — signals "queued, waiting for scheduler". */
-.status-icon--pending {
+/* Dashed ring rotating slowly — signals "queued, waiting for scheduler".
+   Uses the same inner-<g> rotor pattern as running (see comment above). */
+.status-icon--pending .status-icon__rotor {
   animation: status-icon-spin 3.6s linear infinite;
-  transform-origin: center;
+  transform-box: view-box;
+  transform-origin: 12px 12px;
 }
 .status-icon--pending .status-icon__dashed {
   fill: none;
