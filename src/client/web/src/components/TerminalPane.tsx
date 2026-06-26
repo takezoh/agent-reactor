@@ -18,6 +18,37 @@ function b64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
+// handleNewlineModifier inspects a raw KeyboardEvent and, when the user pressed
+// Shift+Enter or Alt+Enter, forwards a literal newline escape (`\` + CR) to the
+// PTY and tells xterm.js to skip its default Enter handling. The Claude CLI
+// family (claude code etc.) is the primary consumer of this terminal and
+// treats `\<CR>` as "insert newline" instead of "submit", which mirrors the
+// in-terminal escape the user already knows. Returning false here suppresses
+// xterm's onData fire for this keystroke so the bare CR does not double-submit.
+//
+// IME composition is skipped: e.isComposing is true while the user is mid-
+// conversion (typically Japanese / Chinese / Korean IMEs). A Shift+Enter that
+// merely confirms the composition must not flush `\<CR>` to the PTY — let the
+// IME's own Enter handling run.
+//
+// We also call e.preventDefault() before returning false. attachCustomKeyEventHandler
+// only controls xterm.js's internal keymap; without preventDefault the browser
+// default for Enter (a literal newline appended to the .xterm-helper-textarea
+// value) can leak. xterm normally preventDefaults inside its own onKey path,
+// so skipping that path means we own the suppression.
+//
+// Returns the value xterm.js's attachCustomKeyEventHandler expects: true to
+// keep default processing, false to swallow the event.
+export function handleNewlineModifier(e: KeyboardEvent, sendInput: (d: string) => void): boolean {
+  if (e.type !== "keydown") return true;
+  if (e.key !== "Enter") return true;
+  if (e.isComposing) return true;
+  if (!e.shiftKey && !e.altKey) return true;
+  e.preventDefault();
+  sendInput("\\\r");
+  return false;
+}
+
 export function TerminalPane({
   conn,
   sessionId,
@@ -135,6 +166,17 @@ export function TerminalPane({
       if (!sid) return; // no session selected → drop
       conn.send({ k: "i", d, sessionId: sid });
     });
+    // Shift+Enter / Alt+Enter inject a literal newline (Claude CLI's `\<CR>`
+    // escape) directly, so the user no longer has to type `\` then Enter.
+    // Runs before xterm's own keymap, so returning false here swallows the
+    // bare-CR onData that would otherwise submit the prompt.
+    term.attachCustomKeyEventHandler((e) =>
+      handleNewlineModifier(e, (d) => {
+        const sid = sessionRef.current;
+        if (!sid) return;
+        conn.send({ k: "i", d, sessionId: sid });
+      }),
+    );
     const onResize = term.onResize(({ cols, rows }) => {
       const sid = sessionRef.current;
       if (!sid) return;

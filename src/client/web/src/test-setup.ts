@@ -19,6 +19,7 @@ vi.mock("@xterm/xterm", () => {
     onResize(_cb: (s: { cols: number; rows: number }) => void) {
       return { dispose() {} };
     }
+    attachCustomKeyEventHandler(_cb: (e: KeyboardEvent) => boolean) {}
     open(_el: HTMLElement) {}
     loadAddon(_a: unknown) {}
     write(_d: string) {}
