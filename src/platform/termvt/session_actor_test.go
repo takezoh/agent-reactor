@@ -28,6 +28,11 @@ type fakeEmulator struct {
 	// leaving it empty makes the actor emit only the screen frame.
 	ScrollbackOut []byte
 
+	// CursorX / CursorY are returned by CursorPosition. Default (0, 0)
+	// matches a fresh emulator; tests that care about cursor pinning set
+	// these explicitly and assert the seed's trailing CUP escape.
+	CursorX, CursorY int
+
 	written []byte
 	closed  atomic.Bool
 
@@ -75,6 +80,7 @@ func (e *fakeEmulator) SetCallbacks(cb vt.Callbacks)              { e.callbacks 
 func (e *fakeEmulator) RegisterOscHandler(c int, h vt.OscHandler) { e.osc[c] = h }
 func (e *fakeEmulator) SetScrollbackSize(_ int)                   {}
 func (e *fakeEmulator) SerializeScrollback() []byte               { return e.ScrollbackOut }
+func (e *fakeEmulator) CursorPosition() (int, int)                { return e.CursorX, e.CursorY }
 func (e *fakeEmulator) CloseInputPipe() error {
 	if e.closed.Swap(true) {
 		return nil
@@ -148,9 +154,10 @@ func TestActor_SubscribeReceivesSnapshotThenChunk(t *testing.T) {
 	_, ch := s.Subscribe()
 	pty.in <- []byte("CHUNK")
 
+	// Seed: Render() bytes + trailing CUP pinning the cursor to (0,0).
 	first := waitNext(t, ch, time.Second)
-	if first.Kind != EventOutput || string(first.Data) != "SNAPSHOT" {
-		t.Fatalf("first event = %+v, want EventOutput SNAPSHOT", first)
+	if first.Kind != EventOutput || string(first.Data) != "SNAPSHOT\x1b[1;1H" {
+		t.Fatalf("first event = %+v, want EventOutput SNAPSHOT\\x1b[1;1H", first)
 	}
 	second := waitNext(t, ch, time.Second)
 	if second.Kind != EventOutput || string(second.Data) != "CHUNK" {
@@ -184,8 +191,33 @@ func TestActor_SubscribeSeedWithScrollback(t *testing.T) {
 		t.Fatalf("first event = %+v, want EventOutput old1\\nold2\\n", first)
 	}
 	second := waitNext(t, ch, time.Second)
-	if second.Kind != EventOutput || string(second.Data) != "SCREEN" {
-		t.Fatalf("second event = %+v, want EventOutput SCREEN", second)
+	if second.Kind != EventOutput || string(second.Data) != "SCREEN\x1b[1;1H" {
+		t.Fatalf("second event = %+v, want EventOutput SCREEN\\x1b[1;1H", second)
+	}
+}
+
+// TestActor_SubscribeSeedPinsCursorWithCUP asserts that the second seed
+// frame ends with a CUP escape that places xterm.js's cursor at the same
+// (x, y) the emulator holds. Without this, Render() bytes leave the
+// browser-side cursor at the bottom-right of the rendered grid and any
+// subsequent shell echo gets painted at the wrong screen cell (the
+// "session-switch input position is broken" regression — Web UI bug
+// fixed by this commit). CUP is 1-based; emulator coords are 0-based.
+func TestActor_SubscribeSeedPinsCursorWithCUP(t *testing.T) {
+	em := newFakeEmulator()
+	em.RenderOut = "SCREEN"
+	em.CursorX = 12
+	em.CursorY = 4
+	pty := newFakePTY()
+	s := newFakeSession(em, pty)
+	defer func() { _ = s.Close() }()
+
+	_, ch := s.Subscribe()
+
+	ev := waitNext(t, ch, time.Second)
+	want := "SCREEN\x1b[5;13H"
+	if ev.Kind != EventOutput || string(ev.Data) != want {
+		t.Fatalf("seed event = %+v, want EventOutput %q", ev, want)
 	}
 }
 

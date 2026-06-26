@@ -2,6 +2,7 @@ package termvt
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -46,14 +47,22 @@ type subscribeCmd struct {
 // Seed shape: when the emulator's scrollback buffer holds any rows, they
 // are emitted as a first EventOutput frame (terminated with a trailing
 // newline so the screen render that follows starts on a fresh row). The
-// current visible grid is then emitted as a second EventOutput frame. Both
-// frames share the format documented on Emulator.SerializeScrollback /
-// Render — newline-separated rows with inline SGR escapes, no cursor
-// positioning, no clear sequences — so a client that writes them in order
-// builds the same scrollback its xterm.js would have accumulated had it
-// been attached from the start. An empty scrollback (fresh session, or an
-// alt-screen TUI whose draws never spilled to history) elides the first
-// frame entirely; the screen frame is unconditional.
+// current visible grid is then emitted as a second EventOutput frame, with
+// a trailing CUP escape (\x1b[<y+1>;<x+1>H) that pins xterm.js's cursor to
+// the same (x, y) the server-side emulator holds. Both content frames share
+// the format documented on Emulator.SerializeScrollback / Render —
+// newline-separated rows with inline SGR escapes, no cursor positioning, no
+// clear sequences — so a client that writes them in order builds the same
+// scrollback its xterm.js would have accumulated had it been attached from
+// the start. An empty scrollback (fresh session, or an alt-screen TUI whose
+// draws never spilled to history) elides the first frame entirely; the
+// screen frame is unconditional.
+//
+// The trailing CUP is what keeps typed input rendering at the correct
+// position after a session switch. Without it, xterm.js's cursor settles at
+// the bottom of the rendered grid (Render() emits cell content + '\n'
+// separators only) while the PTY's cursor sits at the shell prompt; the
+// next echoed character would then be painted at the wrong screen cell.
 //
 // IDs are allocated starting from 1 so 0 stays reserved as the post-shutdown
 // sentinel that Session.Subscribe returns when mainLoop has exited; any
@@ -69,7 +78,11 @@ func (c subscribeCmd) run(ls *loopState) {
 		// the two frames back-to-back.
 		ch <- Event{Kind: EventOutput, Data: append(sb, '\n')}
 	}
-	ch <- Event{Kind: EventOutput, Data: []byte(ls.em.Render())}
+	rendered := []byte(ls.em.Render())
+	x, y := ls.em.CursorPosition()
+	// CUP is 1-based; emulator coords are 0-based.
+	rendered = fmt.Appendf(rendered, "\x1b[%d;%dH", y+1, x+1)
+	ch <- Event{Kind: EventOutput, Data: rendered}
 	ls.subs[id] = ch
 	c.reply <- subscribeReply{id: id, ch: ch}
 }

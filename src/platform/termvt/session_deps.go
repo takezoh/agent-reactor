@@ -37,6 +37,7 @@ type Emulator interface {
 	CloseInputPipe() error                              // shutdown signal — unblocks Read without racing
 	SetScrollbackSize(maxLines int)                     // configure scrollback depth
 	SerializeScrollback() []byte                        // ANSI-styled scrollback (nil when empty)
+	CursorPosition() (x, y int)                         // 0-based cursor (x=col, y=row) within the visible grid
 }
 
 // PTY is the subset of *os.File + pty.Setsize that Session needs. Same
@@ -58,6 +59,15 @@ func emulatorFor(cols, rows int) Emulator {
 // RegisterOscHandler + SetScrollbackSize methods promoted from *vt.Emulator.
 type realEmulator struct {
 	*vt.Emulator
+}
+
+// CursorPosition adapts *vt.Emulator.CursorPosition (which returns uv.Position)
+// to the (x, y int) interface shape so callers do not need to import
+// ultraviolet just to read two ints. x is the 0-based column, y the 0-based row
+// within the visible grid.
+func (e realEmulator) CursorPosition() (x, y int) {
+	p := e.Emulator.CursorPosition()
+	return p.X, p.Y
 }
 
 func (e realEmulator) CloseInputPipe() error {
