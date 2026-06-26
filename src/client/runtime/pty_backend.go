@@ -36,15 +36,25 @@ type PtyBackend struct {
 	windows map[string]string // windowIndex -> paneID (filled by SpawnWindow)
 	paneSeq int               // last allocated pane number
 	winSeq  int               // last allocated window index
+
+	// scrollbackLines is the per-session VT scrollback cap stamped into
+	// every termvt.Spec built by SpawnWindow / RespawnPane. Zero leaves
+	// the underlying xvt emulator default (10000) in effect — tests pass
+	// 0 to avoid coupling to the cap, production passes the value from
+	// settings.toml's [terminal] scrollback_lines.
+	scrollbackLines int
 }
 
 // NewPtyBackend returns a PtyBackend with its own termvt.Manager.
-func NewPtyBackend() *PtyBackend {
+// scrollbackLines is the per-session VT scrollback cap; 0 keeps the
+// underlying emulator's default.
+func NewPtyBackend(scrollbackLines int) *PtyBackend {
 	return &PtyBackend{
-		mgr:     termvt.NewManager(),
-		buffers: map[string]string{},
-		env:     map[string]string{},
-		windows: map[string]string{},
+		mgr:             termvt.NewManager(),
+		buffers:         map[string]string{},
+		env:             map[string]string{},
+		windows:         map[string]string{},
+		scrollbackLines: scrollbackLines,
 	}
 }
 
@@ -74,7 +84,11 @@ func (p *PtyBackend) SpawnWindow(name, command, startDir string, env map[string]
 	p.windows[winIdx] = paneID
 	p.mu.Unlock()
 
-	if _, err := p.mgr.Create(paneID, termvt.Spec{Argv: shellArgv(command), Env: envSlice(env)}); err != nil {
+	if _, err := p.mgr.Create(paneID, termvt.Spec{
+		Argv:            shellArgv(command),
+		Env:             envSlice(env),
+		ScrollbackLines: p.scrollbackLines,
+	}); err != nil {
 		p.mu.Lock()
 		delete(p.windows, winIdx)
 		p.mu.Unlock()
@@ -125,7 +139,10 @@ func (p *PtyBackend) RespawnPane(target, command string) error {
 		}
 	}
 
-	if _, err := p.mgr.Create(target, termvt.Spec{Argv: shellArgv(command)}); err != nil {
+	if _, err := p.mgr.Create(target, termvt.Spec{
+		Argv:            shellArgv(command),
+		ScrollbackLines: p.scrollbackLines,
+	}); err != nil {
 		// Manager.Remove already dropped the session; with Create failing too,
 		// any windows-map entry that pointed at this paneID is now stale —
 		// drop it so a stale windowIndex never resolves to a dead pane id.

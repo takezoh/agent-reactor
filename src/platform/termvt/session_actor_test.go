@@ -23,6 +23,11 @@ type fakeEmulator struct {
 	WriteHook func(p []byte) // called inside Write while no lock is held
 	RenderOut string
 
+	// ScrollbackOut is the canned scrollback payload returned by
+	// SerializeScrollback. Tests fill this to exercise the seed shape;
+	// leaving it empty makes the actor emit only the screen frame.
+	ScrollbackOut []byte
+
 	written []byte
 	closed  atomic.Bool
 
@@ -68,6 +73,8 @@ func (e *fakeEmulator) Render() string                            { return e.Ren
 func (e *fakeEmulator) Resize(_, _ int)                           {}
 func (e *fakeEmulator) SetCallbacks(cb vt.Callbacks)              { e.callbacks = cb }
 func (e *fakeEmulator) RegisterOscHandler(c int, h vt.OscHandler) { e.osc[c] = h }
+func (e *fakeEmulator) SetScrollbackSize(_ int)                   {}
+func (e *fakeEmulator) SerializeScrollback() []byte               { return e.ScrollbackOut }
 func (e *fakeEmulator) CloseInputPipe() error {
 	if e.closed.Swap(true) {
 		return nil
@@ -148,6 +155,37 @@ func TestActor_SubscribeReceivesSnapshotThenChunk(t *testing.T) {
 	second := waitNext(t, ch, time.Second)
 	if second.Kind != EventOutput || string(second.Data) != "CHUNK" {
 		t.Fatalf("second event = %+v, want EventOutput CHUNK", second)
+	}
+}
+
+// TestActor_SubscribeSeedWithScrollback pins the two-frame seed shape: when
+// the emulator's SerializeScrollback returns bytes, Subscribe emits a first
+// EventOutput carrying those bytes with a trailing newline separator, then a
+// second EventOutput carrying the screen render. xterm.js writes the two
+// frames back-to-back; the newline keeps the screen render from
+// concatenating onto the last scrollback row.
+//
+// The empty-scrollback case (frame elided) is covered by
+// TestActor_SubscribeReceivesSnapshotThenChunk above — its fake leaves
+// ScrollbackOut nil and the test asserts the very first frame is the
+// snapshot.
+func TestActor_SubscribeSeedWithScrollback(t *testing.T) {
+	em := newFakeEmulator()
+	em.RenderOut = "SCREEN"
+	em.ScrollbackOut = []byte("old1\nold2")
+	pty := newFakePTY()
+	s := newFakeSession(em, pty)
+	defer func() { _ = s.Close() }()
+
+	_, ch := s.Subscribe()
+
+	first := waitNext(t, ch, time.Second)
+	if first.Kind != EventOutput || string(first.Data) != "old1\nold2\n" {
+		t.Fatalf("first event = %+v, want EventOutput old1\\nold2\\n", first)
+	}
+	second := waitNext(t, ch, time.Second)
+	if second.Kind != EventOutput || string(second.Data) != "SCREEN" {
+		t.Fatalf("second event = %+v, want EventOutput SCREEN", second)
 	}
 }
 

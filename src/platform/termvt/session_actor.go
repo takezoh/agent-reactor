@@ -43,6 +43,18 @@ type subscribeCmd struct {
 // must happen inside mainLoop so the snapshot is consistent with the next
 // chunk's processing.
 //
+// Seed shape: when the emulator's scrollback buffer holds any rows, they
+// are emitted as a first EventOutput frame (terminated with a trailing
+// newline so the screen render that follows starts on a fresh row). The
+// current visible grid is then emitted as a second EventOutput frame. Both
+// frames share the format documented on Emulator.SerializeScrollback /
+// Render — newline-separated rows with inline SGR escapes, no cursor
+// positioning, no clear sequences — so a client that writes them in order
+// builds the same scrollback its xterm.js would have accumulated had it
+// been attached from the start. An empty scrollback (fresh session, or an
+// alt-screen TUI whose draws never spilled to history) elides the first
+// frame entirely; the screen frame is unconditional.
+//
 // IDs are allocated starting from 1 so 0 stays reserved as the post-shutdown
 // sentinel that Session.Subscribe returns when mainLoop has exited; any
 // caller that wants to distinguish "Subscribe came back from the actor" from
@@ -51,6 +63,12 @@ func (c subscribeCmd) run(ls *loopState) {
 	ls.nextID++
 	id := ls.nextID
 	ch := make(chan Event, subBuffer)
+	if sb := ls.em.SerializeScrollback(); len(sb) > 0 {
+		// Append a separator newline so the screen render's first row does
+		// not concatenate onto the last scrollback row when xterm.js writes
+		// the two frames back-to-back.
+		ch <- Event{Kind: EventOutput, Data: append(sb, '\n')}
+	}
 	ch <- Event{Kind: EventOutput, Data: []byte(ls.em.Render())}
 	ls.subs[id] = ch
 	c.reply <- subscribeReply{id: id, ch: ch}

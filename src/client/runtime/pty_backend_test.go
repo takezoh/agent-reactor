@@ -35,7 +35,7 @@ func waitUntil(t *testing.T, pred func() bool) {
 // spawn a cat pty, send a line, capture the echoed output, then kill and
 // observe the exit status.
 func TestPtyBackendSpawnEchoCaptureKill(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 
 	winIdx, paneID, err := b.SpawnWindow("w1", "cat", "", nil)
 	if err != nil {
@@ -87,7 +87,7 @@ func TestPtyBackendSpawnEchoCaptureKill(t *testing.T) {
 // TestPtyBackendExitStatus verifies a process that exits non-zero reports its
 // code via PaneExitStatus.
 func TestPtyBackendExitStatus(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	_, paneID, err := b.SpawnWindow("w", "bash -c 'exit 7'", "", nil)
 	if err != nil {
 		t.Fatalf("SpawnWindow: %v", err)
@@ -110,7 +110,7 @@ func TestPtyBackendExitStatus(t *testing.T) {
 // TestPtyBackendEnvStore verifies the in-process session env store backing
 // SetEnv/UnsetEnv/ShowEnvironment.
 func TestPtyBackendEnvStore(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	if err := b.SetEnv("BETA", "2"); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestPtyBackendEnvStore(t *testing.T) {
 // TestPtyBackendBufferRoundTrip verifies LoadBuffer holds text and PasteBuffer
 // writes it to the pane then drops the buffer.
 func TestPtyBackendBufferRoundTrip(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	_, paneID, err := b.SpawnWindow("w", "cat", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +163,7 @@ func TestPtyBackendBufferRoundTrip(t *testing.T) {
 // TestPtyBackendResize verifies ResizeWindow is delegated to the session and
 // PaneSize reflects the new dimensions.
 func TestPtyBackendResize(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	_, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestPtyBackendResize(t *testing.T) {
 
 // TestPtyBackendSpawnSyntheticIDs verifies synthetic id allocation increments.
 func TestPtyBackendSpawnSyntheticIDs(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	win1, pane1, err := b.SpawnWindow("a", "sleep 5", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func TestKeyBytes(t *testing.T) {
 // TestPtyBackendSendKey verifies SendKey reaches the pty by echoing a Space
 // keystroke through cat and observing it in the captured output.
 func TestPtyBackendSendKey(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	_, paneID, err := b.SpawnWindow("w", "cat", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -268,7 +268,7 @@ func TestPtyBackendSendKey(t *testing.T) {
 // callers like resident.isMissingPaneErr can distinguish vanished panes from
 // transient failures.
 func TestPtyBackendUnknownPaneErrors(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	const unknown = "%999"
 
 	wantSentinel := func(name string, err error) {
@@ -328,7 +328,7 @@ func TestPtyBackendUnknownPaneErrors(t *testing.T) {
 // it that way (via the sessionName:windowIndex form, see other test) for the
 // post-spawn fit-to-main resize.
 func TestPtyBackendResizeByWindowIndex(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	winIdx, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +351,7 @@ func TestPtyBackendResizeByWindowIndex(t *testing.T) {
 // scoped form interpret_spawn emits (e.g. "arc:1") is normalised — the prefix
 // is stripped and the windowIndex path runs.
 func TestPtyBackendResizeBySessionScopedTarget(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	winIdx, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -374,7 +374,7 @@ func TestPtyBackendResizeBySessionScopedTarget(t *testing.T) {
 // TestPtyBackendKillForgetsWindowIndex verifies the windowIndex→paneID entry is
 // dropped after KillPaneWindow so a stale windowIndex no longer routes anywhere.
 func TestPtyBackendKillForgetsWindowIndex(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	winIdx, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -393,7 +393,7 @@ func TestPtyBackendKillForgetsWindowIndex(t *testing.T) {
 // kill on the same target must wrap ErrPaneMissing so reconcileWindows can
 // evict the vanished frame instead of treating the error as transient.
 func TestPtyBackendKillPaneWindowWrapsSentinel(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	_, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -444,7 +444,7 @@ func TestIsPaneIDForm(t *testing.T) {
 // as a pane id; the windows-map lookup runs and returns the original target
 // when nothing matches, so the caller's mgr.Get reports ErrPaneMissing.
 func TestPtyBackendResolveTargetWithBogusPanePrefix(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	// "%abc" is not "%<digits>"; resolvePaneTarget falls through to the
 	// windows-map lookup, which has no entry → returned as-is → mgr.Get
 	// reports missing.
@@ -457,7 +457,7 @@ func TestPtyBackendResolveTargetWithBogusPanePrefix(t *testing.T) {
 // quotes the ORIGINAL caller-supplied target, not the resolved paneID, so
 // log lines stay readable in the runtime's session-prefixed shape.
 func TestPtyBackendKillPaneWindowPreservesCallerTarget(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	_, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -482,7 +482,7 @@ func TestPtyBackendKillPaneWindowPreservesCallerTarget(t *testing.T) {
 // sh -c wrapping. interpret_spawn.buildSpawnCommand emits "exec <cmd>"; the
 // shell must honour exec semantics so the user's process replaces sh.
 func TestPtyBackendSpawnRunsShellStrings(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	_, paneID, err := b.SpawnWindow("w", "exec bash -c 'exit 9'", "", nil)
 	if err != nil {
 		t.Fatalf("SpawnWindow: %v", err)
@@ -506,7 +506,7 @@ func TestPtyBackendSpawnRunsShellStrings(t *testing.T) {
 // reports (false, -1, nil), and PaneAlive flips to false once a clean exit is
 // reaped.
 func TestPtyBackendExitStatusLive(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	_, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -536,7 +536,7 @@ func TestPtyBackendExitStatusLive(t *testing.T) {
 // TestPtyBackendRespawn verifies a pane can be respawned in place and that an
 // empty respawn command is rejected.
 func TestPtyBackendRespawn(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	_, paneID, err := b.SpawnWindow("w", "bash -c 'exit 0'", "", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -575,7 +575,7 @@ func TestPtyBackendRespawn(t *testing.T) {
 // received on a freshly opened subscriber channel has Kind == EventOutput
 // (the reattach snapshot that termvt.Session.Subscribe guarantees).
 func TestPtyBackendSubscribeSurface_SnapshotFirst(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	// cat keeps the session alive so the subscriber channel stays open.
 	_, paneID, err := b.SpawnWindow("t", "cat", "", nil)
 	if err != nil {
@@ -616,7 +616,7 @@ func TestPtyBackendSubscribeSurface_SnapshotFirst(t *testing.T) {
 // TestPtyBackendWriteSurface verifies that bytes sent via WriteSurface reach
 // the pty: cat echoes them back and they appear in the captured output.
 func TestPtyBackendWriteSurface(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	_, paneID, err := b.SpawnWindow("t", "cat", "", nil)
 	if err != nil {
 		t.Fatalf("SpawnWindow: %v", err)
@@ -665,7 +665,7 @@ func TestPtyBackendWriteSurface(t *testing.T) {
 // TestPtyBackendResizeSurface verifies that ResizeSurface updates both the pty
 // winsize and the VT emulator grid so PaneSize reports the new dimensions.
 func TestPtyBackendResizeSurface(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	_, paneID, err := b.SpawnWindow("t", "sleep 5", "", nil)
 	if err != nil {
 		t.Fatalf("SpawnWindow: %v", err)
@@ -688,7 +688,7 @@ func TestPtyBackendResizeSurface(t *testing.T) {
 // TestPtyBackendSurface_MissingPaneTarget verifies that all surface accessors
 // wrap ErrPaneMissing when the target pane does not exist.
 func TestPtyBackendSurface_MissingPaneTarget(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	const unknown = "%999"
 
 	_, _, err := b.SubscribeSurface(unknown)
@@ -713,7 +713,7 @@ func TestPtyBackendSurface_MissingPaneTarget(t *testing.T) {
 // many goroutines so `go test -race` can prove the backend's shared state is
 // race-free.
 func TestPtyBackendConcurrent(t *testing.T) {
-	b := NewPtyBackend()
+	b := NewPtyBackend(0)
 	const workers = 8
 
 	var wg sync.WaitGroup

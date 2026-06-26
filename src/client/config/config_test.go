@@ -28,6 +28,28 @@ func TestDefaultConfig(t *testing.T) {
 	if len(cfg.Session.PushCommands) != 1 || cfg.Session.PushCommands[0] != "shell" {
 		t.Errorf("PushCommands = %v, want [shell]", cfg.Session.PushCommands)
 	}
+	if cfg.Terminal.ScrollbackLines != 10000 {
+		t.Errorf("Terminal.ScrollbackLines = %d, want 10000", cfg.Terminal.ScrollbackLines)
+	}
+}
+
+// TestLoadFrom_TerminalScrollback pins the TOML wiring for the new
+// `[terminal] scrollback_lines = N` knob — late-joining Web UI clients see
+// up to this many scrolled-off rows on subscribe.
+func TestLoadFrom_TerminalScrollback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.toml")
+	os.WriteFile(path, []byte(`[terminal]
+scrollback_lines = 500
+`), 0o644)
+
+	cfg, err := LoadFrom(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Terminal.ScrollbackLines != 500 {
+		t.Errorf("Terminal.ScrollbackLines = %d, want 500", cfg.Terminal.ScrollbackLines)
+	}
 }
 
 func TestLoadFrom_PushCommands(t *testing.T) {

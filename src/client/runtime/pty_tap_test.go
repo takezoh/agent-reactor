@@ -81,7 +81,7 @@ func spawnPane(t *testing.T, backend *PtyBackend, command string) string {
 }
 
 func TestPtyPaneTap_Start_UnknownPaneReturnsMissing(t *testing.T) {
-	backend := NewPtyBackend()
+	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 	tap := NewPtyPaneTap(backend)
 
@@ -95,7 +95,7 @@ func TestPtyPaneTap_Start_UnknownPaneReturnsMissing(t *testing.T) {
 }
 
 func TestPtyPaneTap_Start_DeliversSnapshotFirst(t *testing.T) {
-	backend := NewPtyBackend()
+	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
 	pane := spawnPane(t, backend, "sleep 1")
@@ -121,7 +121,7 @@ func TestPtyPaneTap_Start_DeliversSnapshotFirst(t *testing.T) {
 }
 
 func TestPtyPaneTap_ForwardsOutputChunks(t *testing.T) {
-	backend := NewPtyBackend()
+	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
 	// printf emits an OSC 9 escape; termvt fans the raw bytes out as an
@@ -141,7 +141,7 @@ func TestPtyPaneTap_ForwardsOutputChunks(t *testing.T) {
 }
 
 func TestPtyPaneTap_Stop_ClosesChannel(t *testing.T) {
-	backend := NewPtyBackend()
+	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
 	pane := spawnPane(t, backend, "sleep 5")
@@ -167,7 +167,7 @@ func TestPtyPaneTap_Stop_ClosesChannel(t *testing.T) {
 }
 
 func TestPtyPaneTap_ContextCancelClosesChannel(t *testing.T) {
-	backend := NewPtyBackend()
+	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
 	pane := spawnPane(t, backend, "sleep 5")
@@ -184,7 +184,7 @@ func TestPtyPaneTap_ContextCancelClosesChannel(t *testing.T) {
 }
 
 func TestPtyPaneTap_SessionExitClosesChannel(t *testing.T) {
-	backend := NewPtyBackend()
+	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
 	// printf + a short sleep keeps the session alive long enough for Start to
@@ -208,7 +208,7 @@ func TestPtyPaneTap_SessionExitClosesChannel(t *testing.T) {
 }
 
 func TestPtyPaneTap_RespawnSamePane(t *testing.T) {
-	backend := NewPtyBackend()
+	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
 	pane := spawnPane(t, backend, "sleep 5")

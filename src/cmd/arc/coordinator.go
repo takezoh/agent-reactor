@@ -112,7 +112,7 @@ func registerDefaultDrivers(cfg *config.Config, dataDir string, idleThreshold ti
 // pipeline parses OSC 0/9/133 back into EvPaneOsc/EvPanePrompt — restoring
 // driver run-state detection on top of the pty backend.
 func buildRuntime(ctx context.Context, cfg *config.Config, loginShell string, dataDir string) (*runtime.Runtime, string, string, error) {
-	ptyBackend := runtime.NewPtyBackend()
+	ptyBackend := runtime.NewPtyBackend(cfg.Terminal.ScrollbackLines)
 	ptyTap := runtime.NewPtyPaneTap(ptyBackend)
 	pollInterval := time.Duration(cfg.Monitor.PollIntervalMs) * time.Millisecond
 	fastPollInterval := time.Duration(cfg.Monitor.FastPollIntervalMs) * time.Millisecond

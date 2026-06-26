@@ -17,6 +17,7 @@ type Config struct {
 	Tmux          TmuxConfig                    `toml:"tmux"`
 	Monitor       MonitorConfig                 `toml:"monitor"`
 	Session       SessionConfig                 `toml:"session"`
+	Terminal      TerminalConfig                `toml:"terminal"`
 	Projects      platformconfig.ProjectsConfig `toml:"projects"`
 	Driver        CommonDriverConfig            `toml:"driver"`
 	Drivers       map[string]map[string]any     `toml:"drivers"`
@@ -80,6 +81,15 @@ type SessionConfig struct {
 	PushCommands   []string `toml:"push_commands"`
 }
 
+// TerminalConfig holds knobs that govern the server-side terminal emulator.
+type TerminalConfig struct {
+	// ScrollbackLines bounds the VT scrollback buffer per session, in lines.
+	// A late-joining Web UI client receives this buffer as the first seed
+	// frame on subscribe so it can scroll up through history printed before
+	// it attached. Zero leaves the underlying emulator's default in place.
+	ScrollbackLines int `toml:"scrollback_lines"`
+}
+
 func LoadFrom(path string) (*Config, error) {
 	cfg := DefaultConfig()
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
@@ -132,6 +142,9 @@ func DefaultConfig() *Config {
 			DefaultCommand: "shell",
 			Commands:       []string{"shell"},
 			PushCommands:   []string{"shell"},
+		},
+		Terminal: TerminalConfig{
+			ScrollbackLines: 10000,
 		},
 		Editor: EditorConfig{
 			Command:    "code",                      // "code" is the VS Code CLI binary

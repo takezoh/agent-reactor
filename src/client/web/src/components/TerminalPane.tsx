@@ -72,7 +72,11 @@ export function TerminalPane({
     // the theme-apply effect above runs (FR-THEME-002 / ADR-0059).
     // We use the ref rather than the reactive value to keep [conn] as the sole
     // dependency — re-creating the terminal on every theme change would be wrong.
-    const term = new Terminal({ convertEol: true, scrollback: 5000, theme: xtermThemeRef.current });
+    // scrollback must be ≥ the server-side termvt scrollback cap
+    // (settings.toml [terminal] scrollback_lines, default 10000 — ADR-0066).
+    // Otherwise the seed frame for a late-joining client carries lines the
+    // browser silently discards before the user can scroll them into view.
+    const term = new Terminal({ convertEol: true, scrollback: 10000, theme: xtermThemeRef.current });
     termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);

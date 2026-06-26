@@ -48,7 +48,7 @@ func waitForEvent(t *testing.T, sink *eventSink, pred func(state.Event) bool, bu
 }
 
 func TestPtyTapWiring_OSC0TitleReachesEvPaneOsc(t *testing.T) {
-	backend := NewPtyBackend()
+	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
 	// '\033]0;Braille\a' is the OSC 0 (window-title) escape Claude emits while
@@ -82,7 +82,7 @@ func TestPtyTapWiring_OSC0TitleReachesEvPaneOsc(t *testing.T) {
 }
 
 func TestPtyTapWiring_OSC133ReachesEvPanePrompt(t *testing.T) {
-	backend := NewPtyBackend()
+	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
 	// OSC 133;C marks the start of a command, OSC 133;D;<code> the end. The

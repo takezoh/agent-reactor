@@ -223,6 +223,133 @@ func TestSessionExitCodeNeverBlocksDuringCSIReportMode(t *testing.T) {
 	}
 }
 
+// TestSessionScrollbackSurvivesLateSubscribe pins the late-join contract:
+// a fresh subscriber that attaches after the visible grid has scrolled past
+// the first lines must receive those lines in the seed's scrollback frame.
+// Without server-side scrollback the late subscriber would only see the
+// trailing 24 rows (visible grid) and the early "line 1" would be lost —
+// exactly the regression this feature exists to prevent.
+func TestSessionScrollbackSurvivesLateSubscribe(t *testing.T) {
+	s, err := NewSession(Spec{
+		Argv: []string{"bash", "-c",
+			`for i in $(seq 1 200); do printf "scrollback-row-%d\n" $i; done; sleep 2`},
+		Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+
+	// First subscriber drives the timing: drain until we see the last row,
+	// which proves the emulator has processed all 200 lines and the early
+	// ones have necessarily scrolled past the 24-row visible grid into
+	// scrollback.
+	_, ch := s.Subscribe()
+	waitFor(t, ch, func(ev Event) bool { return outputContains(ev, "scrollback-row-200") })
+
+	// Now a late subscriber attaches. Its first frame must be scrollback
+	// (carrying the long-gone "scrollback-row-1") and its second frame must
+	// be the current visible grid.
+	_, late := s.Subscribe()
+	first := waitNext(t, late, waitTimeout)
+	if first.Kind != EventOutput {
+		t.Fatalf("late subscriber first frame kind = %v, want EventOutput", first.Kind)
+	}
+	if !strings.Contains(string(first.Data), "scrollback-row-1\n") {
+		t.Fatalf("late subscriber scrollback frame missing row 1; got first 200 bytes: %q",
+			truncate(string(first.Data), 200))
+	}
+	// Sanity: the screen frame follows; we don't assert its content (the
+	// trailing rows depend on bash's exact stdout cadence) but it must arrive.
+	if _, ok := <-late; !ok {
+		t.Fatal("late subscriber did not receive a screen frame after scrollback")
+	}
+}
+
+// TestSessionScrollbackLinesCapHonored verifies that Spec.ScrollbackLines
+// bounds the buffer: with cap=5 only the trailing 5 scrolled-off rows reach
+// a late subscriber's scrollback frame, even when hundreds of rows have
+// been printed.
+func TestSessionScrollbackLinesCapHonored(t *testing.T) {
+	s, err := NewSession(Spec{
+		Argv: []string{"bash", "-c",
+			`for i in $(seq 1 200); do printf "row-%d\n" $i; done; sleep 2`},
+		Cols: 80, Rows: 24,
+		ScrollbackLines: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+
+	_, ch := s.Subscribe()
+	waitFor(t, ch, func(ev Event) bool { return outputContains(ev, "row-200") })
+
+	_, late := s.Subscribe()
+	first := waitNext(t, late, waitTimeout)
+	if first.Kind != EventOutput {
+		t.Fatalf("late subscriber first frame kind = %v, want EventOutput", first.Kind)
+	}
+	// Newline accounting for cap=5: Lines.Render() emits 4 separators
+	// between 5 rows, subscribeCmd appends 1 trailing newline → exactly 5
+	// total. Asserting equality (not ≤) pins the cap precisely: cap=10
+	// would produce 10 newlines, cap=∞ would produce 176, both rejected.
+	payload := string(first.Data)
+	if got := strings.Count(payload, "\n"); got != 5 {
+		t.Fatalf("scrollback has %d newlines, want 5 (4 between + 1 trailing for cap=5 rows); payload: %q",
+			got, truncate(payload, 400))
+	}
+	// The cap-drops-old invariant: row-1 is the very first emitted line and
+	// must have fallen off the scrollback long ago. If it's present the cap
+	// is not being applied.
+	if strings.Contains(payload, "row-1\n") {
+		t.Fatalf("scrollback cap=5 leaked row-1 (oldest emitted line, cap should have dropped it);"+
+			" payload: %q", truncate(payload, 400))
+	}
+}
+
+// TestSessionScrollbackOmittedInAltScreen pins the alt-screen contract:
+// when the program is on the alternate screen (DECSET 1049), nothing has
+// spilled to scrollback yet — primary screen scrollback is empty — and the
+// seed must elide the scrollback frame entirely. The single seed frame the
+// late subscriber receives carries the current alt-screen render.
+func TestSessionScrollbackOmittedInAltScreen(t *testing.T) {
+	s, err := NewSession(Spec{
+		Argv: []string{"bash", "-c",
+			`printf '\033[?1049h'; printf 'alt-marker\n'; sleep 2`},
+		Cols: 80, Rows: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+
+	_, ch := s.Subscribe()
+	waitFor(t, ch, func(ev Event) bool { return outputContains(ev, "alt-marker") })
+
+	_, late := s.Subscribe()
+	first := waitNext(t, late, waitTimeout)
+	if first.Kind != EventOutput {
+		t.Fatalf("late subscriber first frame kind = %v, want EventOutput", first.Kind)
+	}
+	// In alt-screen mode the scrollback buffer is empty, so the very first
+	// seed frame must already be the screen render (it contains alt-marker).
+	if !strings.Contains(string(first.Data), "alt-marker") {
+		t.Fatalf("first frame should be screen render with alt-marker; got: %q",
+			truncate(string(first.Data), 400))
+	}
+}
+
+// truncate returns up to n bytes of s, with an ellipsis when longer. Used by
+// scrollback-test failure messages to keep error logs bounded when a multi-KB
+// frame is involved.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
 // TestSessionDisconnectsSlowSubscriber verifies that a subscriber which does not
 // drain its channel is disconnected (channel closed) once its buffer overflows,
 // rather than having events silently dropped. A 20MB output stream yields far

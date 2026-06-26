@@ -25,6 +25,12 @@ type Spec struct {
 	Env  []string // full environment; defaults to os.Environ() when nil
 	Cols int
 	Rows int
+	// ScrollbackLines bounds the server-side VT scrollback buffer. Zero
+	// leaves the underlying emulator's default in place (xvt currently
+	// defaults to 10000). New subscribers receive this buffer as the first
+	// seed frame so they can scroll up through history written before they
+	// attached.
+	ScrollbackLines int
 }
 
 // Session is one pty-backed program whose output is parsed by a server-side
@@ -74,7 +80,11 @@ func NewSession(spec Spec) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("termvt: pty start: %w", err)
 	}
-	return startSession(emulatorFor(cols, rows), realPTY{ptmx}, cmd, cols, rows), nil
+	em := emulatorFor(cols, rows)
+	if spec.ScrollbackLines > 0 {
+		em.SetScrollbackSize(spec.ScrollbackLines)
+	}
+	return startSession(em, realPTY{ptmx}, cmd, cols, rows), nil
 }
 
 // NewSessionWithDeps constructs a Session against caller-supplied dependencies
