@@ -200,6 +200,11 @@ func (fr *FileRelay) sweep() {
 	fr.mu.Unlock()
 
 	for _, f := range dirty {
+		// f.offset is read without the lock here: sweepLoop is the sole goroutine
+		// that ever calls sweep() and is the sole writer of f.offset, so the
+		// read is race-free by construction. watchLoop only touches f.dirty
+		// (under the lock above). If a future change parallelises sweep or
+		// moves offset writes elsewhere, this read must move back under fr.mu.
 		oldOffset := f.offset
 		content, newOffset := readFrom(f.path, oldOffset)
 		if content == "" {

@@ -218,9 +218,16 @@ func (r *Runtime) spawnTargetAlive(sessionID state.SessionID, frameID state.Fram
 // after the snapshot: ensureSubsystemOnce dedupes by (project, kind), so the
 // sibling holds a reference to the same subsystem instance, and a late
 // Reaper.Remove would kill the backend out from under the live sibling.
-// The orphan backend (when no sibling exists either) survives until the
-// next kill of any frame on the same subsystem (reapSubsystemIfLast cleans
-// it up) or until daemon shutdown — bounded leak, no liveness corruption.
+// The orphan backend (when no sibling exists either) survives until the next
+// kill of any frame on the same subsystem reaps it via reapSubsystemIfLast,
+// or — if no such kill ever fires for the rest of the daemon's life — until
+// the daemon process exits and the OS tears down its process group. Graceful
+// EffReleaseFrameSandboxes does NOT clean this up because we deliberately
+// skip writing the orphan into r.subsystems (that write is what 027 was
+// removing). Container-backed subsystems do survive daemon exit, so this is
+// a true leak on the container side; non-container CLI subsystems die with
+// the daemon's process group. Acceptable trade-off for liveness correctness
+// — sibling-race is fatal, orphan-leak is bounded by daemon lifetime.
 func (r *Runtime) discardSpawnResult(e internalSpawnComplete) {
 	slog.Info("runtime: discarding spawn-complete for killed frame",
 		"session", e.effect.SessionID, "frame", e.effect.FrameID,
@@ -246,9 +253,11 @@ func (r *Runtime) discardSpawnResult(e internalSpawnComplete) {
 		}
 	}()
 	// Reply to the original spawn caller so it doesn't hang on its HTTP
-	// timeout. EvSpawnFailed's reducer evicts the (already-gone) frame as a
-	// no-op and emits errResp via ReplyConn/ReplyReqID. Always dispatch even
-	// when ReplyConn is zero — the reducer guards on ReplyConn==0 internally.
+	// timeout. The reducer is safe to invoke here because (a) evictFrame
+	// returns ok=false for the already-gone frame and emits no state effects,
+	// and (b) errResp is guarded by ReplyConn != 0 — so the no-ReplyConn path
+	// (e.g. an automatic restart's spawn) costs only one reduce-and-persist
+	// no-op.
 	r.dispatch(state.EvSpawnFailed{
 		SessionID:  e.effect.SessionID,
 		FrameID:    e.effect.FrameID,
