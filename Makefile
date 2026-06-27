@@ -20,7 +20,7 @@ CODEX_SCHEMA_TMP := /tmp/codex-schema-gen
 
 .PHONY: build build-orchestrator build-claude-app-server build-server build-web build-all \
         build-web-frontend \
-        run-dev install install-systemd install-web update-web clean test test-race vet lint \
+        run-dev install install-systemd install-web install-server update-web update-server clean test test-race vet lint \
         verify-bridge-deps \
         codex-schema-update codex-schema-check
 
@@ -81,21 +81,18 @@ install: build
 	install -m 755 $(SERVER) $(INSTALL_DIR)/$(SERVER)
 	install -m 755 $(BRIDGE) $(LIBEXEC_DIR)/$(BRIDGE)
 
-# install-systemd installs the server + web binaries plus the in-container
-# helper (reactor-bridge) into the user-scope locations consumed by
-# deploy/systemd/agent-reactor-{server,web}.service, and copies those unit
-# files into ~/.config/systemd/user/.
-# Binaries are renamed to their service role on disk so unit-file ExecStart=
-# lines and journald output stay in server/web vocabulary.
+# install-systemd composes install-server (server + bridge binaries) and
+# install-web (web binary) into the user-scope locations consumed by
+# deploy/systemd/agent-reactor-{server,web}.service, then copies those unit
+# files into ~/.config/systemd/user/. Binaries are renamed to their service
+# role on disk (agent-reactor-server / agent-reactor-web) so unit-file
+# ExecStart= lines and journald output stay in server/web vocabulary.
 #
 # After `make install-systemd`, run `systemctl --user daemon-reload && \
 # systemctl --user enable --now agent-reactor-web.service` to start the stack;
 # see docs/user/systemd.md for the full procedure.
-install-systemd: build build-server build-web
-	install -d $(INSTALL_DIR) $(LIBEXEC_DIR) $(SYSTEMD_USER_DIR)
-	install -m 755 $(SERVER) $(INSTALL_DIR)/$(SERVER_BIN)
-	install -m 755 $(WEB)    $(INSTALL_DIR)/$(WEB_BIN)
-	install -m 755 $(BRIDGE) $(LIBEXEC_DIR)/$(BRIDGE)
+install-systemd: install-server install-web
+	install -d $(SYSTEMD_USER_DIR)
 	install -m 644 deploy/systemd/agent-reactor-server.service  $(SYSTEMD_USER_DIR)/
 	install -m 644 deploy/systemd/agent-reactor-web.service     $(SYSTEMD_USER_DIR)/
 	systemctl --user daemon-reload
@@ -111,12 +108,31 @@ install-web: build-web
 	install -d $(INSTALL_DIR)
 	install -m 755 $(WEB) $(INSTALL_DIR)/$(WEB_BIN)
 
+# install-server builds and installs the server binary + reactor-bridge only
+# (no unit files, no web binary). Use after backend-only changes when the web
+# binary is already up to date.
+install-server: build
+	install -d $(INSTALL_DIR) $(LIBEXEC_DIR)
+	install -m 755 $(SERVER) $(INSTALL_DIR)/$(SERVER_BIN)
+	install -m 755 $(BRIDGE) $(LIBEXEC_DIR)/$(BRIDGE)
+
 # update-web installs the web binary and restarts the running service.
 # daemon-reload is cheap and idempotent — covers the case where the unit file
 # or a drop-in changed since the last start.
 update-web: install-web
 	systemctl --user daemon-reload
 	systemctl --user restart agent-reactor-web.service
+
+# update-server installs the server binary + reactor-bridge and restarts the
+# server unit. agent-reactor-web is BindsTo= server, so it cascades down with
+# server's stop and back up after server's start — no need to restart it
+# separately. WARNING: this drops every attached browser tab and kills every
+# in-container session (their docker exec child of server is reaped); the
+# daemon restores the session list from disk on the next start, but agent
+# processes inside containers do not survive.
+update-server: install-server
+	systemctl --user daemon-reload
+	systemctl --user restart agent-reactor-server.service
 
 test:
 	cd $(SRC_DIR) && go test ./...

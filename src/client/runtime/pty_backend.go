@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -477,15 +478,72 @@ func newPaneID(n int) string { return "%" + strconv.Itoa(n) }
 // newWindowIndex formats a synthetic window index ("1", "2", …).
 func newWindowIndex(n int) string { return strconv.Itoa(n) }
 
-// envSlice converts a KEY→VALUE map into the KEY=VALUE slice termvt.Spec wants.
-// A nil/empty map yields nil so the session inherits os.Environ().
-func envSlice(env map[string]string) []string {
-	if len(env) == 0 {
-		return nil
+// envSlice returns the KEY=VALUE slice termvt.Spec.Env wants for the spawned
+// pty child. The daemon's process env (os.Environ — populated from the
+// user-scope systemd unit's EnvironmentFile, or the invoking user's env when
+// run directly) is ALWAYS the base; entries in overrides shadow individual
+// keys in place. This preserves Unix fork-exec inheritance so daemon children
+// see the same PATH / HOME / mise+cargo shims the daemon itself runs with.
+//
+// Host-direct launches (SandboxOverrideHost → DirectDispatcher) carry only
+// {ROOST_SESSION_ID, ROOST_FRAME_ID} as overrides; without inheritance they
+// lose PATH and fail `exec claude` (~/.local/bin) with exit 127 (a5ec8f11
+// incident, 2026-06-27). Devcontainer launches are unaffected: their
+// in-container env is carried as `docker exec -e KEY=VAL …` arguments,
+// separate from this slice.
+//
+// Merge details live in mergeEnv.
+func envSlice(overrides map[string]string) []string {
+	return mergeEnv(os.Environ(), overrides)
+}
+
+// mergeEnv overlays overrides onto base and returns the merged KEY=VALUE slice.
+// Contract:
+//   - base order is preserved; for duplicate keys in base, only the first
+//     occurrence is emitted (matches glibc getenv). Duplicates arise after
+//     sudo / layered EnvironmentFiles and are legal under POSIX execve.
+//   - a base entry whose key appears in overrides is rewritten in place to
+//     KEY=<override-value>; no key is emitted more than once.
+//   - malformed base entries with no '=' are passed through verbatim and do
+//     NOT participate in the keyed dedup — a bare "FOO" must not shadow a
+//     well-formed "FOO=…" or block an overlay for FOO.
+//   - overrides whose key is absent from base are appended in sorted order
+//     so the result is deterministic between runs (Spec.Env feeds memoization
+//     / golden tests downstream).
+//   - len(overrides)==0 returns base verbatim.
+func mergeEnv(base []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return base
 	}
-	out := make([]string, 0, len(env))
-	for k, v := range env {
-		out = append(out, k+"="+v)
+	seenKey := make(map[string]struct{}, len(base)+len(overrides))
+	out := make([]string, 0, len(base)+len(overrides))
+	for _, kv := range base {
+		eq := strings.IndexByte(kv, '=')
+		if eq < 0 {
+			out = append(out, kv) // malformed, preserve, don't track as key
+			continue
+		}
+		key := kv[:eq]
+		if _, dup := seenKey[key]; dup {
+			continue
+		}
+		seenKey[key] = struct{}{}
+		if v, ok := overrides[key]; ok {
+			out = append(out, key+"="+v)
+		} else {
+			out = append(out, kv)
+		}
+	}
+	extra := make([]string, 0, len(overrides))
+	for k := range overrides {
+		if _, dup := seenKey[k]; dup {
+			continue
+		}
+		extra = append(extra, k)
+	}
+	sort.Strings(extra)
+	for _, k := range extra {
+		out = append(out, k+"="+overrides[k])
 	}
 	return out
 }

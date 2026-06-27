@@ -733,3 +733,127 @@ func TestPtyBackendConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// envSliceToMap parses KEY=VALUE pairs and tracks each key's occurrence count
+// so envSlice tests can assert both value-equality and emit-exactly-once
+// without re-deriving the parse inline.
+func envSliceToMap(t *testing.T, kvs []string) (map[string]string, map[string]int) {
+	t.Helper()
+	values := make(map[string]string, len(kvs))
+	counts := make(map[string]int, len(kvs))
+	for _, kv := range kvs {
+		key, val, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		values[key] = val
+		counts[key]++
+	}
+	return values, counts
+}
+
+// TestEnvSliceInheritsOsEnvironWithOverrides asserts the daemon's process env
+// is the base and explicit overrides shadow individual keys without dropping
+// the rest. Regression guard for host-direct launches losing PATH and hitting
+// exit 127 on `exec claude` (a5ec8f11 incident, 2026-06-27).
+func TestEnvSliceInheritsOsEnvironWithOverrides(t *testing.T) {
+	t.Setenv("ENVSLICE_BASE_KEY", "from-os")
+	t.Setenv("ENVSLICE_SHADOWED", "from-os")
+
+	got := envSlice(map[string]string{
+		"ENVSLICE_SHADOWED": "from-overlay",
+		"ENVSLICE_NEW_KEY":  "from-overlay",
+	})
+	values, counts := envSliceToMap(t, got)
+
+	want := map[string]string{
+		"ENVSLICE_BASE_KEY": "from-os",      // inherited untouched
+		"ENVSLICE_SHADOWED": "from-overlay", // overlay wins
+		"ENVSLICE_NEW_KEY":  "from-overlay", // overlay adds
+	}
+	for k, v := range want {
+		if values[k] != v {
+			t.Errorf("envSlice key %q = %q, want %q", k, values[k], v)
+		}
+		// Each key under test must appear exactly once. The check is scoped to
+		// our ENVSLICE_-prefixed keys: any duplicates already present in the
+		// test runner's host env (legal under POSIX and observable after e.g.
+		// sudo or layered EnvironmentFiles) would otherwise spuriously fail
+		// the assertion for unrelated keys.
+		if counts[k] != 1 {
+			t.Errorf("envSlice key %q appears %d times, want 1", k, counts[k])
+		}
+	}
+}
+
+// mergeEnv drops duplicate KEY= entries in base (legal under POSIX, observable
+// after sudo / layered EnvironmentFiles), keeping only the first occurrence so
+// libc readers cannot diverge. Drives the dedup branch directly with a synthetic
+// base since os.Setenv collapses duplicates and the real os.Environ() path
+// can't reach this state from Go.
+func TestMergeEnvDeduplicatesBase(t *testing.T) {
+	base := []string{"FOO=first", "BAR=keep", "FOO=second"}
+	got := mergeEnv(base, map[string]string{"FOO": "overlay"})
+	want := []string{"FOO=overlay", "BAR=keep"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("mergeEnv = %v, want %v", got, want)
+	}
+}
+
+// Malformed (no `=`) base entries are preserved verbatim but must NOT
+// participate in the keyed dedup. A bare "FOO" must not shadow a well-formed
+// "FOO=…" or block an overlay for FOO — that regression silently dropped the
+// caller's override (Round 2 review finding).
+func TestMergeEnvMalformedEntryDoesNotShadowOverlay(t *testing.T) {
+	base := []string{"FOO", "FOO=base"}
+	got := mergeEnv(base, map[string]string{"FOO": "overlay"})
+	want := []string{"FOO", "FOO=overlay"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("mergeEnv = %v, want %v", got, want)
+	}
+}
+
+// Empty overrides → os.Environ verbatim. Container-launch path relies on
+// this (BuildLaunchCommand returns an empty outEnv map; the in-container
+// process env is encoded into the docker-exec command-line, not the host
+// shell's env), so the daemon's PATH still reaches host /bin/sh and `docker`
+// resolves under POSIX-default-or-systemd PATH.
+//
+// Only nil is tested: len(nil map) == len(map[string]string{}) == 0 in Go,
+// so the {} branch would exercise the same code path with no extra coverage.
+func TestEnvSliceEmptyOverridesYieldsOsEnviron(t *testing.T) {
+	t.Setenv("ENVSLICE_PROBE", "v")
+	got := envSlice(nil)
+	values, _ := envSliceToMap(t, got)
+	if values["ENVSLICE_PROBE"] != "v" {
+		t.Errorf("envSlice(nil) did not propagate os.Environ probe, got %q", values["ENVSLICE_PROBE"])
+	}
+}
+
+// Unshadowed override keys are emitted in sorted order so termvt.Spec.Env is
+// deterministic between runs. Memoization and golden-test consumers downstream
+// rely on this.
+func TestEnvSliceUnshadowedOverridesAreSorted(t *testing.T) {
+	overrides := map[string]string{
+		"ENVSLICE_ZED":   "z",
+		"ENVSLICE_ALPHA": "a",
+		"ENVSLICE_MID":   "m",
+	}
+	first := envSlice(overrides)
+	second := envSlice(overrides)
+	if strings.Join(first, "\x00") != strings.Join(second, "\x00") {
+		t.Fatal("envSlice output is non-deterministic between calls with identical overrides")
+	}
+	// Tail of the slice carries the appended unshadowed overrides in sorted
+	// order; locate them by prefix to avoid coupling to os.Environ length.
+	var tail []string
+	for _, kv := range first {
+		if strings.HasPrefix(kv, "ENVSLICE_") {
+			tail = append(tail, kv)
+		}
+	}
+	want := []string{"ENVSLICE_ALPHA=a", "ENVSLICE_MID=m", "ENVSLICE_ZED=z"}
+	if strings.Join(tail, ",") != strings.Join(want, ",") {
+		t.Errorf("envSlice unshadowed tail = %v, want %v (sorted)", tail, want)
+	}
+}
