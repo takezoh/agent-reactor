@@ -858,7 +858,7 @@ func TestExecuteCheckPaneAliveMissingPaneKillsActiveFrame(t *testing.T) {
 }
 
 // reconcileWindows must distinguish a vanished pane from a transient query
-// failure: only "can't find pane" should evict an inactive frame.
+// failure: only errors that wrap ErrPaneMissing should evict an inactive frame.
 func TestReconcileWindowsTransientErrorKeepsFrame(t *testing.T) {
 	backend := newFakeBackend()
 	backend.exitStatusErr["%7"] = fmt.Errorf("backend display-message -t %%7 -p ...: %w", context.DeadlineExceeded)

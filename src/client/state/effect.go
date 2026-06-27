@@ -102,7 +102,10 @@ type EffRespawnPane struct {
 	Proc uiproc.UIProcess
 }
 
-// EffDetachClient asks the backend to detach the current client (legacy).
+// EffDetachClient asks the backend to detach the current attached client.
+// Survives from the tmux era when arc could attach to a shared multiplexer
+// session; on PtyBackend this is a no-op stub kept so the dispatch arm in
+// interpret.go stays exhaustive across backends.
 type EffDetachClient struct{}
 
 // EffReleaseFrameSandboxes asks the runtime to destroy all sandbox resources
@@ -111,9 +114,11 @@ type EffDetachClient struct{}
 // adoption. The runtime handles this with drainFrameCleanups (parallel, blocking).
 type EffReleaseFrameSandboxes struct{}
 
-// EffDisplayPopup launches a popup window for a named tool (legacy).
-// Tool and Args are structured values — the runtime builds the
-// shell command string with proper escaping, avoiding injection.
+// EffDisplayPopup launches a transient popup window for a named tool. PtyBackend
+// stubs this (no popup support without a multiplexer); reducers still emit it so
+// the future client-side overlay layer (plan C, follow-up) can consume the same
+// path. Tool and Args are structured values — the runtime builds the shell
+// command string with proper escaping, avoiding injection.
 type EffDisplayPopup struct {
 	Width  string
 	Height string
@@ -121,7 +126,10 @@ type EffDisplayPopup struct {
 	Args   map[string]string
 }
 
-// EffKillSession destroys the client backend session (legacy).
+// EffKillSession asks the backend to destroy its own session and exit. On
+// tmux this collapsed the whole client; on PtyBackend it is a no-op because
+// the backend's lifetime is bound to the daemon process (ADR 0004, decision 2).
+// The dispatch arm is preserved so reduceShutdown stays backend-agnostic.
 type EffKillSession struct{}
 
 // === IPC operations ===

@@ -42,20 +42,26 @@ type PaneLifecycle interface {
 
 // PaneIO covers key input and buffer operations directed at a pane.
 type PaneIO interface {
-	// SendKeys sends text followed by Enter to a pane (backend send-keys equivalent ... Enter).
+	// SendKeys writes text into the pane's input followed by Enter.
 	SendKeys(paneTarget, text string) error
-	// SendKey sends a named key (e.g. "Escape", "q") to a pane without Enter.
+	// SendKey writes a single named key (e.g. "Escape", "q") into the pane
+	// without an appended Enter.
 	SendKey(paneTarget, key string) error
-	// SendEnter sends only the Enter key to a pane (backend send-keys equivalent -t <target> Enter).
+	// SendEnter writes a bare Enter into the pane (used to submit a previously
+	// pasted prompt without re-typing it).
 	SendEnter(target string) error
-	// LoadBuffer loads text into a named paste buffer via stdin.
-	// Implements: backend load-buffer equivalent -b <name> -
+	// LoadBuffer stores text under a name in a per-backend paste-buffer table.
+	// PasteBuffer later consumes it. The split exists because the backend's
+	// bracketed-paste path expects buffer-then-paste rather than a single write.
 	LoadBuffer(name, text string) error
-	// PasteBuffer pastes a named buffer into the target pane and deletes it.
-	// Implements: backend paste-buffer equivalent -d -b <name> -t <target>
+	// PasteBuffer writes the named buffer's contents into the target pane and
+	// drops the buffer afterwards. Used by InjectPrompt to deliver multi-line
+	// text without each newline being interpreted as submit by Ink TUIs.
 	PasteBuffer(name, target string) error
-	// PipePane pipes pane output to a shell command.
-	// Passing an empty command stops the running pipe.
+	// PipePane attaches a shell command to the pane's output stream so the
+	// runtime can observe raw bytes. An empty command stops a running pipe.
+	// PtyBackend implements this as a no-op because PtyPaneTap subscribes
+	// directly to the termvt.Manager.
 	PipePane(paneTarget, command string) error
 }
 
