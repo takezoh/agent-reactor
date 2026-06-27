@@ -108,16 +108,20 @@ type WindowLayout interface {
 	RunChain(ops ...[]string) error
 }
 
-// BackendControl covers session/client-level control operations.
+// BackendControl covers session/client-level control operations that only
+// the legacy tmux backend implemented. PtyBackend stubs each method as a
+// no-op so the runtime stays backend-agnostic and reducers can emit the
+// corresponding Eff{StatusLine,DetachClient,KillSession,DisplayPopup}
+// without checking which backend is wired in. See effect.go for the per-
+// effect rationale.
 type BackendControl interface {
-	// SetStatusLine writes the status-left line (legacy; no-op on
-	// PtyBackend).
+	// SetStatusLine writes the status-left line (tmux era).
 	SetStatusLine(line string) error
-	// DetachClient detaches the current client (legacy).
+	// DetachClient detaches the current attached client (tmux era).
 	DetachClient() error
-	// KillSession destroys the client session (legacy).
+	// KillSession destroys the client session (tmux era).
 	KillSession() error
-	// DisplayPopup runs a popup window (legacy).
+	// DisplayPopup runs a popup window for a named tool (tmux era).
 	DisplayPopup(width, height, cmd string) error
 }
 

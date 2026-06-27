@@ -104,8 +104,8 @@ type EffRespawnPane struct {
 
 // EffDetachClient asks the backend to detach the current attached client.
 // Survives from the tmux era when arc could attach to a shared multiplexer
-// session; on PtyBackend this is a no-op stub kept so the dispatch arm in
-// interpret.go stays exhaustive across backends.
+// session; PtyBackend implements DetachClient as a no-op so the runtime
+// stays backend-agnostic and reducers can remain unaware of the swap.
 type EffDetachClient struct{}
 
 // EffReleaseFrameSandboxes asks the runtime to destroy all sandbox resources
@@ -114,11 +114,12 @@ type EffDetachClient struct{}
 // adoption. The runtime handles this with drainFrameCleanups (parallel, blocking).
 type EffReleaseFrameSandboxes struct{}
 
-// EffDisplayPopup launches a transient popup window for a named tool. PtyBackend
-// stubs this (no popup support without a multiplexer); reducers still emit it so
-// the future client-side overlay layer (plan C, follow-up) can consume the same
-// path. Tool and Args are structured values — the runtime builds the shell
-// command string with proper escaping, avoiding injection.
+// EffDisplayPopup launches a transient popup window for a named tool.
+// PtyBackend implements DisplayPopup as a no-op (no popup support without an
+// external multiplexer); reducers still emit it so a future client-side
+// overlay layer (see plan A follow-up) can consume the same path without
+// reducer surgery. Tool and Args are structured values — the runtime builds
+// the shell command string with proper escaping, avoiding injection.
 type EffDisplayPopup struct {
 	Width  string
 	Height string
@@ -127,9 +128,11 @@ type EffDisplayPopup struct {
 }
 
 // EffKillSession asks the backend to destroy its own session and exit. On
-// tmux this collapsed the whole client; on PtyBackend it is a no-op because
-// the backend's lifetime is bound to the daemon process (ADR 0004, decision 2).
-// The dispatch arm is preserved so reduceShutdown stays backend-agnostic.
+// tmux this collapsed the whole client; PtyBackend implements KillSession as
+// a no-op because the backend's lifetime is already bound to the daemon
+// process (ADR 0004, decision 2). reduceShutdown emits this regardless so
+// future backends with separable lifecycles can plug in without reducer
+// surgery.
 type EffKillSession struct{}
 
 // === IPC operations ===

@@ -236,7 +236,9 @@ PtyBackend を runtime に挿す上で出ていた 6 件:
   - `backends.go` 冒頭の `RealTmuxBackend` 言及コメントを削除
   - `runtime_test.go` の fake error を substring から `ErrPaneMissing` ラップに変更
     (`tmux: can't find pane: %3` → `runtime: unknown pane %q: %w`)
-- 結果: `platform/lib/tmux` への runtime 側 import が消滅(package 自体は残)。
+- 結果: `platform/lib/tmux` への runtime 側 import が消滅。
+  package 本体も code-review #2 のフォローアップで削除(orphan を抱え続ける
+  意味が無いため)。
 
 #### C-2a. runtime backend layer の識別子 rename — **済**(2026-06-27, `ec17db7`)
 - 完了した rename:

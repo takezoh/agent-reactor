@@ -138,10 +138,11 @@ func DefaultConfig() *Config {
 		Theme: "default",
 		Log:   LogConfig{Level: "info"},
 		Pane: PaneConfig{
-			SessionName:         appid.SessionName,
-			Prefix:              "C-b",
-			PaneRatioHorizontal: 75,
-			PaneRatioVertical:   75,
+			SessionName:       appid.SessionName,
+			PaneRatioVertical: 75,
+			// Prefix and PaneRatioHorizontal are deprecated (ADR 0004) — no
+			// default seeded so a freshly written config does not re-introduce
+			// stale tmux-era values to a new user.
 		},
 		Monitor: MonitorConfig{
 			PollIntervalMs:     1000,

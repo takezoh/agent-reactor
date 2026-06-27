@@ -36,7 +36,7 @@ the test-pinned enforcement catalogued in
 
 ## Fan-out isolation harness (termvt multiplexer)
 
-The tmux-free web server's `platform/termvt` is the same shape — one source
+The arc server's `platform/termvt` is the same shape — one source
 (a pty) multiplexed to many subscribers — so it carries the analogous
 safety-critical property: **fan-out isolation** (every event reaches exactly the
 live subscribers of its own session, in order; a slow subscriber is severed, not
@@ -73,14 +73,14 @@ then append it to the `test-race` recipe in the Makefile in the same PR.
 
 ## Coverage Tiers
 
-Coverage targets are tiered by architectural blast radius. A regression in `state` corrupts every session; a regression in `lib/tmux` typically surfaces as one broken pane.
+Coverage targets are tiered by architectural blast radius. A regression in `state` corrupts every session; a regression in `lib/github` typically surfaces as one connector misbehaving.
 
 | Tier | Target | Layer | Members |
 |------|--------|-------|---------|
 | **S** | ≥85% | Pure domain layer & wire types | `state`, `state/view`, `proto`, `features`, `orchestrator/scheduler` (pure `Reduce` + transitions) |
 | **A** | ≥75% | Core execution layer | `runtime`, `runtime/worker`, `runtime/subsystem/*`, `driver`, `driver/vt`, `config`, `sandbox/devcontainer`, `platform/termvt`, `server/session`, `server/web` |
 | **B** | ≥60% | Infrastructure integrations | `lib/*` (except thin CLI wrappers), `proto/sessions`, `hostexec`, `mcpproxy`, `tui`, `tools` |
-| **C** | ≥40% | Thin CLI & wiring | `main`, `cli`, `lib/tmux`, `lib/gemini`, `lib/notify` |
+| **C** | ≥40% | Thin CLI & wiring | `main`, `cli`, `lib/gemini`, `lib/notify` |
 | **D** | smoke tests minimum | Trivial packages | `event`, `internal/globutil`, `lib/wsl`, `runtime/subsystem` (shared utilities), `sandbox`, `cmd/bridge` |
 
 Tier S and A packages must not lose coverage in a PR. Tier B packages should improve over time; new B-tier code arrives with tests. Tier C packages aim for the goldenpath; full coverage isn't expected. Tier D packages need at least one test that exercises the package surface.
@@ -110,7 +110,7 @@ The `Simplify` workflow (`.github/workflows/simplify.yml`) runs on every pull re
 
 ## When Coverage Can't Be Reached
 
-Some packages can't hit their Tier target in CI because the dependency is the OS itself — `lib/tmux` wraps the tmux binary, `cmd/bridge` is a process entry point. For these:
+Some packages can't hit their Tier target in CI because the dependency is the OS itself — `cmd/reactor-bridge` is a process entry point, `platform/sandbox/devcontainer` shells out to docker. For these:
 
 1. Cover everything that doesn't require the external process (pure parsing, command-string assembly, etc.).
 2. Document the structural ceiling in the package's test file.
