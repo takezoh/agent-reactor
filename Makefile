@@ -20,7 +20,7 @@ CODEX_SCHEMA_TMP := /tmp/codex-schema-gen
 
 .PHONY: build build-orchestrator build-claude-app-server build-server build-web build-all \
         build-web-frontend \
-        run-dev install install-systemd clean test test-race vet lint \
+        run-dev install install-systemd install-web update-web clean test test-race vet lint \
         verify-bridge-deps \
         codex-schema-update codex-schema-check
 
@@ -98,12 +98,25 @@ install-systemd: build build-server build-web
 	install -m 755 $(BRIDGE) $(LIBEXEC_DIR)/$(BRIDGE)
 	install -m 644 deploy/systemd/agent-reactor-server.service  $(SYSTEMD_USER_DIR)/
 	install -m 644 deploy/systemd/agent-reactor-web.service     $(SYSTEMD_USER_DIR)/
+	systemctl --user daemon-reload
 	@echo
 	@echo "Installed. Next:"
-	@echo "  systemctl --user daemon-reload"
 	@echo "  systemctl --user enable --now agent-reactor-web.service"
 	@echo "  loginctl enable-linger $$USER   # boot-time autostart"
 	@echo "See docs/user/systemd.md for the full guide."
+
+# install-web builds and installs the web binary only (no unit files, no server).
+# Use after front-end-only changes when the server binary is already up to date.
+install-web: build-web
+	install -d $(INSTALL_DIR)
+	install -m 755 $(WEB) $(INSTALL_DIR)/$(WEB_BIN)
+
+# update-web installs the web binary and restarts the running service.
+# daemon-reload is cheap and idempotent — covers the case where the unit file
+# or a drop-in changed since the last start.
+update-web: install-web
+	systemctl --user daemon-reload
+	systemctl --user restart agent-reactor-web.service
 
 test:
 	cd $(SRC_DIR) && go test ./...

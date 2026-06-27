@@ -1,36 +1,26 @@
-# agent-reactor server — HTTP/WS gateway. A client of the runtime: dials the
-# runtime socket and translates browser REST/WebSocket traffic into runtime
-# protocol calls. Stateless; restarting it does NOT drop sessions because
-# sessions live in the runtime.
-#
-# Binds to the runtime: stopping the runtime cascades a stop here, and
-# starting this unit cascades a start of the runtime.
+# agent-reactor server — merged pty session daemon + HTTP/WS gateway in one
+# process. Owns sessions, sockets, and on-disk state under -data-dir.
+# Restarting this unit drops every attached browser tab; sessions are
+# recreated from disk on the next boot.
 #
 # Default bind is 127.0.0.1:8443 + -insecure (loopback only). Operators
 # exposing to LAN/internet should set -tls-cert / -tls-key and re-bind via
-# server.env. The -insecure flag holds zero auth value — bearer-token auth
-# is always on (see token-file below) unless someone explicitly added
-# -no-auth to ExecStart, which the loopback-only guard would still enforce.
+# server.env. Bearer-token auth is always on (see -token-file below) unless
+# -no-auth is explicitly added to ExecStart (loopback-only guard still applies).
 
 [Unit]
-Description=agent-reactor server (HTTP/WS gateway, runtime client)
+Description=agent-reactor server (session daemon + HTTP/WS gateway)
 # Operator guide: docs/user/systemd.md in the agent-reactor source repo.
-After=agent-reactor-runtime.service
-Requires=agent-reactor-runtime.service
-# BindsTo (stronger than Requires) makes this unit stop when runtime stops —
-# the runtime's socket goes away and any in-flight request would otherwise
-# error out repeatedly during the gap until systemd restarted us anyway.
-BindsTo=agent-reactor-runtime.service
 
 [Service]
 Type=simple
 StateDirectory=agent-reactor
-# -arc-sock points at the runtime's socket (legacy flag name; the value is
-# what matters). -token-file persists a bearer token across restarts so
-# bookmarked browser URLs survive a server unit reload.
+# -data-dir tells the server where to write its socket, pid file, sessions
+# snapshot and logs. -token-file persists a bearer token across restarts so
+# bookmarked browser URLs survive a unit reload.
 ExecStart=%h/.local/bin/agent-reactor-server \
   -addr 127.0.0.1:8443 -insecure \
-  -arc-sock %S/agent-reactor/arc.sock \
+  -data-dir %S/agent-reactor \
   -token-file %S/agent-reactor/server.token
 # Operator override file (TLS, alternate addr, etc.). Leading `-` tolerates absence.
 EnvironmentFile=-%S/agent-reactor/server.env
