@@ -33,12 +33,9 @@ func evictRootFrame(s State, sessID SessionID, sess Session, killWindow bool) (S
 	if s.ActiveSession == sessID {
 		s.ActiveSession = ""
 	}
-	var effs []Effect
+	effs := make([]Effect, 0, len(allRemoved)*4+2)
 	for _, frame := range allRemoved {
-		if killWindow {
-			effs = append(effs, EffKillSessionWindow{FrameID: frame.ID})
-		}
-		effs = append(effs, EffUnregisterPane{FrameID: frame.ID}, EffUnwatchFile{FrameID: frame.ID})
+		effs = append(effs, frameTeardownEffects(frame.ID, killWindow)...)
 	}
 	effs = append(effs, EffPersistSnapshot{}, EffBroadcastSessionsChanged{})
 	return s, effs, true
@@ -58,13 +55,32 @@ func evictChildFrame(s State, sessID SessionID, sess Session, idx int, frameID F
 	s.Sessions = cloneSessions(s.Sessions)
 	s.Sessions[sessID] = sess
 
-	var effs []Effect
-	if killWindow {
-		effs = append(effs, EffKillSessionWindow{FrameID: removed.ID})
-	}
-	effs = append(effs, EffUnregisterPane{FrameID: removed.ID}, EffUnwatchFile{FrameID: removed.ID})
+	effs := frameTeardownEffects(removed.ID, killWindow)
 	effs = append(effs, EffPersistSnapshot{}, EffBroadcastSessionsChanged{})
 	return s, effs, true
+}
+
+// frameTeardownEffects builds the canonical per-frame teardown effect set
+// emitted whenever a frame leaves the session graph: backend window kill
+// (only when the window is still alive — pane-vanished routes set
+// killWindow=false), sandbox release (always — pane-vanished must still
+// drop the container refcount), pane unregister, file unwatch.
+//
+// Centralising the set is load-bearing: any new reducer path that
+// removes a frame must call this helper, otherwise the silent regression
+// is "container survives forever even though no frame uses it" — exactly
+// the bug reduceStopSession had until this helper existed.
+func frameTeardownEffects(frameID FrameID, killWindow bool) []Effect {
+	effs := make([]Effect, 0, 4)
+	if killWindow {
+		effs = append(effs, EffKillSessionWindow{FrameID: frameID})
+	}
+	effs = append(effs,
+		EffReleaseFrameSandbox{FrameID: frameID},
+		EffUnregisterPane{FrameID: frameID},
+		EffUnwatchFile{FrameID: frameID},
+	)
+	return effs
 }
 
 // === ErrCode constants used by reducers ===

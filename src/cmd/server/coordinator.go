@@ -304,15 +304,27 @@ func superviseRun(cancel context.CancelFunc, errCh chan<- error, fn func() error
 	}
 }
 
+// shutdownDrainTimeout caps how long we wait for the EffReleaseFrameSandboxes
+// drain. Sized to fit inside systemd's TimeoutStopSec= so a stuck per-frame
+// cleanup never blocks the unit indefinitely.
+const shutdownDrainTimeout = 8 * time.Second
+
 // installSignalHandlers wires SIGINT/SIGTERM/SIGHUP into the coordinator
-// context. SIGINT/SIGTERM cancel the context for graceful shutdown. SIGHUP is
-// logged and ignored — a parent terminal can deliver spurious SIGHUP when its
-// own window closes (WSL2 init quirks etc.), and the daemon should outlive
-// that signal because session state lives in memory and persists across the
-// IPC socket rather than in the controlling terminal.
+// context. SIGINT/SIGTERM trigger graceful shutdown: requestShutdown
+// enqueues EventShutdown so the reducer can drain sandbox cleanups
+// (containers, codex app-servers, …) before the runtime context is
+// cancelled and the event loop exits. SIGHUP is logged and ignored — a
+// parent terminal can deliver spurious SIGHUP when its own window closes
+// (WSL2 init quirks etc.), and the daemon should outlive that signal
+// because session state lives in memory and persists across the IPC
+// socket rather than in the controlling terminal.
+//
+// requestShutdown is a callback rather than a *runtime.Runtime so tests
+// (and any future caller without a live runtime) can install handlers
+// against a no-op stub. Pass nil to skip the shutdown drain entirely.
 //
 // Returns a stop function the caller must defer to restore default handlers.
-func installSignalHandlers(cancel context.CancelFunc) func() {
+func installSignalHandlers(requestShutdown func(time.Duration), cancel context.CancelFunc) func() {
 	sigCh := make(chan os.Signal, 4)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	done := make(chan struct{})
@@ -322,6 +334,9 @@ func installSignalHandlers(cancel context.CancelFunc) func() {
 			slog.Info("coordinator: signal received", "signal", sig.String())
 			if sig == syscall.SIGHUP {
 				continue
+			}
+			if requestShutdown != nil {
+				requestShutdown(shutdownDrainTimeout)
 			}
 			cancel()
 			return
@@ -340,7 +355,7 @@ func installSignalHandlers(cancel context.CancelFunc) func() {
 // the gateway's listener or per-conn goroutines is contained by recover() in
 // startGateway so the daemon keeps serving its IPC socket.
 func runAndWait(ctx context.Context, cancel context.CancelFunc, rt *runtime.Runtime, sockPath string, df *daemonFlagSet) error {
-	stopSignals := installSignalHandlers(cancel)
+	stopSignals := installSignalHandlers(rt.RequestShutdown, cancel)
 	defer stopSignals()
 	runErrCh := make(chan error, 1)
 	go superviseRun(cancel, runErrCh, func() error { return rt.Run(ctx) })

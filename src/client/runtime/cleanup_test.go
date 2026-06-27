@@ -265,7 +265,13 @@ func (l *testLauncher) EnsureProject(_ context.Context, _ string) error { return
 
 func (l *testLauncher) IsContainer(_ string) bool { return false }
 
-func TestEffKillSessionWindow_invokesCleanup(t *testing.T) {
+// TestEffKillSessionWindow_doesNotInvokeCleanup asserts that
+// EffKillSessionWindow is responsible for pane-backend window kill only
+// — sandbox cleanup (Manager.ReleaseFrame → DestroyInstance) is driven
+// by EffReleaseFrameSandbox emitted from the reducer for the same frame.
+// Splitting the responsibilities lets EvPaneWindowVanished release the
+// container even though it skips the pane kill (`killWindow=false`).
+func TestEffKillSessionWindow_doesNotInvokeCleanup(t *testing.T) {
 	var called atomic.Bool
 	backend := noopBackend{}
 	r := New(Config{Backend: backend})
@@ -279,11 +285,156 @@ func TestEffKillSessionWindow_invokesCleanup(t *testing.T) {
 
 	r.execute(state.EffKillSessionWindow{FrameID: frameID})
 
+	time.Sleep(50 * time.Millisecond)
+	if called.Load() {
+		t.Error("cleanup must not be called by EffKillSessionWindow alone; expected EffReleaseFrameSandbox to drive cleanup")
+	}
+}
+
+// TestEffReleaseFrameSandbox_invokesCleanup asserts the new effect fires
+// the per-frame cleanup closure (devcontainer.makeCleanup =
+// Manager.ReleaseFrame → 0 なら DestroyInstance). reducer emits this
+// effect for every evicted frame regardless of killWindow so EvPane-
+// WindowVanished and reduceFrameCommandExited (abnormal exit) routes
+// also free the container.
+func TestEffReleaseFrameSandbox_invokesCleanup(t *testing.T) {
+	var called atomic.Bool
+	backend := noopBackend{}
+	r := New(Config{Backend: backend})
+
+	frameID := state.FrameID("f-release")
+	r.storeFrameCleanup(frameID, func() error {
+		called.Store(true)
+		return nil
+	})
+
+	r.execute(state.EffReleaseFrameSandbox{FrameID: frameID})
+
 	deadline := time.Now().Add(200 * time.Millisecond)
 	for !called.Load() && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if !called.Load() {
-		t.Error("cleanup not called after EffKillSessionWindow")
+		t.Error("cleanup not called after EffReleaseFrameSandbox")
+	}
+}
+
+// TestRequestShutdown_returnsAfterEffReleaseFrameSandboxes asserts the
+// signal-handler contract: RequestShutdown enqueues EventShutdown and
+// blocks until the EffReleaseFrameSandboxes handler closes the ack
+// channel. Without this signal handlers would call ctx.cancel() before
+// containers had a chance to teardown.
+func TestRequestShutdown_returnsAfterEffReleaseFrameSandboxes(t *testing.T) {
+	r := New(Config{Backend: noopBackend{}})
+	done := make(chan struct{})
+	go func() {
+		r.RequestShutdown(time.Second)
+		close(done)
+	}()
+	// Simulate the event loop side: drain the enqueued shutdown and
+	// execute the EffReleaseFrameSandboxes handler that the reducer
+	// would have emitted.
+	select {
+	case <-r.eventCh:
+	case <-time.After(time.Second):
+		t.Fatal("RequestShutdown did not enqueue EvEvent within 1s")
+	}
+	r.execute(state.EffReleaseFrameSandboxes{})
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RequestShutdown did not return after EffReleaseFrameSandboxes")
+	}
+}
+
+// TestRequestShutdown_timesOutWhenLoopNeverDrains guards against the
+// reverse failure: a wedged event loop must not pin the signal handler
+// forever — RequestShutdown must return after the timeout so cancel()
+// still runs and systemd's TimeoutStopSec= is honoured.
+func TestRequestShutdown_timesOutWhenLoopNeverDrains(t *testing.T) {
+	r := New(Config{Backend: noopBackend{}})
+	start := time.Now()
+	r.RequestShutdown(50 * time.Millisecond)
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Errorf("RequestShutdown returned after %v; want ≤500ms", elapsed)
+	}
+}
+
+// TestRequestShutdown_enqueueTimeout_releasesConcurrentWaiters guards
+// R2-F1: if the EventShutdown send into eventCh exceeds timeout (a
+// wedged event loop with a full buffer), the first caller used to leave
+// shutdownAck non-nil and uncloseable. A second caller would then park
+// on that stale ack forever. The fix closes the ack and clears the slot
+// before returning so retries succeed and waiters unblock.
+func TestRequestShutdown_enqueueTimeout_releasesConcurrentWaiters(t *testing.T) {
+	r := New(Config{Backend: noopBackend{}})
+
+	// Saturate eventCh so the blocking send inside RequestShutdown
+	// cannot make progress within the timeout.
+	for i := 0; i < cap(r.eventCh); i++ {
+		r.eventCh <- state.EvEvent{Event: "filler"}
+	}
+
+	done1 := make(chan struct{})
+	go func() {
+		r.RequestShutdown(50 * time.Millisecond)
+		close(done1)
+	}()
+	// A second waiter that arrives while the first is parked on the
+	// timer must NOT inherit the stale ack — once the first call
+	// surrenders, the second should also unblock promptly (either by
+	// running its own enqueue attempt or by sharing the closed ack).
+	done2 := make(chan struct{})
+	time.Sleep(5 * time.Millisecond)
+	go func() {
+		r.RequestShutdown(50 * time.Millisecond)
+		close(done2)
+	}()
+	for _, ch := range []chan struct{}{done1, done2} {
+		select {
+		case <-ch:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("RequestShutdown waiter did not unblock after enqueue timeout")
+		}
+	}
+}
+
+// TestRequestShutdown_secondCallSharesAck asserts that a second caller
+// (e.g. SIGTERM arriving twice) does not enqueue a duplicate shutdown
+// event and waits on the same ack as the first.
+func TestRequestShutdown_secondCallSharesAck(t *testing.T) {
+	r := New(Config{Backend: noopBackend{}})
+	done1 := make(chan struct{})
+	go func() {
+		r.RequestShutdown(time.Second)
+		close(done1)
+	}()
+	// Wait for first call to enqueue.
+	select {
+	case <-r.eventCh:
+	case <-time.After(time.Second):
+		t.Fatal("first RequestShutdown did not enqueue")
+	}
+	done2 := make(chan struct{})
+	go func() {
+		r.RequestShutdown(time.Second)
+		close(done2)
+	}()
+	// Give second call a moment to attach to the same ack; verify it
+	// has NOT enqueued an additional event by checking the channel is
+	// still empty after a short pause.
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-r.eventCh:
+		t.Fatal("second RequestShutdown should not enqueue a duplicate shutdown event")
+	default:
+	}
+	r.execute(state.EffReleaseFrameSandboxes{})
+	for _, ch := range []chan struct{}{done1, done2} {
+		select {
+		case <-ch:
+		case <-time.After(time.Second):
+			t.Fatal("both RequestShutdown calls should return after the single ack")
+		}
 	}
 }

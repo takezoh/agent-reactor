@@ -72,6 +72,23 @@ type EffUnsetPaneEnv struct {
 // containers survive for adoption next boot.
 type EffReleaseFrameSandboxes struct{}
 
+// EffReleaseFrameSandbox asks the runtime to invoke the per-frame sandbox
+// cleanup closure. The runtime delegates to invokeFrameCleanup which fires
+// the closure stored at handleSpawnComplete (devcontainer.makeCleanup =
+// Manager.ReleaseFrame → 0 なら DestroyInstance). Per-project / shared 両
+// mode は manager 側で cs.isolation().ContainerKey によって正しい粒度に
+// 分かれるので、 reducer は frame ID だけ送れば良い。
+//
+// Emitted by evictFrame (root + child) and reduceFrameCommandExited (異常
+// exit 枝) so pane が vanish しても crash しても sandbox は確実に release
+// される。 EffKillSessionWindow とは責務を分けていて、 後者は backend
+// pane window を kill するためだけのもの。 pane window が既に消えていて
+// EffKillSessionWindow が要らない経路 (EvPaneWindowVanished) でも sandbox
+// release は別途必要なので別 effect に分けてある。
+type EffReleaseFrameSandbox struct {
+	FrameID FrameID
+}
+
 // === IPC operations ===
 
 // EffSendResponse sends a typed response to a specific connection.
@@ -224,6 +241,7 @@ func (EffUnregisterPane) isEffect()           {}
 func (EffSetPaneEnv) isEffect()               {}
 func (EffUnsetPaneEnv) isEffect()             {}
 func (EffReleaseFrameSandboxes) isEffect()    {}
+func (EffReleaseFrameSandbox) isEffect()      {}
 func (EffSendResponse) isEffect()             {}
 func (EffSendResponseSync) isEffect()         {}
 func (EffSendError) isEffect()                {}

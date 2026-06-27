@@ -336,13 +336,10 @@ func reduceStopSession(s State, connID ConnID, reqID string, p StopSessionParams
 	if s.ActiveSession == sid {
 		s.ActiveSession = ""
 	}
-	effs := []Effect{EffBroadcastSessionsChanged{}}
+	effs := make([]Effect, 0, len(removed)*4+3)
+	effs = append(effs, EffBroadcastSessionsChanged{})
 	for _, frame := range removed {
-		effs = append(effs,
-			EffKillSessionWindow{FrameID: frame.ID},
-			EffUnregisterPane{FrameID: frame.ID},
-			EffUnwatchFile{FrameID: frame.ID},
-		)
+		effs = append(effs, frameTeardownEffects(frame.ID, true)...)
 	}
 	effs = append(effs, okResp(connID, reqID, nil), EffPersistSnapshot{})
 	return s, effs

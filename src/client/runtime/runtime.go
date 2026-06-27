@@ -15,6 +15,7 @@ import (
 	"net"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/takezoh/agent-reactor/client/config"
@@ -105,6 +106,13 @@ type Runtime struct {
 	nextConn state.ConnID              // owned by event loop
 
 	done chan struct{}
+
+	// shutdownMu guards shutdownAck. RequestShutdown lazily creates the
+	// ack channel and the EffReleaseFrameSandboxes handler closes it via
+	// ackShutdown so the signal-handler goroutine can wait for the drain
+	// to finish before cancelling the runtime context.
+	shutdownMu  sync.Mutex
+	shutdownAck chan struct{}
 
 	taps *tapManager
 
@@ -345,6 +353,77 @@ func (r *Runtime) Enqueue(ev state.Event) {
 	default:
 		slog.Warn("runtime: event channel full, dropping", "type", eventTypeName(ev))
 	}
+}
+
+// RequestShutdown enqueues the EventShutdown command and blocks until the
+// event loop has drained sandbox cleanups (= EffReleaseFrameSandboxes
+// handler has finished docker rm on every per-frame closure). The caller
+// is expected to cancel the runtime context after this returns — that is
+// what shuts the event loop down. Times out after timeout, in which case
+// it returns to the caller without an ack (cancel still proceeds).
+//
+// Safe to call from any goroutine. Calling twice — e.g. SIGTERM arriving
+// before the first drain completes — reuses the same ack channel, so the
+// second caller waits for the same drain and returns when it finishes.
+//
+// The send into eventCh is a blocking select rather than the non-blocking
+// Enqueue helper. Enqueue silently drops on a full channel by design —
+// fine for tick/spawn-style events the runtime will retry on the next
+// tick, but unacceptable for shutdown: a dropped shutdown event leaves
+// every container running until the next daemon crash recovers it. The
+// blocking send is bounded by timeout so a wedged event loop still
+// returns control to the signal handler.
+func (r *Runtime) RequestShutdown(timeout time.Duration) {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+
+	r.shutdownMu.Lock()
+	firstCall := r.shutdownAck == nil
+	if firstCall {
+		r.shutdownAck = make(chan struct{})
+	}
+	ack := r.shutdownAck
+	r.shutdownMu.Unlock()
+
+	if firstCall {
+		select {
+		case r.eventCh <- state.EvEvent{Event: state.EventShutdown}:
+		case <-deadline.C:
+			slog.Warn("runtime: shutdown enqueue timed out", "timeout", timeout)
+			// Release any concurrent waiters on this ack channel and
+			// clear the slot so a future call can re-arm with a fresh
+			// enqueue attempt. Without this a second caller would
+			// silently park on an ack that nothing closes.
+			r.shutdownMu.Lock()
+			if r.shutdownAck == ack {
+				r.shutdownAck = nil
+			}
+			r.shutdownMu.Unlock()
+			defer func() { _ = recover() }() // idempotent close
+			close(ack)
+			return
+		}
+	}
+	select {
+	case <-ack:
+	case <-deadline.C:
+		slog.Warn("runtime: shutdown drain timed out", "timeout", timeout)
+	}
+}
+
+// ackShutdown is called from the EffReleaseFrameSandboxes handler after
+// drainFrameCleanups completes. Safe to call when no shutdown was
+// requested (the ack channel is nil) and safe to call more than once
+// (close is guarded).
+func (r *Runtime) ackShutdown() {
+	r.shutdownMu.Lock()
+	ack := r.shutdownAck
+	r.shutdownMu.Unlock()
+	if ack == nil {
+		return
+	}
+	defer func() { _ = recover() }() // idempotent close
+	close(ack)
 }
 
 // SetRelay registers a FileRelay with the runtime via the event loop.

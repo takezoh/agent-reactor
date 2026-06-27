@@ -111,5 +111,11 @@ func reduceFrameCommandExited(s State, e EvFrameCommandExited) (State, []Effect)
 		ExitCode:  e.ExitCode,
 		Timestamp: s.Now,
 	})
+	// Frame は Stopped で残すが、 sandbox は手放す: 異常 exit した
+	// agent process が居なくなった以上、 container を抱え込む意味が
+	// なく、 次回 cold restart で新 container + postCreate (hook 再
+	// 登録) を走らせたい。 frame remove はしないので EvictFrame 経路と
+	// は独立に EffReleaseFrameSandbox だけ追加する。
+	rawEffs = append(rawEffs, EffReleaseFrameSandbox{FrameID: e.FrameID})
 	return next, rawEffs
 }

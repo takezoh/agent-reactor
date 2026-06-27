@@ -69,7 +69,7 @@ func TestShellDisplayName(t *testing.T) {
 // context live so the daemon keeps serving the backend session.
 func TestInstallSignalHandlers_SIGHUP_IgnoredKeepsContextAlive(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	stop := installSignalHandlers(cancel)
+	stop := installSignalHandlers(nil, cancel)
 	defer stop()
 
 	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
@@ -96,7 +96,7 @@ func TestInstallSignalHandlers_SIGHUP_IgnoredKeepsContextAlive(t *testing.T) {
 // SIGTERM must cancel the context for graceful shutdown.
 func TestInstallSignalHandlers_SIGTERM_CancelsContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	stop := installSignalHandlers(cancel)
+	stop := installSignalHandlers(nil, cancel)
 	defer stop()
 
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
@@ -114,7 +114,7 @@ func TestInstallSignalHandlers_SIGTERM_CancelsContext(t *testing.T) {
 func TestInstallSignalHandlers_StopUnblocksWithNoSignals(t *testing.T) {
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stop := installSignalHandlers(cancel)
+	stop := installSignalHandlers(nil, cancel)
 	doneCh := make(chan struct{})
 	go func() {
 		stop()

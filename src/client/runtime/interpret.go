@@ -76,6 +76,21 @@ func (r *Runtime) executeMiscEffect(eff state.Effect) {
 		}
 		// Drain sandbox (container/VM) cleanup closures in parallel.
 		r.drainFrameCleanups()
+		// Unblock RequestShutdown so the signal handler can cancel the
+		// runtime context now that every container has been removed.
+		// No-op when no shutdown was requested via RequestShutdown
+		// (e.g. EventShutdown arrived via IPC from a tool call).
+		r.ackShutdown()
+
+	case state.EffReleaseFrameSandbox:
+		// Per-frame sandbox release. Fires the cleanup closure registered
+		// at handleSpawnComplete (devcontainer.makeCleanup runs
+		// Manager.ReleaseFrame → 0 なら DestroyInstance). The closure is a
+		// no-op when refCount stays positive (sibling frames keep the
+		// container alive), so emitting unconditionally per-frame is safe
+		// — per-project / shared container refcounting is owned by the
+		// sandbox manager.
+		r.invokeFrameCleanup(e.FrameID)
 
 	default:
 		slog.Warn("runtime: unhandled effect type", "type", fmt.Sprintf("%T", eff))
@@ -214,13 +229,15 @@ func (r *Runtime) executeKillSessionWindow(e state.EffKillSessionWindow) {
 		}
 	}
 	// Release subsystem resources (worktree removal, thread cleanup).
-	// The container token+mounts are removed by invokeFrameCleanup → frameReg.Delete.
+	// Sandbox cleanup (container token+mounts removal, ReleaseFrame →
+	// DestroyInstance) is driven by a separate EffReleaseFrameSandbox
+	// emitted from the reducer for the same frame, so this handler is
+	// pane-window kill + subsystem release only.
 	if sub, ok := r.frameSubsystems[e.FrameID]; ok {
 		delete(r.frameSubsystems, e.FrameID)
 		sub.ReleaseFrame(e.FrameID)
 		r.reapSubsystemIfLast(sub, e.FrameID)
 	}
-	r.invokeFrameCleanup(e.FrameID)
 }
 
 func (r *Runtime) executeRegisterPane(e state.EffRegisterPane) {
