@@ -15,6 +15,7 @@ import (
 
 	"github.com/takezoh/agent-reactor/client/config"
 	statedriver "github.com/takezoh/agent-reactor/client/driver"
+	"github.com/takezoh/agent-reactor/client/lib/agenthook"
 	"github.com/takezoh/agent-reactor/client/runtime"
 	"github.com/takezoh/agent-reactor/client/runtime/worker"
 	"github.com/takezoh/agent-reactor/client/state"
@@ -65,6 +66,7 @@ func runDaemon(df *daemonFlagSet) error {
 
 	idleThreshold := time.Duration(cfg.Monitor.IdleThresholdSec) * time.Second
 	registerDefaultDrivers(cfg, dataDir, idleThreshold)
+	registerHostAgentHooks(dataDir)
 
 	// Resolve the passwd login shell once: it drives both alias resolution and
 	// the shell driver's display name.
@@ -104,6 +106,82 @@ func registerDefaultDrivers(cfg *config.Config, dataDir string, idleThreshold ti
 		Pager:            cfg.Driver.Pager,
 	})
 	statedriver.RegisterRunners(cfg.Driver.SummarizeCommand)
+}
+
+// agentHookPostCreateSubcmds returns the reactor-bridge subcommand list the
+// devcontainer postCreate runs to register reactor hooks inside the
+// container, derived from agenthook.All so adding an agent in one place
+// flows through to the container surface automatically.
+func agentHookPostCreateSubcmds() []string {
+	out := make([]string, 0, len(agenthook.All))
+	for _, spec := range agenthook.All {
+		out = append(out, spec.SubcmdName)
+	}
+	return out
+}
+
+// registerHostAgentHooks ensures the host's ~/.<agent>/settings.json routes
+// every supported agent's lifecycle events at THIS server binary. Without
+// it, host-direct (non-devcontainer) sessions never reach the daemon:
+// SessionID stays empty, transcript path is never resolved, and the
+// session card title sticks on "New Session" with status frozen. The
+// in-container path is covered separately by the devcontainer postCreate;
+// this fills the gap for SandboxModeDirect / SandboxOverrideHost sessions,
+// which spawn the agent in the same filesystem namespace the daemon runs in.
+//
+// `-data-dir` is always appended. Yes, daemon-spawned agents inherit
+// ROOST_SOCKET in their env and win via that env, but an agent process the
+// user starts manually from a terminal (no ROOST_SOCKET) needs the flag to
+// reach this daemon's socket. The redundant flag for the daemon-spawn case
+// is cheaper than a missing flag for the manual-launch case — and the path
+// is explicit and self-documenting in the registered settings.json.
+//
+// Failure for any one agent is best-effort and isolated: a settings.json
+// the daemon can't write (read-only FS, permission denied, malformed
+// pre-existing JSON) is logged at warn level and the other agents proceed.
+// The user can still drive sessions for the agents whose registration
+// succeeded; the failed agent just won't surface state in the card. A hard
+// abort would punish every other code path for one file-permission edge case.
+//
+// Agent fan-out is driven by agenthook.All so adding a future agent CLI
+// (Codex hooks, …) is a one-Spec change at the package level, not a
+// parallel edit here AND in cmd/reactor-bridge.
+func registerHostAgentHooks(dataDir string) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		slog.Warn("host agent hooks: HOME unresolved, skipping registration", "err", err)
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		slog.Warn("host agent hooks: self path unresolved, skipping registration", "err", err)
+		return
+	}
+	if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+		exe = resolved
+	}
+	for _, spec := range agenthook.All {
+		registerOneHostAgentHook(home, exe, dataDir, spec)
+	}
+}
+
+func registerOneHostAgentHook(home, exe, dataDir string, spec agenthook.Spec) {
+	hookCmd := agenthook.BuildHookCmd(exe, dataDir, spec)
+	settings := filepath.Join(home, spec.SettingsRel)
+	registered, err := agenthook.Install(settings, hookCmd, spec)
+	if err != nil {
+		slog.Warn("host agent hooks: registration failed",
+			"agent", spec.Name, "settings", settings, "err", err)
+		return
+	}
+	if len(registered) == 0 {
+		slog.Debug("host agent hooks: already up to date",
+			"agent", spec.Name, "settings", settings)
+		return
+	}
+	slog.Info("host agent hooks: registered",
+		"agent", spec.Name, "settings", settings,
+		"events", len(registered), "hookCmd", hookCmd)
 }
 
 // buildRuntime constructs and configures the Runtime. Returns the Runtime,
@@ -341,13 +419,19 @@ func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, reso
 		// The coordinator's defer cancel() on graceful shutdown cascades into
 		// them, reaping provider-managed processes such as the ssh-agent. detach
 		// leaves ctx live so the agent survives for warm restart.
-		// postCreate subcommands intentionally nil: as of phase F-C, agent setup
-		// (Claude / Codex / Gemini hook registration) is owned by repo-root
-		// scripts/setup-{claude,codex,gemini}.sh rather than auto-installed by
-		// reactor-bridge inside the container.
+		// "{claude,gemini}-setup-hooks" run as devcontainer postCreate so the
+		// moment a container comes up, ~/.<agent>/settings.json inside it
+		// points every lifecycle event at /opt/agent-reactor/run/reactor-bridge.
+		// Without these the daemon never learns SessionID for in-container
+		// sessions and card titles stick on "New Session" forever. Phase F-C
+		// had pushed this to scripts/setup-{claude,gemini}.sh; that delegation
+		// made hook state an out-of-band setup step rather than a runtime
+		// invariant, and the scripts have since been removed in favour of
+		// reactor-bridge owning the registration end-to-end via
+		// client/lib/agenthook.
 		overlayFn := agentlaunch.BuildContainerOverlay(func(project string) platformconfig.SandboxConfig {
 			return resolver.Resolve(project)
-		}, projects, runner, dataDir, nil)
+		}, projects, runner, dataDir, agentHookPostCreateSubcmds())
 		mgr := sandboxdc.NewWithPrefix(overlayFn, namePrefix)
 		slog.Info("sandbox: devcontainer prefix", "prefix", mgr.NamePrefix())
 		newDC := func(tty bool) *agentlaunch.DevcontainerLauncher {

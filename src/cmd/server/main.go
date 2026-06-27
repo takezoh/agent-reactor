@@ -15,10 +15,10 @@
 //     Coordinator and gateway share one ctx; SIGINT/SIGTERM cancels both.
 //
 //  2. Subcommand mode (one-shot, exits when done):
-//     - `server event <type>` — hook event sender (Claude/Gemini hook
-//     scripts written by scripts/setup-claude.sh / setup-gemini.sh
-//     invoke this to forward state-change/Stop/PreToolUse/... events
-//     to a running backend over its host socket).
+//     - `server event <type>` — hook event sender. The Claude and Gemini
+//     hooks the daemon registers at startup (via client/lib/agenthook)
+//     invoke this to forward state-change/Stop/PreToolUse/... events to a
+//     running backend over its host socket.
 //     - `server host-exec <bin> [args ...]` — in-container shim that
 //     routes an allowlisted host binary invocation through the
 //     per-project host-exec broker via SCM_RIGHTS stdio forwarding.

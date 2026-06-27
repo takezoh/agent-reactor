@@ -36,8 +36,11 @@ make install
 Installs to `~/.local/bin/server`. Then:
 
 ```bash
-server                              # start the backend (daemon + HTTP/WS gateway)
-bash scripts/setup-claude.sh ~/.local/bin/server   # register Claude Code hooks (also: setup-codex.sh / setup-gemini.sh)
+server                              # start the backend (daemon + HTTP/WS gateway).
+                                    # Hooks in ~/.claude/settings.json and
+                                    # ~/.gemini/settings.json are registered
+                                    # automatically against this binary's
+                                    # path on every boot — no manual setup.
 ```
 
 To reach sessions from a browser, run `make run-dev` (boots `server` + `web` together) or follow [web stack (ad-hoc launch)](docs/user/web-server.md).

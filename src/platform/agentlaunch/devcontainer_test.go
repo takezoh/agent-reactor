@@ -125,7 +125,11 @@ func TestBuildPostCreate_MultipleSubcmds(t *testing.T) {
 	if len(got) != 3 || got[0] != "bash" || got[1] != "-lc" {
 		t.Fatalf("unexpected argv prefix: %v", got)
 	}
-	want := bin + " setup claude\n" + bin + " setup codex\n" + bin + " setup gemini"
+	// `set -e` must be the FIRST line so a failing earlier subcmd aborts
+	// the script — otherwise a Claude setup failure would be silently
+	// shadowed by the subsequent Gemini setup succeeding (devcontainer up
+	// reports OK while Claude hooks go missing).
+	want := "set -e\n" + bin + " setup claude\n" + bin + " setup codex\n" + bin + " setup gemini"
 	if got[2] != want {
 		t.Errorf("script = %q, want %q", got[2], want)
 	}

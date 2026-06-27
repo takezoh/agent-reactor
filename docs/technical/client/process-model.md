@@ -86,18 +86,21 @@ Key points:
 
 ## Process Model
 
-The `server` binary has one long-lived form (the merged backend) and a small set of short-lived one-shot subcommands. Agent setup is no longer a Go subcommand; it lives in `scripts/setup-{claude,codex,gemini}.sh` (plain `bash` + `jq`):
+The `server` binary has one long-lived form (the merged backend) and a small set of short-lived one-shot subcommands. All agent hook registration is owned by the runtime itself (`client/lib/agenthook`), invoked from the daemon boot path on the host and from the devcontainer postCreate inside containers — there are no `scripts/setup-*.sh` shims left in the tree:
 
 ```
 server -data-dir <dir>             → Backend daemon (Runtime event loop + IPC server)
                                      + co-resident HTTP/WS gateway (cmd/server)
+                                     also: register host hooks for every supported
+                                           agent at boot (Claude / Gemini today)
 server event <eventType>           → Hook event receiver (short-lived process invoked by an agent hook)
 server host-exec <bin> [args ...]  → Host-exec broker shim (run inside a sandboxed container)
 server mcp-exec <alias>            → MCP-proxy shim (run inside a sandboxed container)
 
-bash scripts/setup-claude.sh <bin>  → Claude hook registration (writes ~/.claude/settings.json)
-bash scripts/setup-codex.sh  <bin>  → Codex setup (currently a no-op stub, kept for symmetry)
-bash scripts/setup-gemini.sh <bin>  → Gemini hook registration
+reactor-bridge claude-setup-hooks   → Claude hook registration inside the devcontainer
+reactor-bridge gemini-setup-hooks   → Gemini hook registration inside the devcontainer
+                                      (both called from the devcontainer postCreate by coordinator.go;
+                                       Codex has no hooks — it is integrated via the app-server protocol)
 ```
 
 There is exactly **one** long-lived backend process — `server`. It owns both the daemon coordinator (event loop, IPC sockets, persistence) and a co-resident HTTP/WebSocket gateway goroutine that exposes the browser surface. The separate `web` binary serves the React/xterm.js bundle and reverse-proxies REST/WS to that gateway.

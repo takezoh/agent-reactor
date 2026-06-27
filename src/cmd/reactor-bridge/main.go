@@ -5,10 +5,15 @@
 //	host-exec <bin>       – PATH shim target (proxies stdio to host via SCM_RIGHTS)
 //	mcp-exec <alias>      – MCP proxy client (relays stdio to host MCP server via SCM_RIGHTS)
 //	secret-run run ...    – secret env-file resolver shim (impersonates "credproxy run")
+//	claude-setup-hooks    – register reactor as Claude Code's hook handler in
+//	                        the container's ~/.claude/settings.json
+//	gemini-setup-hooks    – register reactor as Gemini CLI's hook handler in
+//	                        the container's ~/.gemini/settings.json
 //
-// Agent integration setup (Claude / Codex / Gemini hook registration) is
-// owned by repo-root scripts/setup-{claude,codex,gemini}.sh as of phase F-C;
-// the in-binary `setup <agent>` subcommand has been removed.
+// Both *-setup-hooks subcommands are invoked from the devcontainer postCreate
+// so every agent process inside the container starts with hooks already in
+// place. The scripts/setup-{claude,gemini}.sh shims were deleted in lockstep
+// — this binary owns the registration via client/lib/agenthook.
 package main
 
 import (
@@ -21,6 +26,7 @@ import (
 	"syscall"
 
 	"github.com/takezoh/agent-reactor/client/event"
+	"github.com/takezoh/agent-reactor/client/lib/agenthook"
 	"github.com/takezoh/agent-reactor/platform/appid"
 	"github.com/takezoh/agent-reactor/platform/hostexec"
 	"github.com/takezoh/agent-reactor/platform/mcpproxy"
@@ -58,6 +64,10 @@ func main() {
 	case "sockbridge":
 		err = runSockBridge(rest)
 	default:
+		if spec, ok := lookupSetupHooksSpec(sub); ok {
+			err = runAgentSetupHooks(rest, spec)
+			break
+		}
 		fmt.Fprintf(os.Stderr, "%s: unknown subcommand: %s\n", appid.BridgeBin, sub)
 		usage()
 		os.Exit(1)
@@ -286,5 +296,74 @@ Subcommands:
   mcp-exec <alias>           Relay stdio to a host MCP server via the mcpproxy broker
   secret-run run --env-file  Resolve secret env-file and exec command (credproxy shim)
   sockbridge                 TCP↔unix socket bridge (fixed-socket; credproxy broker)
+  claude-setup-hooks         Register reactor as Claude Code's hook handler
+                             in this environment's ~/.claude/settings.json
+  gemini-setup-hooks         Register reactor as Gemini CLI's hook handler
+                             in this environment's ~/.gemini/settings.json
 `)
+}
+
+// lookupSetupHooksSpec returns the agenthook.Spec whose SubcmdName matches
+// sub. Returns ok=false when sub is not a *-setup-hooks subcommand; the
+// caller falls through to the unknown-subcommand error path. Reading the
+// dispatch table from agenthook.All means adding a Spec there registers
+// its container-side subcommand here for free.
+func lookupSetupHooksSpec(sub string) (agenthook.Spec, bool) {
+	for _, spec := range agenthook.All {
+		if spec.SubcmdName == sub {
+			return spec, true
+		}
+	}
+	return agenthook.Spec{}, false
+}
+
+// runAgentSetupHooks registers the in-container reactor-bridge as the given
+// agent's hook handler in the container's settings.json. Wired into the
+// devcontainer postCreate by cmd/server/coordinator.go so every agent
+// process spawned inside the container immediately hits a settings.json
+// with every lifecycle event routed back to the daemon. Without it, the
+// session card title stays "New Session" forever and the status badge
+// never moves — because the daemon never learns the agent's session id /
+// transcript path.
+//
+// Flags:
+//
+//	-settings PATH   Override the settings.json target. Default is
+//	                 $HOME/<spec.SettingsRel>.
+//	-data-dir DIR    Append `-data-dir DIR` to the hook command so a daemon
+//	                 running with a non-default ROOST_DATA_DIR is reachable.
+//	                 Inside the container ROOST_DATA_DIR resolves to the
+//	                 bind-mounted ContainerRunDir already, so this is
+//	                 usually omitted.
+//
+// The hook command is always built against ContainerBinaryPath
+// (/opt/agent-reactor/run/reactor-bridge) — the canonical reactor-bridge
+// install path inside every devcontainer.
+//
+// HOME is read via os.UserHomeDir (passwd-aware) rather than the HOME env
+// var so a container whose env strips HOME — but whose /etc/passwd carries
+// a uid entry — still writes the settings file under the right user dir.
+func runAgentSetupHooks(args []string, spec agenthook.Spec) error {
+	fs := flag.NewFlagSet(spec.SubcmdName, flag.ContinueOnError)
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return fmt.Errorf("%s: HOME unresolved: %w", spec.SubcmdName, err)
+	}
+	defaultSettings := filepath.Join(home, spec.SettingsRel)
+	settingsPath := fs.String("settings", defaultSettings, "settings.json target")
+	dataDir := fs.String("data-dir", "", "append -data-dir DIR to hook command")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	hookCmd := agenthook.BuildHookCmd(appid.ContainerBinaryPath, *dataDir, spec)
+	registered, err := agenthook.Install(*settingsPath, hookCmd, spec)
+	if err != nil {
+		return fmt.Errorf("%s: %w", spec.SubcmdName, err)
+	}
+	if len(registered) == 0 {
+		fmt.Fprintf(os.Stderr, "%s: hooks already registered (%s)\n", spec.SubcmdName, *settingsPath)
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "%s: registered %d events in %s\n", spec.SubcmdName, len(registered), *settingsPath)
+	return nil
 }

@@ -435,8 +435,17 @@ func buildOverlayEnv(scriptEnv map[string]string, proxySpec container.Spec) map[
 // Each BridgeSpec from credproxy providers is started as a background process
 // via "reactor-bridge sockbridge" in fixed-socket mode. postCreateSubcmds are run
 // via the installed reactor-bridge binary (setup hooks etc.).
+//
+// `set -e` makes a foreground command failure abort the script with a
+// non-zero exit so devcontainer up surfaces the error instead of silently
+// reporting success. Background `&` commands (sockbridge) are unaffected:
+// bash detaches them and does not propagate their exit status through
+// set -e. Without this, e.g. a failing `claude-setup-hooks` (read-only
+// ~/.claude, malformed pre-existing JSON) was masked by the subsequent
+// `gemini-setup-hooks` succeeding — Claude hooks went silently missing
+// while the container provisioning reported OK.
 func buildPostCreate(binPath string, postCreateSubcmds []string, bridges []container.BridgeSpec) []string {
-	var parts []string
+	parts := []string{"set -e"}
 	for _, bs := range bridges {
 		parts = append(parts, fmt.Sprintf("%s sockbridge -listen %s -socket %s &",
 			ContainerBinaryPath, bs.ListenAddr, bs.ContainerSocketPath))
@@ -444,7 +453,7 @@ func buildPostCreate(binPath string, postCreateSubcmds []string, bridges []conta
 	for _, sub := range postCreateSubcmds {
 		parts = append(parts, binPath+" "+sub)
 	}
-	if len(parts) == 0 {
+	if len(parts) == 1 { // only "set -e" → nothing to do
 		return nil
 	}
 	return []string{"bash", "-lc", strings.Join(parts, "\n")}
