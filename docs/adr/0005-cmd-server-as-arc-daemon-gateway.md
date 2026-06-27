@@ -6,8 +6,8 @@ Status: Accepted
 
 `cmd/server` currently owns `termvt.Manager`, `agentlaunch.Dispatcher`, and
 `session.Service` directly, running a second runtime in parallel with the arc
-daemon. The Master Plan for plan A (the tmux-free split,
-[`plans/arc-server-client-split.md`](../../plans/arc-server-client-split.md))
+daemon. The Master Plan for plan A (the tmux-free split, formerly
+`plans/arc-server-client-split.md`, removed after execution — see git history)
 puts session lifecycle and pty I/O exclusively in the daemon's pure core
 (`state.Reduce → driver → runtime → termvt`). `server/web` should be a thin
 HTTP/WS gateway. This ADR records the A1-α decision that establishes that

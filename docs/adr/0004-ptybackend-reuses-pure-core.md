@@ -4,9 +4,8 @@ Status: Accepted
 
 ## Context
 
-The tmux-free split (plan: [arc-server-client-split.md](../../plans/arc-server-client-split.md),
-design: [remote-client-design.md](../../plans/remote-client-design.md)) shipped a
-phase-2 web stack — `platform/termvt`, `server/session`, `server/web`,
+The tmux-free split (historical plan / design docs lived under `plans/` and were
+removed once execution completed — see git history) shipped a phase-2 web stack — `platform/termvt`, `server/session`, `server/web`,
 `client/web` — that operates pty-backed sessions and streams them to the browser.
 
 That stack works, but it **bypasses arc's pure core**: `server/web` and
@@ -119,6 +118,6 @@ and `CaptureTail`). Data plane is real, presentation plane is stubbed. It is
 **not yet wired into the runtime** (`NewPtyBackend` is test-only). The
 integration prerequisites before wiring — missing-pane error contract vs
 `isMissingPaneErr`, shell-string vs argv command form, `ResizeWindow` target
-shape, session-env persistence, `PipePane` tap, main-window kill guard — are
-tracked under "B1-wiring の前提条件" in
-[arc-server-client-split.md](../../plans/arc-server-client-split.md).
+shape, session-env persistence, `PipePane` tap, main-window kill guard — were
+tracked under "B1-wiring の前提条件" in the (now-removed) `plans/arc-server-client-split.md`;
+all six were resolved or rendered moot by the time wiring completed.
