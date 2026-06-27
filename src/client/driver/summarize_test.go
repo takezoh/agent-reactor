@@ -42,7 +42,7 @@ func TestSummarizeWithCommandError(t *testing.T) {
 func TestFilteredRoostEnvStripsRoostSocket(t *testing.T) {
 	src := []string{
 		"PATH=/usr/bin",
-		"ROOST_SOCKET=/opt/agent-reactor/run/arc.sock",
+		"ROOST_SOCKET=/opt/agent-reactor/run/server.sock",
 		"ROOST_FRAME_ID=keep",
 		"ROOST_SESSION_ID=keep",
 		"HOME=/home/take",
@@ -80,7 +80,7 @@ func TestFilteredRoostEnvStripsRoostSocket(t *testing.T) {
 }
 
 func TestSummarizeWithCommandDropsRoostSocket(t *testing.T) {
-	t.Setenv("ROOST_SOCKET", "/opt/agent-reactor/run/arc.sock")
+	t.Setenv("ROOST_SOCKET", "/opt/agent-reactor/run/server.sock")
 	ctx := context.Background()
 	// If ROOST_SOCKET were passed through, echo would print the path.
 	// filteredRoostEnv must strip it so the output is empty.

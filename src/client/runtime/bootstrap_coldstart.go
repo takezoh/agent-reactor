@@ -54,9 +54,8 @@ func (r *Runtime) PrewarmContainers(ctx context.Context) {
 // Spawn failures are logged but do not remove the session: a transient
 // error is not evidence that the user intended to delete the session.
 func (r *Runtime) RecreateAll() error {
-	size := r.mainPaneSize()
 	for id, sess := range r.state.Sessions {
-		if err := r.recreateSessionFrames(id, sess, size); err != nil {
+		if err := r.recreateSessionFrames(id, sess); err != nil {
 			slog.Warn("bootstrap: session cold-start incomplete, leaving in state",
 				"session", id, "err", err)
 		}
@@ -64,7 +63,7 @@ func (r *Runtime) RecreateAll() error {
 	return nil
 }
 
-func (r *Runtime) recreateSessionFrames(id state.SessionID, sess state.Session, size paneSize) error {
+func (r *Runtime) recreateSessionFrames(id state.SessionID, sess state.Session) error {
 	var firstErr error
 	for _, frame := range sess.Frames {
 		if skipColdStartSpawn(frame) {
@@ -75,7 +74,7 @@ func (r *Runtime) recreateSessionFrames(id state.SessionID, sess state.Session, 
 		// One frame's spawn failure (e.g. a codex resume against a vanished
 		// thread) must not strand its healthy siblings — keep spawning the rest
 		// and report the first error so the caller logs the session as incomplete.
-		if err := r.spawnFrameWindow(id, sess.Sandbox, frame, size); err != nil && firstErr == nil {
+		if err := r.spawnFrameWindow(id, sess.Sandbox, frame); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -109,7 +108,7 @@ func coldStartRecoverable(drv state.Driver, s state.DriverState) bool {
 // spawnFrameWindow prepares and spawns a single frame's pane window during cold start.
 // It runs PrepareLaunch → WrapLaunch → SpawnWindow, registers the cleanup callback,
 // and records the pane ID in session env.
-func (r *Runtime) spawnFrameWindow(id state.SessionID, sandbox state.SandboxOverride, frame state.SessionFrame, size paneSize) error {
+func (r *Runtime) spawnFrameWindow(id state.SessionID, sandbox state.SandboxOverride, frame state.SessionFrame) error {
 	drv := state.GetDriver(frame.Command)
 	if drv == nil {
 		return nil
@@ -157,7 +156,7 @@ func (r *Runtime) spawnFrameWindow(id state.SessionID, sandbox state.SandboxOver
 	}
 	wrapped := wrapResult.wrapped
 
-	paneID, err := r.spawnWrapped(frame.ID, frame.Project, wrapped, size)
+	paneID, err := r.spawnWrapped(frame.ID, frame.Project, wrapped)
 	if err != nil {
 		slog.Error("bootstrap: spawn failed", "id", id, "frame", frame.ID, "err", err)
 		if wrapped.Cleanup != nil {
@@ -182,15 +181,16 @@ func (r *Runtime) spawnFrameWindow(id state.SessionID, sandbox state.SandboxOver
 	return nil
 }
 
-// spawnWrapped calls SpawnWindow for a WrappedLaunch and resizes the resulting window.
-func (r *Runtime) spawnWrapped(frameID state.FrameID, project string, wrapped WrappedLaunch, size paneSize) (string, error) {
+// spawnWrapped calls SpawnWindow for a WrappedLaunch. Window sizing is owned by
+// the connected client (the browser terminal resizes via the surface RPC after
+// attach), so cold-start does not pre-size the pane.
+func (r *Runtime) spawnWrapped(frameID state.FrameID, project string, wrapped WrappedLaunch) (string, error) {
 	name := windowName(project, string(frameID))
 	spawnCmd := buildSpawnCommand(wrapped.Command, nil)
 	slog.Info("runtime: spawning window", "frame", frameID, "cmd", spawnCmd, "mode", "coldstart")
-	target, paneID, err := r.cfg.Backend.SpawnWindow(name, spawnCmd, wrapped.StartDir, wrapped.Env)
+	_, paneID, err := r.cfg.Backend.SpawnWindow(name, spawnCmd, wrapped.StartDir, wrapped.Env)
 	if err != nil {
 		return "", err
 	}
-	r.resizeWindowToMain(r.cfg.SessionName+":"+target, size)
 	return paneID, nil
 }

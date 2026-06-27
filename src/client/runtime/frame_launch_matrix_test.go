@@ -218,7 +218,7 @@ func buildLaunchHarness(t *testing.T, env envKind, persistWarm bool) *launchHarn
 	kinds := &kindCounter{m: map[state.LaunchSubsystem]int{}}
 	mgr := &fakeSandboxManager{rec: rec}
 	dataDir := t.TempDir()
-	sockPath := filepath.Join(dataDir, "arc.sock")
+	sockPath := filepath.Join(dataDir, "server.sock")
 
 	var user platformconfig.SandboxConfig
 	switch env {
@@ -242,10 +242,9 @@ func buildLaunchHarness(t *testing.T, env envKind, persistWarm bool) *launchHarn
 
 	base := newFakeBackend()
 	cfg := Config{
-		SessionName: "reactor-test",
-		Backend:     &recordingBackend{fakeBackend: base, rec: rec},
-		Launcher:    NewDispatcherAdapter(disp),
-		Persist:     &recordingPersist{},
+		Backend:  &recordingBackend{fakeBackend: base, rec: rec},
+		Launcher: NewDispatcherAdapter(disp),
+		Persist:  &recordingPersist{},
 	}
 	if persistWarm {
 		cfg.DataDir = dataDir
@@ -281,10 +280,6 @@ func matrixFrame(project string) state.SessionFrame {
 	return state.SessionFrame{ID: "f1", Project: project, Command: "minimal-test", Driver: state.DriverStateBase{}}
 }
 
-const matrixSizeW, matrixSizeH = 120, 40
-
-func matrixPaneSize() paneSize { return paneSize{width: matrixSizeW, height: matrixSizeH} }
-
 // === cold start (spawnFrameWindow) ===
 
 func TestFrameLaunch_ColdStart_Host(t *testing.T) {
@@ -292,7 +287,7 @@ func TestFrameLaunch_ColdStart_Host(t *testing.T) {
 	h := newLaunchHarness(t, envHost)
 
 	frame := matrixFrame("/proj/host")
-	if err := h.r.spawnFrameWindow("s1", state.SandboxOverrideAuto, frame, matrixPaneSize()); err != nil {
+	if err := h.r.spawnFrameWindow("s1", state.SandboxOverrideAuto, frame); err != nil {
 		t.Fatalf("spawnFrameWindow: %v", err)
 	}
 
@@ -323,7 +318,7 @@ func TestFrameLaunch_ColdStart_PerProject(t *testing.T) {
 
 	const project = "/proj/box"
 	frame := matrixFrame(project)
-	if err := h.r.spawnFrameWindow("s1", state.SandboxOverrideAuto, frame, matrixPaneSize()); err != nil {
+	if err := h.r.spawnFrameWindow("s1", state.SandboxOverrideAuto, frame); err != nil {
 		t.Fatalf("spawnFrameWindow: %v", err)
 	}
 
@@ -358,7 +353,7 @@ func TestFrameLaunch_ColdStart_Shared(t *testing.T) {
 
 	const project = "/proj/shared-a"
 	frame := matrixFrame(project)
-	if err := h.r.spawnFrameWindow("s1", state.SandboxOverrideAuto, frame, matrixPaneSize()); err != nil {
+	if err := h.r.spawnFrameWindow("s1", state.SandboxOverrideAuto, frame); err != nil {
 		t.Fatalf("spawnFrameWindow: %v", err)
 	}
 
@@ -393,7 +388,7 @@ func TestFrameLaunch_ColdStart_RecoverableCodexSpawnsResume(t *testing.T) {
 		},
 	}
 
-	if err := h.r.recreateSessionFrames("s1", sess, matrixPaneSize()); err != nil {
+	if err := h.r.recreateSessionFrames("s1", sess); err != nil {
 		t.Fatalf("recreateSessionFrames: %v", err)
 	}
 
@@ -420,7 +415,7 @@ func TestFrameLaunch_ColdStart_CommandOrder(t *testing.T) {
 	h := newLaunchHarness(t, envProject)
 
 	frame := matrixFrame("/proj/box")
-	if err := h.r.spawnFrameWindow("s1", state.SandboxOverrideAuto, frame, matrixPaneSize()); err != nil {
+	if err := h.r.spawnFrameWindow("s1", state.SandboxOverrideAuto, frame); err != nil {
 		t.Fatalf("spawnFrameWindow: %v", err)
 	}
 
@@ -447,7 +442,7 @@ func TestFrameLaunch_ColdStart_SubsystemKindSelection(t *testing.T) {
 	registerMinimalDriver(t)
 	h := newLaunchHarness(t, envHost)
 
-	if err := h.r.spawnFrameWindow("s1", state.SandboxOverrideAuto, matrixFrame("/proj"), matrixPaneSize()); err != nil {
+	if err := h.r.spawnFrameWindow("s1", state.SandboxOverrideAuto, matrixFrame("/proj")); err != nil {
 		t.Fatalf("spawnFrameWindow(minimal): %v", err)
 	}
 	if h.kinds.count(state.LaunchSubsystemCLI) != 1 || h.kinds.count(state.LaunchSubsystemStream) != 0 {
@@ -466,8 +461,6 @@ func (h *launchHarness) newSessionSpawn(t *testing.T, e state.EffSpawnPaneWindow
 		backend:      h.r.cfg.Backend,
 		launcher:     launcher(h.r.cfg),
 		factories:    h.r.subsystemFactories,
-		sessionName:  h.r.cfg.SessionName,
-		mainPaneSize: matrixPaneSize,
 		sendInternal: func(ev internalEvent) { internalCh <- ev },
 		sendEvent:    func(ev state.Event) { eventCh <- ev },
 	}
@@ -547,7 +540,7 @@ func TestFrameLaunch_WarmStart_Host(t *testing.T) {
 	}
 	h.r.sessionPanes["f1"] = "%1"
 
-	h.r.RecoverSandboxFrames()
+	h.r.RecoverSandboxFrames(context.Background())
 
 	// DirectDispatcher.AdoptFrame returns nil cleanup / nil mounts for host.
 	if _, ok := h.r.sandboxCleanups["f1"]; ok {
@@ -580,7 +573,7 @@ func TestFrameLaunch_WarmStart_PerProject(t *testing.T) {
 	}
 	h.r.sessionPanes["f1"] = "%1"
 
-	h.r.RecoverSandboxFrames()
+	h.r.RecoverSandboxFrames(context.Background())
 
 	if id, ok := h.r.frameReg.Lookup("warm-tok"); !ok || id != "f1" {
 		t.Errorf("warm token not recovered: Lookup = (%q, %v), want (f1, true)", id, ok)

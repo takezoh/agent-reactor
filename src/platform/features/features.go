@@ -17,14 +17,11 @@ package features
 // misspelled identifiers a compile error.
 type Flag string
 
-const (
-	// Add new runtime flags here. When a feature stabilises, delete the
-	// constant and inline the enabled branch everywhere it appears.
-	// Example: ExampleFeature Flag = "example-feature"
-
-	// Peers enables agent-to-agent messaging via the client daemon broker.
-	Peers Flag = "peers"
-)
+// (No runtime feature flags are currently defined. Add constants here when
+// introducing a new flag, and append them to [All] so [FromConfig] accepts
+// them. When a feature stabilises, delete the constant and inline the enabled
+// branch everywhere it appears.)
+// Example: ExampleFeature Flag = "example-feature"
 
 // Set is the collection of enabled runtime flags. Constructed once at
 // startup from the config file and injected into state.State; callers
@@ -63,7 +60,5 @@ func FromConfig(raw map[string]bool, known []Flag) Set {
 // as the known argument to [FromConfig] so it knows which config keys to
 // accept. Add each new Flag constant here as well.
 func All() []Flag {
-	return []Flag{
-		Peers,
-	}
+	return nil
 }

@@ -12,7 +12,6 @@ func TestLoadSessionPanes_ParsesEnvVars(t *testing.T) {
 	fbackend := newFakeBackend()
 	fbackend.envOutput = "ROOST_FRAME_frame_abc=%11\nROOST_FRAME_frame_def=%12\nSOME_OTHER=value\n"
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      fbackend,
 	})
@@ -36,7 +35,6 @@ func TestLoadSessionPanes_ParsesEnvVars(t *testing.T) {
 func TestLoadSessionPanes_NoEnvSupport(t *testing.T) {
 	backend := noopBackend{}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      backend,
 	})
@@ -49,7 +47,6 @@ func TestLoadSessionPanes_NoEnvSupport(t *testing.T) {
 func TestReconcileOrphans_DropsSessionWithoutPane(t *testing.T) {
 	fbackend := newFakeBackend()
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      fbackend,
 	})
@@ -70,7 +67,6 @@ func TestReconcileOrphans_DropsSessionWithoutPane(t *testing.T) {
 func TestReconcileOrphans_RemovesStalePaneEntry(t *testing.T) {
 	fbackend := newFakeBackend()
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      fbackend,
 	})
@@ -90,54 +86,10 @@ func TestReconcileOrphans_RemovesStalePaneEntry(t *testing.T) {
 	}
 }
 
-func TestDeactivateBeforeExit_SwapsBack(t *testing.T) {
-	fbackend := newFakeBackend()
-	r := New(Config{
-		SessionName:  "reactor-test",
-		TickInterval: 10 * time.Second,
-		Backend:      fbackend,
-	})
-	r.state.Sessions["s1"] = state.Session{ID: "s1", Frames: []state.SessionFrame{{ID: "f1", Command: "stub", Driver: driver.NewGenericDriver("", "", 0).NewState(time.Now())}}}
-	r.sessionPanes["f1"] = "%1"
-	r.mainPaneSession = "s1"
-	r.activeFrameID = "f1"
-	r.sessionPanes["_main"] = "%main"
-
-	r.deactivateBeforeExit()
-
-	if r.mainPaneSession != "" {
-		t.Errorf("activeSession = %q, want empty", r.mainPaneSession)
-	}
-	fbackend.mu.Lock()
-	defer fbackend.mu.Unlock()
-	if fbackend.swapCalls != 1 {
-		t.Errorf("swapCalls = %d, want 1", fbackend.swapCalls)
-	}
-}
-
-func TestDeactivateBeforeExit_NoActive(t *testing.T) {
-	fbackend := newFakeBackend()
-	r := New(Config{
-		SessionName:  "reactor-test",
-		TickInterval: 10 * time.Second,
-		Backend:      fbackend,
-	})
-
-	r.deactivateBeforeExit()
-
-	fbackend.mu.Lock()
-	defer fbackend.mu.Unlock()
-	if fbackend.breakCalls != 0 || fbackend.breakNewCalls != 0 || fbackend.joinCalls != 0 || fbackend.swapCalls != 0 {
-		t.Errorf("unexpected pane move calls: break=%d breakNew=%d join=%d swap=%d",
-			fbackend.breakCalls, fbackend.breakNewCalls, fbackend.joinCalls, fbackend.swapCalls)
-	}
-}
-
 func TestRecoverWarmStartSessions_ReinstallsTranscriptWatch(t *testing.T) {
 	watcher := &recordingWatcher{}
 	persist := &recordingPersist{}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      newFakeBackend(),
 		Watcher:      watcher,
@@ -181,108 +133,6 @@ func TestRecoverWarmStartSessions_ReinstallsTranscriptWatch(t *testing.T) {
 	}
 }
 
-func TestRecoverActivePaneAtMain_RestoresMainTUIWhenSessionActive(t *testing.T) {
-	fbackend := newFakeBackend()
-	fbackend.mu.Lock()
-	fbackend.spawnPane = "%2"
-	fbackend.mu.Unlock()
-
-	r := New(Config{
-		SessionName:  "reactor-test",
-		TickInterval: 10 * time.Second,
-		Backend:      fbackend,
-	})
-	r.state.Sessions["s1"] = state.Session{ID: "s1", Project: "/repo/project", Frames: []state.SessionFrame{{ID: "f1", Project: "/repo/project", Command: "stub", Driver: driver.NewGenericDriver("", "", 0).NewState(time.Now())}}}
-	r.sessionPanes["f1"] = "%2"
-	r.sessionPanes["_main"] = "%1"
-
-	r.RecoverActivePaneAtMain()
-
-	if r.mainPaneSession != "" {
-		t.Errorf("activeSession = %q, want empty", r.mainPaneSession)
-	}
-	if r.sessionPanes["_main"] != "%1" {
-		t.Errorf("sessionPanes[_main] = %q, want %%1", r.sessionPanes["_main"])
-	}
-	fbackend.mu.Lock()
-	defer fbackend.mu.Unlock()
-	if fbackend.swapCalls != 1 {
-		t.Fatalf("swapCalls = %d, want 1", fbackend.swapCalls)
-	}
-	if fbackend.swapSources[0] != "%1" || fbackend.swapTargets[0] != "reactor-test:0.1" {
-		t.Fatalf("swap = %q -> %q, want %%1 -> reactor-test:0.1", fbackend.swapSources[0], fbackend.swapTargets[0])
-	}
-}
-
-func TestRecoverActivePaneAtMain_IdentifiesMainTUIActive(t *testing.T) {
-	fbackend := newFakeBackend()
-	// 0.1 contains %1, which is the Main TUI
-	fbackend.mu.Lock()
-	fbackend.spawnPane = "%1"
-	fbackend.mu.Unlock()
-	r := New(Config{
-		SessionName:  "reactor-test",
-		TickInterval: 10 * time.Second,
-		Backend:      fbackend,
-	})
-	r.state.Sessions["s1"] = state.Session{ID: "s1", Frames: []state.SessionFrame{{ID: "f1", Command: "stub", Driver: driver.NewGenericDriver("", "", 0).NewState(time.Now())}}}
-	r.sessionPanes["f1"] = "%2"
-	r.sessionPanes["_main"] = "%1"
-
-	r.RecoverActivePaneAtMain()
-
-	if r.mainPaneSession != "" {
-		t.Errorf("activeSession = %q, want empty", r.mainPaneSession)
-	}
-}
-
-func TestRecoverActivePaneAtMain_RewritesStaleMainPaneEnv(t *testing.T) {
-	fbackend := newFakeBackend()
-	fbackend.mu.Lock()
-	fbackend.spawnPane = "%1"
-	fbackend.envs["ROOST_FRAME__main"] = "%0"
-	fbackend.mu.Unlock()
-	r := New(Config{
-		SessionName:  "reactor-test",
-		TickInterval: 10 * time.Second,
-		Backend:      fbackend,
-	})
-	r.state.Sessions["s1"] = state.Session{ID: "s1", Frames: []state.SessionFrame{{ID: "f1", Command: "stub", Driver: driver.NewGenericDriver("", "", 0).NewState(time.Now())}}}
-	r.sessionPanes["f1"] = "%2"
-	r.sessionPanes["_main"] = "%0"
-
-	r.RecoverActivePaneAtMain()
-
-	if r.sessionPanes["_main"] != "%1" {
-		t.Fatalf("sessionPanes[_main] = %q, want %%1", r.sessionPanes["_main"])
-	}
-	fbackend.mu.Lock()
-	defer fbackend.mu.Unlock()
-	if fbackend.envs["ROOST_FRAME__main"] != "%1" {
-		t.Fatalf("ROOST_FRAME__main = %q, want %%1", fbackend.envs["ROOST_FRAME__main"])
-	}
-}
-
-func TestRecoverActivePaneAtMain_LeavesSessionActiveWhenMainPaneUnknown(t *testing.T) {
-	fbackend := newFakeBackend()
-	fbackend.mu.Lock()
-	fbackend.spawnPane = "%2"
-	fbackend.mu.Unlock()
-	r := New(Config{
-		SessionName:  "reactor-test",
-		TickInterval: 10 * time.Second,
-		Backend:      fbackend,
-	})
-	r.state.Sessions["s1"] = state.Session{ID: "s1", Frames: []state.SessionFrame{{ID: "f1", Command: "stub", Driver: driver.NewGenericDriver("", "", 0).NewState(time.Now())}}}
-	r.sessionPanes["f1"] = "%2"
-
-	r.RecoverActivePaneAtMain()
-
-	if r.mainPaneSession != "s1" {
-		t.Errorf("activeSession = %q, want s1", r.mainPaneSession)
-	}
-}
-
 func TestLoadSnapshot_ColdStartConvertsRunningToWaiting(t *testing.T) {
 	snaps := []SessionSnapshot{
 		{
@@ -298,8 +148,7 @@ func TestLoadSnapshot_ColdStartConvertsRunningToWaiting(t *testing.T) {
 	}
 	persist := &snapLoader{snaps: snaps}
 	r := New(Config{
-		SessionName: "reactor-test",
-		Persist:     persist,
+		Persist: persist,
 	})
 
 	// Cold start: should convert to waiting
@@ -371,7 +220,7 @@ func TestLoadSnapshot_ColdStartKeepsRecoverableStoppedCodexFrame(t *testing.T) {
 			},
 		}},
 	}}}
-	r := New(Config{SessionName: "reactor-test", Persist: persist})
+	r := New(Config{Persist: persist})
 
 	if err := r.LoadSnapshot(true); err != nil {
 		t.Fatalf("LoadSnapshot(true): %v", err)
@@ -402,7 +251,7 @@ func TestLoadSnapshot_ColdStartDropsStoppedCodexFrameWithoutThread(t *testing.T)
 			DriverState: map[string]string{"status": "stopped"},
 		}},
 	}}}
-	r := New(Config{SessionName: "reactor-test", Persist: persist})
+	r := New(Config{Persist: persist})
 
 	if err := r.LoadSnapshot(true); err != nil {
 		t.Fatalf("LoadSnapshot(true): %v", err)
@@ -423,7 +272,7 @@ func TestLoadSnapshot_ColdStartDropsStoppedGenericFrame(t *testing.T) {
 			DriverState: map[string]string{"status": "stopped"},
 		}},
 	}}}
-	r := New(Config{SessionName: "reactor-test", Persist: persist})
+	r := New(Config{Persist: persist})
 
 	if err := r.LoadSnapshot(true); err != nil {
 		t.Fatalf("LoadSnapshot(true): %v", err)
@@ -445,7 +294,7 @@ func TestLoadSnapshot_WarmStartKeepsStoppedCodexFrame(t *testing.T) {
 			DriverState: map[string]string{"status": "stopped"},
 		}},
 	}}}
-	r := New(Config{SessionName: "reactor-test", Persist: persist})
+	r := New(Config{Persist: persist})
 
 	if err := r.LoadSnapshot(false); err != nil {
 		t.Fatalf("LoadSnapshot(false): %v", err)

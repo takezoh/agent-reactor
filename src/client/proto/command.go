@@ -29,13 +29,6 @@ const (
 	// driver.* — driver registry queries
 	CmdNameDriverList = "driver.list"
 
-	// peer.* — peer-to-peer frame messaging.
-	// These must match state.EventPeer* constants (verified by integration test).
-	CmdNamePeerSend       = "peer.send"
-	CmdNamePeerList       = "peer.list"
-	CmdNamePeerSetSummary = "peer.set_summary"
-	CmdNamePeerDrainInbox = "peer.drain_inbox"
-
 	// hook-event — container endpoint only. Carries a driver hook notification
 	// with a bearer token that resolves to the spawning frame. Not accepted on
 	// the host endpoint.
@@ -54,7 +47,7 @@ type CmdUnsubscribe struct{}
 func (CmdUnsubscribe) isCommand()          {}
 func (CmdUnsubscribe) CommandName() string { return CmdNameUnsubscribe }
 
-// CmdEvent is the generic event envelope sent by the `arc event` CLI.
+// CmdEvent is the generic event envelope sent by the `server event` CLI.
 type CmdEvent struct {
 	Event     string          `json:"event"`
 	Timestamp time.Time       `json:"timestamp"`
@@ -111,43 +104,6 @@ type CmdDriverList struct{}
 
 func (CmdDriverList) isCommand()          {}
 func (CmdDriverList) CommandName() string { return CmdNameDriverList }
-
-// CmdPeerSend sends a message to a peer frame.
-type CmdPeerSend struct {
-	FromFrameID string `json:"from"`
-	ToFrameID   string `json:"to"`
-	Text        string `json:"text"`
-	ReplyTo     string `json:"reply_to,omitempty"`
-}
-
-func (CmdPeerSend) isCommand()          {}
-func (CmdPeerSend) CommandName() string { return CmdNamePeerSend }
-
-// CmdPeerList lists peer frames visible to the caller.
-type CmdPeerList struct {
-	Scope       string `json:"scope,omitempty"`
-	FromFrameID string `json:"from_frame_id,omitempty"`
-}
-
-func (CmdPeerList) isCommand()          {}
-func (CmdPeerList) CommandName() string { return CmdNamePeerList }
-
-// CmdPeerSetSummary updates the caller's peer summary.
-type CmdPeerSetSummary struct {
-	FromFrameID string `json:"from_frame_id"`
-	Summary     string `json:"summary"`
-}
-
-func (CmdPeerSetSummary) isCommand()          {}
-func (CmdPeerSetSummary) CommandName() string { return CmdNamePeerSetSummary }
-
-// CmdPeerDrainInbox reads and clears the caller's peer inbox.
-type CmdPeerDrainInbox struct {
-	FromFrameID string `json:"from_frame_id"`
-}
-
-func (CmdPeerDrainInbox) isCommand()          {}
-func (CmdPeerDrainInbox) CommandName() string { return CmdNamePeerDrainInbox }
 
 // CmdHookEvent is the container-only command that delivers a driver hook
 // notification. Token authenticates the sender and resolves to the FrameID

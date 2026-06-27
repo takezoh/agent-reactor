@@ -3,8 +3,6 @@ package state
 import (
 	"testing"
 	"time"
-
-	"github.com/takezoh/agent-reactor/client/uiproc"
 )
 
 // tickTrackerDriver emits a unique EffStartJob on every DEvTick so tests can
@@ -82,67 +80,6 @@ func TestTickProcessesRunningSessions(t *testing.T) {
 	}
 }
 
-func TestPaneDiedActiveSessionEmitsDeactivate(t *testing.T) {
-	s := New()
-	id := SessionID("abc")
-	s.Sessions[id] = stubSession(id)
-	s.ActiveOccupant = OccupantFrame
-	s.ActiveSession = id
-	_, effs := Reduce(s, EvPaneDied{Pane: "{sessionName}:0.1", OwnerFrameID: FrameID(id)})
-	if _, ok := findEff[EffDeactivateSession](effs); !ok {
-		t.Error("expected EffDeactivateSession when active session's pane dies")
-	}
-}
-
-// TestPaneDiedRootFrameWithSubsystemIDEvictsSession verifies root frames are
-// always evicted (not routed to failSubsystemFrame) even when they carry a
-// non-empty SubsystemID from a successful BindFrame.
-func TestPaneDiedRootFrameWithSubsystemIDEvictsSession(t *testing.T) {
-	s := New()
-	id := SessionID("abc")
-	sess := stubSession(id)
-	sess.Frames[0].SubsystemID = SubsystemID("cli:/p")
-	s.Sessions[id] = sess
-	s.ActiveOccupant = OccupantFrame
-	s.ActiveSession = id
-
-	next, effs := Reduce(s, EvPaneDied{Pane: "{sessionName}:0.1", OwnerFrameID: FrameID(id)})
-
-	if _, ok := next.Sessions[id]; ok {
-		t.Error("session should be evicted when root frame's pane dies")
-	}
-	if _, ok := findEff[EffDeactivateSession](effs); !ok {
-		t.Error("expected EffDeactivateSession when active root frame's pane dies")
-	}
-}
-
-func TestPaneWindowVanishedActiveSessionEmitsDeactivateAndRespawn(t *testing.T) {
-	s := New()
-	id := SessionID("abc")
-	s.Sessions[id] = stubSession(id)
-	s.ActiveOccupant = OccupantFrame
-	s.ActiveSession = id
-	_, effs := Reduce(s, EvPaneWindowVanished{FrameID: FrameID(id)})
-	if _, ok := findEff[EffDeactivateSession](effs); !ok {
-		t.Error("expected EffDeactivateSession when active session's window vanishes")
-	}
-	if _, ok := findEff[EffRespawnPane](effs); ok {
-		t.Error("should not respawn pane 0.0 directly after active session window vanishes")
-	}
-}
-
-func TestPaneWindowVanishedInactiveSessionNoDeactivate(t *testing.T) {
-	s := New()
-	id := SessionID("abc")
-	other := SessionID("other")
-	s.Sessions[id] = stubSession(id)
-	s.ActiveSession = other
-	_, effs := Reduce(s, EvPaneWindowVanished{FrameID: FrameID(id)})
-	if _, ok := findEff[EffDeactivateSession](effs); ok {
-		t.Error("should not emit EffDeactivateSession for inactive session's window vanish")
-	}
-}
-
 // === sibling independence (new model) ===
 
 // TestSiblingIndependence verifies that evicting a child frame leaves
@@ -189,122 +126,6 @@ func TestSiblingIndependence(t *testing.T) {
 	}
 	if sess.Frames[0].ID != rootID {
 		t.Errorf("root frame should survive, got %q", sess.Frames[0].ID)
-	}
-}
-
-// TestPaneDiedTopFrameReactivateBeforeKill asserts Fix A: when the active top
-// frame's pane dies, EffActivateSession (restore parent to 0.1) must precede
-// EffKillSessionWindow (tear down the top frame's window).
-// Reversing the order causes kill-window to destroy window 0.
-func TestPaneDiedTopFrameReactivateBeforeKill(t *testing.T) {
-	s := New()
-	id := SessionID("sess-pop")
-	rootID := FrameID("frame-root")
-	topID := FrameID("frame-top")
-	s.Sessions[id] = Session{
-		ID:            id,
-		Project:       "/project",
-		Command:       "stub",
-		Driver:        stubDriverState{},
-		ActiveFrameID: topID,
-		Frames: []SessionFrame{
-			{ID: rootID, Project: "/project", Command: "stub", Driver: stubDriverState{}},
-			{ID: topID, Project: "/project", Command: "stub", Driver: stubDriverState{}},
-		},
-	}
-	s.ActiveOccupant = OccupantFrame
-	s.ActiveSession = id
-
-	next, effs := Reduce(s, EvPaneDied{Pane: "{sessionName}:0.1", OwnerFrameID: topID})
-
-	activateIdx := -1
-	killIdx := -1
-	for i, e := range effs {
-		if _, ok := e.(EffActivateSession); ok {
-			activateIdx = i
-		}
-		if ks, ok := e.(EffKillSessionWindow); ok && ks.FrameID == topID {
-			killIdx = i
-		}
-	}
-	if activateIdx < 0 {
-		t.Fatal("expected EffActivateSession")
-	}
-	if killIdx < 0 {
-		t.Fatal("expected EffKillSessionWindow for top frame")
-	}
-	if activateIdx > killIdx {
-		t.Errorf("EffActivateSession (idx %d) must precede EffKillSessionWindow (idx %d)", activateIdx, killIdx)
-	}
-
-	// Verify state: root frame survives, session stays active.
-	sess, ok := next.Sessions[id]
-	if !ok {
-		t.Fatal("session should survive when root frame remains")
-	}
-	if len(sess.Frames) != 1 || sess.Frames[0].ID != rootID {
-		t.Errorf("frames = %v, want [root]", sess.Frames)
-	}
-	if next.ActiveSession != id {
-		t.Errorf("ActiveSession = %q, want %q", next.ActiveSession, id)
-	}
-}
-
-// TestPaneDiedChildFrameWithSubsystemIDEvicts pins the contract that a
-// non-root frame carrying a SubsystemID (BindFrame completed, e.g. a
-// codex thread pushed on top via push-driver) must be evicted from
-// state when its pane dies — the same as a root frame. Historically
-// this path went through failSubsystemFrame and left the child in
-// state with Status=Stopped, surfacing as "the frame won't disappear
-// from the session list" for the user.
-func TestPaneDiedChildFrameWithSubsystemIDEvicts(t *testing.T) {
-	s := New()
-	id := SessionID("sess-child-subsys")
-	rootID := FrameID("frame-root")
-	topID := FrameID("frame-top")
-	s.Sessions[id] = Session{
-		ID:            id,
-		Project:       "/project",
-		Command:       "stub",
-		Driver:        stubDriverState{},
-		ActiveFrameID: topID,
-		Frames: []SessionFrame{
-			{ID: rootID, Project: "/project", Command: "stub", Driver: stubDriverState{}},
-			{ID: topID, Project: "/project", Command: "stub", Driver: stubDriverState{}, SubsystemID: SubsystemID("stream:container:/project")},
-		},
-	}
-	s.ActiveOccupant = OccupantFrame
-	s.ActiveSession = id
-
-	next, effs := Reduce(s, EvPaneDied{Pane: "{sessionName}:0.1", OwnerFrameID: topID})
-
-	sess, ok := next.Sessions[id]
-	if !ok {
-		t.Fatal("session must survive when root frame remains")
-	}
-	for _, f := range sess.Frames {
-		if f.ID == topID {
-			t.Errorf("child frame %q with SubsystemID must be evicted on pane death; still present", topID)
-		}
-	}
-	if len(sess.Frames) != 1 || sess.Frames[0].ID != rootID {
-		t.Errorf("frames = %v, want [root]", sess.Frames)
-	}
-
-	var sawKill, sawActivate bool
-	for _, e := range effs {
-		if ks, ok := e.(EffKillSessionWindow); ok && ks.FrameID == topID {
-			sawKill = true
-		}
-		if _, ok := e.(EffActivateSession); ok {
-			sawActivate = true
-		}
-	}
-	if !sawKill {
-		t.Error("expected EffKillSessionWindow for evicted child frame (triggers Subsystem.ReleaseFrame)")
-	}
-	if !sawActivate {
-		t.Error("expected EffActivateSession to restore parent frame to pane 0.1")
 	}
 }
 
@@ -411,43 +232,5 @@ func TestTickNoBroadcastWhenNoChange(t *testing.T) {
 		if _, ok := e.(EffPersistSnapshot); ok {
 			t.Error("should not persist when no driver state changed")
 		}
-	}
-}
-
-// TestHiddenPaneDiedRestartsLogTUI verifies that a EvPaneDied for the hidden
-// pane emits EffRespawnPane targeting the log TUI process.
-func TestHiddenPaneDiedRestartsLogTUI(t *testing.T) {
-	s := New()
-	_, effs := Reduce(s, EvPaneDied{Pane: "{sessionName}:__hidden__.0"})
-
-	respawn, ok := findEff[EffRespawnPane](effs)
-	if !ok {
-		t.Fatal("expected EffRespawnPane for hidden pane death")
-	}
-	if respawn.Pane != "{sessionName}:__hidden__.0" {
-		t.Errorf("respawn target = %q, want __hidden__.0", respawn.Pane)
-	}
-	want := uiproc.Log()
-	if respawn.Proc.Name != want.Name {
-		t.Errorf("respawn proc = %q, want %q", respawn.Proc.Name, want.Name)
-	}
-}
-
-// TestHiddenPaneHealthCheckOnTickN0 verifies that the tick emits
-// EffCheckPaneAlive for the __hidden__ pane when N%5==0.
-func TestHiddenPaneHealthCheckOnTickN0(t *testing.T) {
-	s := New()
-	_, effs := Reduce(s, EvTick{Now: time.Now(), N: 0})
-
-	var hiddenChecks int
-	for _, e := range effs {
-		if c, ok := e.(EffCheckPaneAlive); ok {
-			if c.Pane == "{sessionName}:__hidden__.0" {
-				hiddenChecks++
-			}
-		}
-	}
-	if hiddenChecks != 1 {
-		t.Errorf("hidden pane EffCheckPaneAlive count = %d, want 1 on tick N=0", hiddenChecks)
 	}
 }

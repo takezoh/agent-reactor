@@ -22,7 +22,7 @@ const (
 )
 
 // containerEndpoint listens on the per-project Unix socket that is
-// bind-mounted into the devcontainer at /opt/agent-reactor/run/arc.sock.
+// bind-mounted into the devcontainer at /opt/agent-reactor/run/server.sock.
 // It accepts hook-event and subsystem-event commands.
 //
 // Authentication is via a bearer token (ROOST_SOCKET_TOKEN) carried

@@ -1,11 +1,11 @@
 # Web Gateway
 
-`server/web` is the HTTP/WebSocket gateway that bridges a browser to the arc
-daemon. It is a **stateless proxy**: session state lives entirely in the daemon
-process; this binary only translates between the browser wire format and the
-daemon's internal proto types.
+`server/web` is the HTTP/WebSocket gateway that bridges a browser to the
+session daemon. It is a **stateless proxy**: session state lives entirely
+in the daemon goroutines; this layer only translates between the browser
+wire format and the daemon's internal proto types.
 
-**Inner boundary** — `client/runtime` (the arc daemon) over a Unix socket.
+**Inner boundary** — `client/runtime` (the in-process session daemon) over a Unix socket.
 **Outer boundary** — any browser client (xterm.js + React UI) over HTTPS/WSS.
 
 Related documents:
@@ -15,11 +15,13 @@ Related documents:
 - [docs/user/web-server.md](../user/web-server.md) — operator guide (startup
   flags, TLS, token management).
 
-The gateway binary is `cmd/server`. It starts a `DaemonClient` (eager-dial +
-supervisor, see [ADR 0012](../adr/0012-daemon-client-eager-dial-supervisor.md))
-and mounts the REST API (`/api/`) and WebSocket endpoint (`/ws`) behind a
-shared `http.ServeMux`. `/healthz` is mounted outside the auth middleware so
-monitoring agents can reach it without a token.
+The gateway lives inside the `cmd/server` binary alongside the daemon
+coordinator goroutine. It starts a `DaemonClient` (eager-dial + supervisor,
+see [ADR 0012](../adr/0012-daemon-client-eager-dial-supervisor.md)) against
+the in-process Unix socket, and mounts the REST API (`/api/`) and
+WebSocket endpoint (`/ws`) behind a shared `http.ServeMux`. `/healthz` is
+mounted outside the auth middleware so monitoring agents can reach it
+without a token.
 
 ---
 
@@ -467,7 +469,7 @@ the 2-step close.
 sequenceDiagram
     participant B as Browser
     participant G as cmd/server (gateway)
-    participant D as arc daemon
+    participant D as session daemon
 
     %% 1. Session creation
     B->>G: POST /api/sessions {project, command, cols, rows}
@@ -516,8 +518,10 @@ protocol and architecture. Read these when you need the rationale behind
 a specific design choice.
 
 - [ADR 0005](../adr/0005-cmd-server-as-arc-daemon-gateway.md) — established
-  `cmd/server` as the HTTP/WS gateway fronting the arc daemon; defined the
-  stateless-proxy architecture and the Unix-socket boundary.
+  `cmd/server` as the HTTP/WS gateway fronting the session daemon; defined
+  the stateless-proxy architecture and the Unix-socket boundary. The current
+  layout (since phase F-E) co-resides daemon and gateway in one process; the
+  proxy contract still holds across the in-process socket.
 
 - [ADR 0006](../adr/0006-surface-namespace-for-new-proto-commands.md) — unified
   the `CmdSurface*` / `EvtSurface*` prefix in the proto layer; the gateway's

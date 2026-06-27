@@ -5,7 +5,7 @@ This expands the summary in [AGENTS.md](../../AGENTS.md). Read [ARCHITECTURE.md]
 ## Build & test
 
 ```sh
-make build                   # Build src/ → ./arc (+ reactor-bridge)
+make build-server            # Build src/ → ./server (+ reactor-bridge)
 make build-orchestrator      # → ./orchestrator
 make build-claude-app-server # → ./claude-app-server
 make build-all               # All 3 main binaries

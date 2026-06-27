@@ -30,7 +30,7 @@ type Session struct {
 }
 
 // SessionFrame is one execution context within a session. Each frame
-// owns one tmux pane and carries its own DriverState, so push-driver
+// owns one pane and carries its own DriverState, so push-driver
 // can layer a fresh driver context on top and frame death can truncate
 // just that slice of the stack.
 type SessionFrame struct {
@@ -77,7 +77,7 @@ type Driver interface {
 
 // CreateSessionPlanner is an optional extension for drivers that need
 // async setup work (e.g. creating a managed worktree) between the
-// create-session request and the tmux spawn. PrepareCreate returns a
+// create-session request and the pane spawn. PrepareCreate returns a
 // CreatePlan with an optional SetupJob; once the job completes the
 // reducer calls CompleteCreate to get the final CreateLaunch.
 type CreateSessionPlanner interface {
@@ -100,7 +100,7 @@ Hook-driven agents (Claude, Gemini) receive `DEvHook`. Stream-backed agents (Cod
 
 Driver is a **value-type plugin**: no goroutines, no I/O, no mutexes. Per-frame state is embedded on each `SessionFrame.Driver` as a `DriverState` value, and round-trips as arguments and return values of `Driver.Step`. Side effects are returned as `[]Effect` and executed by the runtime's Effect interpreter.
 
-**Launch plan is resolved in the reducer, not the runtime.** `reduceCreateSession` (or `handlePendingCreate` for planner-gated flows) calls `Driver.PrepareLaunch` synchronously, writes the normalized `LaunchOptions` onto the frame, and bakes `launch.Command` / `launch.StartDir` / `launch.Options` into `EffSpawnTmuxWindow`. The runtime interprets the effect verbatim and never calls driver methods, keeping driver-specific logic entirely inside the pure functional core. (`LaunchPlan` and `WrappedLaunch` also carry `Argv []string` for `agentlaunch.Spawn`; the tmux pane path uses `Command`.)
+**Launch plan is resolved in the reducer, not the runtime.** `reduceCreateSession` (or `handlePendingCreate` for planner-gated flows) calls `Driver.PrepareLaunch` synchronously, writes the normalized `LaunchOptions` onto the frame, and bakes `launch.Command` / `launch.StartDir` / `launch.Options` into `EffSpawnPaneWindow`. The runtime interprets the effect verbatim and never calls driver methods, keeping driver-specific logic entirely inside the pure functional core. (`LaunchPlan` and `WrappedLaunch` also carry `Argv []string` for `agentlaunch.Spawn`; the pane spawn path uses `Command`.)
 
 ```go
 // state/view/status.go — canonical Status definition (stdlib-only; no state import)
@@ -143,24 +143,75 @@ func (r *Runtime) Enqueue(ev state.Event)          // goroutine-safe
 
 ```go
 // runtime/backends.go — Backend interfaces swappable for testing
-type TmuxBackend interface {
-    SpawnWindow(name, cmd, startDir string, env map[string]string) (windowIndex, paneID string, err error)
+//
+// Pane operations are split into narrow role interfaces so callers can
+// depend on the minimum surface they need. The production backend
+// (PtyBackend, built on platform/termvt) implements all of them; test
+// fakes can stub a subset.
+
+type PaneLifecycle interface {
+    SpawnWindow(name, command, startDir string,
+                env map[string]string) (windowIndex, paneID string, err error)
     KillPaneWindow(paneTarget string) error
-    ShowEnvironment() (string, error)
-    RunChain(ops ...[]string) error
-    SwapPane(srcPane, dstPane string) error
-    PaneID(target string) (string, error)
-    PaneSize(target string) (width, height int, err error)
-    SelectPane(target string) error
-    ResizeWindow(target string, width, height int) error
-    SetStatusLine(line string) error
+    RespawnPane(target, command string) error
     PaneAlive(target string) (bool, error)
-    // ...
+    PaneExitStatus(target string) (dead bool, code int, err error)
 }
 
+type PaneIO interface {
+    SendKeys(paneTarget, text string) error          // text + Enter
+    SendKey(paneTarget, key string) error            // named key, no Enter
+    SendEnter(target string) error
+    LoadBuffer(name, text string) error              // bracketed-paste path
+    PasteBuffer(name, target string) error
+    PipePane(paneTarget, command string) error       // no-op on PtyBackend
+}
+
+type PaneInspect interface {
+    PaneID(target string) (string, error)
+    PaneSize(target string) (width, height int, err error)
+    CapturePane(paneTarget string, nLines int) (string, error)
+}
+
+// PaneBackend bundles the full set of pane / window operations the
+// runtime needs (lifecycle + io + inspect + session env + window
+// layout + control). Production wiring uses PtyBackend; new code should
+// depend on the narrower role interfaces above where possible.
+type PaneBackend interface {
+    PaneLifecycle
+    PaneIO
+    PaneInspect
+    SessionEnv
+    WindowLayout
+    BackendControl
+}
+
+// PersistBackend abstracts sessions.json persistence so tests don't
+// touch the filesystem. Save is upsert-only; removal is explicit via
+// Delete(id), so a transiently empty in-memory state cannot wipe the
+// on-disk record.
 type PersistBackend interface {
     Save(sessions []SessionSnapshot) error
+    Delete(id string) error
     Load() ([]SessionSnapshot, error)
+}
+
+// EventLogBackend writes per-frame agent event log lines; the
+// implementation lazy-opens the file on first append and keeps it open
+// until Close(frameID).
+type EventLogBackend interface {
+    Append(frameID state.FrameID, line string) error
+    Close(frameID state.FrameID)
+    CloseAll()
+}
+
+// FSWatcher is the fsnotify wrapper. It watches per-frame files and
+// emits FSEvent values on Events() when they change.
+type FSWatcher interface {
+    Watch(frameID state.FrameID, path string) error
+    Unwatch(frameID state.FrameID) error
+    Events() <-chan FSEvent
+    Close() error
 }
 ```
 
@@ -207,7 +258,7 @@ type Envelope struct {
 type Command interface { isCommand(); CommandName() string }
 
 // CmdEvent is the unified envelope for session domain events and driver hooks.
-// TUI/tool operations (create-session, etc.) and driver hooks both use this.
+// Operator-facing tools (create-session, etc.) and driver hooks both use this.
 type CmdEvent struct {
     Event     string          `json:"event"`
     Timestamp time.Time       `json:"timestamp"`
@@ -216,11 +267,11 @@ type CmdEvent struct {
 }
 ```
 
-Hook-driven agents pass their payloads through typed IPC as `proto.CmdEvent{Event, Timestamp, SenderID, Payload}`. Each hook bridge subcommand (e.g., `arc event <eventType>`) reads the frame id from its pane environment, packs its hook payload into `CmdEvent` with `SenderID = frameID`, and sends it. The runtime's IPC reader converts it into an `EvDriverEvent` and feeds it into the event loop. `reduceDriverHook` locates the owning frame across all sessions and calls `Driver.Step(frame.Driver, DEvHook{...})`. Hooks whose target frame has already been truncated off the stack are silently dropped.
+Hook-driven agents pass their payloads through typed IPC as `proto.CmdEvent{Event, Timestamp, SenderID, Payload}`. Each hook bridge subcommand (e.g., `server event <eventType>`) reads the frame id from its pane environment, packs its hook payload into `CmdEvent` with `SenderID = frameID`, and sends it. The runtime's IPC reader converts it into an `EvDriverEvent` and feeds it into the event loop. `reduceDriverHook` locates the owning frame across all sessions and calls `Driver.Step(frame.Driver, DEvHook{...})`. Hooks whose target frame has already been truncated off the stack are silently dropped.
 
 Structured backends such as Codex App Server use `proto.CmdSubsystemEvent{Source, Kind, Payload}` instead. The runtime converts this to `EvSubsystem`, updates the frame's `TargetID` when present, and calls `Driver.Step(frame.Driver, DEvSubsystem{...})`.
 
-On cold start, the bootstrap walks each session's frames in root-to-tail order and calls `Driver.PrepareLaunch(frame.Driver, LaunchModeColdStart, project, command, frame.LaunchOptions)` to reconstruct the launch plan, including any driver-specific resume logic (e.g. the Claude driver assembles `claude --resume <id>` here using the session id it persisted in `DriverState`). The generic driver returns the base command as-is. The resolved launch plan drives `tmux new-window` directly — no separate driver method is involved.
+On cold start, the bootstrap walks each session's frames in root-to-tail order and calls `Driver.PrepareLaunch(frame.Driver, LaunchModeColdStart, project, command, frame.LaunchOptions)` to reconstruct the launch plan, including any driver-specific resume logic (e.g. the Claude driver assembles `claude --resume <id>` here using the session id it persisted in `DriverState`). The generic driver returns the base command as-is. The resolved launch plan drives the backend's `SpawnWindow` directly — no separate driver method is involved.
 
 ## Data Files
 
@@ -229,15 +280,15 @@ On cold start, the bootstrap walks each session's frames in root-to-tail order a
 | `~/.agent-reactor/config.toml` | TOML | User settings (see below) | Created by user. Falls back to default values if absent |
 | `~/.agent-reactor/sessions.json` | JSON | Session metadata and the frame stack. Each session holds a list of frames; each frame carries its own command, normalized `launch_options`, `subsystem_id`, `target_id`, and driver-interpreted `driver_state` bag. Active frame is not persisted — it is always the tail of the frame list | Written on `EffPersistSnapshot` (on Tick / hook / subsystem event / session lifecycle changes). Read only at daemon startup via `runtime.Bootstrap`. `driver_state` entries are opaque key/value pairs interpreted by the driver; runtime knows none of the key names |
 | `~/.agent-reactor/events/{frameID}.log` | Text | Per-frame agent hook event log | Appended via `EffEventLogAppend`. The runtime's EventLogBackend manages file handles with lazy-open |
-| `~/.agent-reactor/arc.log` | slog | Application log | Created/appended at daemon startup |
-| `~/.agent-reactor/arc.sock` | Unix socket | Host IPC endpoint (SO_PEERCRED auth) — TUI / CLI / palette clients | Created at daemon startup. Deleted on exit |
-| `~/.agent-reactor/run/<project-hash>/arc.sock` | Unix socket | Container IPC endpoint (bearer-token auth) — sandboxed agents only; implements `hook-event` and `subsystem-event` | Started on first container spawn for a project. Bind-mounted into the container as `/opt/agent-reactor/run/arc.sock` |
+| `~/.agent-reactor/server.log` | slog | Application log | Created/appended at daemon startup |
+| `~/.agent-reactor/server.sock` | Unix socket | Host IPC endpoint (SO_PEERCRED auth) — co-resident HTTP/WS gateway, `server event/host-exec/mcp-exec` subcommands | Created at daemon startup. Deleted on exit |
+| `~/.agent-reactor/run/<project-hash>/server.sock` | Unix socket | Container IPC endpoint (bearer-token auth) — sandboxed agents only; implements `hook-event` and `subsystem-event` | Started on first container spawn for a project. Bind-mounted into the container as `/opt/agent-reactor/run/server.sock` |
 | `~/.agent-reactor/run/credproxy.sock` | Unix socket | Credential proxy endpoint (single instance per daemon; bearer token per project) | Listens whenever sandbox mode is `devcontainer`. Bind-mounted per project into the container as `/opt/agent-reactor/run/credproxy.sock` |
 | `~/.agent-reactor/warm/<frameID>.json` | JSON | Per-frame container bearer token (atomic, `0o600`) | Written when a sandboxed frame is launched; replayed by `RecoverSandboxFrames` on warm restart. Wiped at cold start |
 
 Base path can be changed via `Config.DataDir` (set to TempDir during tests).
 
-User-facing `settings.toml` fields and defaults are documented in the [client TUI user guide](../../user/reactor-tui.md#configuration).
+User-facing `settings.toml` fields and defaults live in the source code (`client/config/config.go`).
 
 ## File Structure
 
@@ -246,169 +297,269 @@ Source tree is split into three top-level trees under `src/` — see ARCHITECTUR
 
 ```
 src/
-├── cmd/arc/           Daemon / TUI binary (main.go + coordinator.go + subcommand.go + tui_entry.go)
-├── cmd/reactor-bridge/    Bridge binary (thin container-side client)
-├── client/cli/
-│   └── subcommand.go    Subcommand registry (Register, Dispatch)
+├── cmd/server/          Merged backend binary — pty session daemon + HTTP/WS
+│   │                    gateway in one process. Exposes the daemon over the
+│   │                    Unix socket and the gateway over -addr.
+│   ├── main.go             Process entry point (flag classification, logger
+│   │                       bootstrap, panic recovery, subcommand dispatch)
+│   ├── coordinator.go      Boots Runtime + IPC server + co-resident gateway
+│   │                       under a shared ctx
+│   ├── daemon_flags.go     Daemon flag set (-addr / -data-dir / -token / -tls-*
+│   │                       / -insecure / -no-auth)
+│   ├── daemon_lock.go      Per-data-dir flock so a second backend cannot bind
+│   │                       the same socket
+│   ├── gateway.go          DaemonClient supervisor + http.Server wiring for the
+│   │                       co-resident HTTP/WS gateway
+│   ├── subcommand.go       One-shot subcommand classification (event /
+│   │                       host-exec / mcp-exec / help)
+│   ├── hostexec.go         `server host-exec` shim (in-container glue)
+│   └── mcpexec.go          `server mcp-exec` shim (in-container glue)
+├── cmd/web/             Web frontend host binary — serves embedded client/web/dist
+│                        and reverse-proxies /api + /ws to the server gateway
+├── cmd/reactor-bridge/  Bridge binary (thin container-side client; uses client/proto)
+├── cmd/claude-app-server/  Codex app-server stdio shim for Claude
 ├── client/event/
-│   └── send.go          Event sender (registers "event" subcommand in init)
+│   └── event.go         Event sender (writes proto.CmdEvent over the host socket)
 ├── client/state/        Pure domain layer (no I/O, no goroutine)
-│   ├── state.go         State, Session, SessionFrame, Subscriber, JobMeta, LaunchOptions — plain value types
-│   ├── event.go         Event closed sum type (EvEvent, EvDriverEvent, EvSubsystem, EvTick, EvJobResult, EvPaneDied, EvTmuxWindowVanished, ...)
+│   ├── state.go         State, Session, SessionFrame, Subscriber, JobMeta,
+│   │                    LaunchOptions — plain value types
+│   ├── event.go         Event closed sum type (EvEvent, EvDriverEvent, EvSubsystem,
+│   │                    EvTick, EvJobResult, EvPaneDied, EvPaneSpawned,
+│   │                    EvSpawnFailed, EvPaneWindowVanished,
+│   │                    EvFrameCommandExited, EvPaneOsc, EvPanePrompt, ...)
 │   ├── event_dispatch.go  RegisterEvent[T] registry + dispatch lookup
-│   ├── effect.go        Effect closed sum type (EffSpawnTmuxWindow, EffKillSessionWindow, EffRegisterPane, EffUnregisterPane, EffActivateSession, EffDeactivateSession, EffStartJob, ...)
-│   ├── reduce.go        Reduce(State, Event) → (State, []Effect) — pure state transition function
-│   ├── reduce_event.go  EvEvent → registered handler dispatch, EvDriverEvent / EvSubsystem → Driver.Step routing
-│   ├── reduce_session.go  session / frame lifecycle reducers (create-session, push-driver, stop-session, …)
-│   ├── reduce_tick.go   EvTick → step active frame of each session → Driver.Step(DEvTick)
+│   ├── effect.go        Effect closed sum type (EffSpawnPaneWindow,
+│   │                    EffKillSessionWindow, EffRegisterPane, EffUnregisterPane,
+│   │                    EffSetPaneEnv, EffUnsetPaneEnv, EffCheckPaneAlive,
+│   │                    EffPersistSnapshot, EffEventLogAppend, EffToolLogAppend,
+│   │                    EffReconcileWindows, EffStartJob, EffRecordNotification,
+│   │                    EffSendPaneKeys, EffInjectPrompt,
+│   │                    EffSurfaceSubscribeStart/Stop/Resize/WriteRaw,
+│   │                    EffBroadcastSurfaceOutput, ...)
+│   ├── reduce.go        Reduce(State, Event) → (State, []Effect) — pure transition
+│   ├── reduce_event.go  EvEvent → registered handler dispatch;
+│   │                    EvDriverEvent / EvSubsystem → Driver.Step routing
+│   ├── reduce_session.go  session / frame lifecycle reducers (create-session,
+│   │                      push-driver, stop-session, …)
+│   ├── reduce_session_nav.go  preview / switch / activate-frame reducers
+│   ├── reduce_frame.go        frame-stack lifecycle helpers and reducers
+│   ├── reduce_frame_evict.go  spawn-failure and frame-death eviction paths
+│   ├── reduce_tick.go         EvTick → step active frame of each session →
+│   │                          Driver.Step(DEvTick)
 │   ├── reduce_osc.go    EvPaneOsc / EvPanePrompt → EffEventLogAppend + driver routing
 │   │                    (OSC 0/2 → DEvPaneOsc; OSC 133 → DEvPanePrompt;
-│   │                    OSC 9/99/777 → EffRecordNotification)
-│   ├── reduce_surface.go  surface.read_text / send_text / send_key / driver.list reducers
+│   │                     OSC 9/99/777 → EffRecordNotification)
+│   ├── reduce_surface.go  surface.read_text / send_text / send_key / driver.list /
+│   │                     surface streaming reducers
 │   ├── reduce_job.go    EvJobResult → Driver.Step(DEvJobResult)
 │   ├── reduce_conn.go   IPC connection lifecycle
 │   ├── reduce_lifecycle.go  shutdown / detach
-│   ├── reduce_helpers.go  shared reducer helpers including frame-stack helpers (activeFrame, rootFrame, findFrame, truncateFrames)
-│   ├── driver_iface.go  Driver interface (Step, Status, View, Persist, Restore, PrepareLaunch)
-│   │                    DriverState / DriverEvent / DriverStateBase marker
-│   │                    LaunchMode / LaunchOptions / LaunchPlan / CreateLaunch / CreatePlan
+│   ├── reduce_helpers.go    shared reducer helpers including frame-stack helpers
+│   │                        (activeFrame, rootFrame, findFrame, truncateFrames)
+│   ├── reduce_peer.go   peer-mesh reducers (PeerList, PeerSend, …)
+│   ├── peer.go          Peer state types (PeerSummary, InboxEntry, …)
+│   ├── driver_iface.go  Driver interface (Step, Status, View, Persist, Restore,
+│   │                    PrepareLaunch). DriverState / DriverEvent / DriverStateBase
+│   │                    marker. LaunchMode / LaunchOptions / LaunchPlan /
+│   │                    CreateLaunch / CreatePlan
 │   ├── status.go        Re-exports state/view.Status, StatusInfo as type aliases
-│   ├── view.go          Re-exports state/view.View, Card, Tag, LogTab, InfoLine as type aliases
+│   ├── view.go          Re-exports state/view.View, Card, Tag, LogTab, InfoLine
+│   │                    as type aliases
+│   ├── tab_renderer.go  Pure renderer for LogTabs from frame state
+│   ├── notify.go        Notification rule data structures
 │   ├── clone.go         Copy-on-write helpers for State
-│   └── view/            Wire-safe view types (stdlib-only; no state import; safe for proto and reactor-bridge)
-│       ├── status.go    Status enum + StatusInfo — canonical definition (Running/Waiting/Idle/Stopped/Pending)
+│   └── view/            Wire-safe view types (stdlib-only; no state import; safe
+│       │                for proto and reactor-bridge)
+│       ├── status.go    Status enum + StatusInfo — canonical definition
+│       │                (Running/Waiting/Idle/Stopped/Pending)
 │       └── view.go      View / Card / Tag / LogTab / TabKind / InfoLine
-├── client/driver/              Driver implementations — value-type plugins (no goroutines, no I/O)
+├── client/driver/       Driver implementations — value-type plugins (no goroutines, no I/O)
 │   ├── claude.go        claudeDriver — event-driven status + transcript job emit
 │   ├── claude_event.go  DEvHook dispatch (state-change, session-start, ...)
 │   ├── claude_tick.go   DEvTick: active gate + transcript parse job emit
 │   ├── claude_view.go   View() — Card, LogTabs, InfoExtras, StatusLine
-│   ├── claude_persist.go  Persist / Restore — opaque bag round-trip
-│   ├── generic.go       genericDriver — Idle/Waiting transitions driven by tick + OSC events
-│   ├── generic_view.go  View()
-│   ├── shell.go         shellDriver — OSC 133 prompt-phase consumer (DEvPanePrompt)
-│   ├── vt/              VT emulator wrapper — driver/vt.Terminal feeds bytes to charmbracelet/x/vt
-│   │                    and exposes OnOscNotification / OnWindowTitle / OnPromptEvent callbacks
-│   ├── jobs.go          Job input/output types (TranscriptParseInput, BranchDetectInput, ...)
-│   ├── runners.go       built-in runners (TranscriptParse, HaikuSummary, GitBranch)
+│   ├── claude_persist.go     Persist / Restore — opaque bag round-trip
+│   ├── claude_fork.go        Push-driver / fork bookkeeping for the Claude driver
+│   ├── claude_runners.go     Built-in runners (TranscriptParse, branch detection)
+│   ├── claude_statusline.go  Status-line rendering helpers
+│   ├── claude_tool_log.go    Tool-log append helpers
+│   ├── claude_worktree.go    Managed-worktree CreateSessionPlanner glue
+│   ├── codex*.go             codexDriver — Codex app-server subsystem consumer
+│   │                         (event, persist, runners, tool_log, view, worktree)
+│   ├── gemini*.go            geminiDriver — Gemini hook + tick consumer
+│   ├── generic.go            genericDriver — Idle/Waiting transitions driven by
+│   │                         tick + OSC events
+│   ├── generic_view.go       View()
+│   ├── shell.go              shellDriver — OSC 133 prompt-phase consumer
+│   ├── vt/              VT emulator wrapper — driver/vt.Terminal feeds bytes to
+│   │                    charmbracelet/x/vt and exposes OnOscNotification /
+│   │                    OnWindowTitle / OnPromptEvent callbacks
+│   ├── jobs.go          Job input/output types (TranscriptParseInput,
+│   │                    BranchDetectInput, ...)
+│   ├── runners.go       Shared built-in runners (HaikuSummary, GitBranch, ...)
+│   ├── summary*.go      Cross-driver summary prompt + job
 │   ├── tags.go          CommandTag helper
 │   └── register.go      init() registers with state.Register
-├── client/runtime/             Imperative shell — event loop + Effect interpreter
+├── client/runtime/      Imperative shell — event loop + Effect interpreter
 │   ├── runtime.go       Runtime.Run() — single event loop (select)
 │   ├── interpret.go     execute(Effect) — interpreter for all side effects
-│   ├── ipc.go           Host IPC server (accept + SO_PEERCRED uid check, readLoop, writeLoop)
-│   ├── ipc_container.go Container IPC endpoint (per-project Unix socket; `hook-event` / `subsystem-event`)
-│   ├── frame_token.go   Per-frame bearer-token registry (`ROOST_SOCKET_TOKEN` → frame id)
-│   ├── warm_state.go    Persists / replays container tokens across daemon warm-restart (`<dataDir>/warm/`)
-│   ├── rundir.go        Per-project run directory (host-side dir bind-mounted as `/opt/agent-reactor/run`)
-│   ├── launcher.go      AgentLauncher interface + DirectLauncher + WrappedLaunch + container-token wrap
-│   ├── sandbox_dispatcher.go SandboxDispatcher: per-project mode resolution (direct / devcontainer)
-│   ├── devcontainer_launcher.go DevcontainerLauncher: adapts sandbox/devcontainer.Manager to AgentLauncher
-│   ├── credproxy_runner.go Lifecycle for the in-process credproxy server (Unix socket on `<dataDir>/run/credproxy.sock`; awssso registers an HTTP route, gcloud/sshagent/hostexec contribute env+mounts only)
-│   ├── docker_env.go    Auto-detection of rootless docker socket → `DOCKER_HOST`
-│   ├── backends.go      TmuxBackend, PersistBackend, EventLogBackend, FSWatcher interface
-│   ├── panetap.go       PaneTap interface — raw byte stream abstraction over tmux pipe-pane
-│   ├── tmux_pipe_tap.go TmuxPipePaneTap — pipe-pane + FIFO + reader goroutine
-│   ├── tap_manager.go   per-frame tap lifecycle; runs a goroutine that feeds pipe-pane bytes
-│   │                    into a driver/vt.Terminal and emits EvPaneOsc (OSC 0/2/9/99/777) and
-│   │                    EvPanePrompt (OSC 133) into eventCh
-│   ├── peercred_linux.go  SO_PEERCRED uid verification (Linux)
-│   ├── peercred_other.go  no-op stub (non-Linux)
-│   ├── tmux_real.go     TmuxBackend concrete implementation
-│   ├── persist.go       PersistBackend concrete implementation (sessions.json)
-│   ├── eventlog.go      EventLogBackend concrete implementation
-│   ├── fsnotify.go      FSWatcher concrete implementation
-│   ├── convert.go       state.View → proto.SessionInfo conversion
-│   ├── proto_bridge.go  proto.Command → state.Event conversion
-│   ├── bootstrap.go     Initial State construction for warm/cold restart; RecoverSandboxFrames
-│   ├── cleanup.go       Per-frame cleanup callbacks (sandbox release, container token revoke)
-│   ├── filerelay.go     File relay
-│   ├── testing.go       Test helper (fake backend)
-│   └── worker/          Worker pool
-│       ├── pool.go      Pool + Submit[In,Out] (typed job submission)
-│       ├── registry.go  RegisterRunner[In,Out] + Dispatch (JobKind-based runner registry)
-│       └── runners.go   built-in runners (TranscriptParse, HaikuSummary, GitBranch)
-├── platform/sandbox/             Project-level sandbox backends (generic Manager[I any])
-│   ├── manager.go       Instance[I] / Manager[I] / StartOptions interface definitions
-│   └── devcontainer/    Devcontainer backend (per-project container lifecycle via docker)
-│       ├── manager.go   Manager (impl): EnsureInstance / BuildLaunchCommand / AdoptFrame / DestroyInstance
-│       ├── lifecycle.go docker create / start / exec / rm and container reuse logic
-│       ├── docker.go    Low-level docker CLI wrapper (singleflight-serialized per project)
-│       ├── spec.go      LoadSpec — parses devcontainer.json (image / build.name / mounts / runArgs / containerEnv / containerUser / remoteUser / workspaceFolder / workspaceMount / postCreateCommand / preExecCommand)
-│       ├── merge.go     Merges user-scope SandboxConfig with the per-project devcontainer spec
-│       └── envscript.go Resolves `${localEnv:VAR}` / `${localWorkspaceFolder*}` / `${containerWorkspaceFolder}` placeholders
-├── platform/hostexec/            Host-exec broker (`container.Provider` impl): per-project Unix socket server that runs allowlisted host binaries on behalf of container processes via SCM_RIGHTS stdio forwarding; deny/allow glob policy with env-assignment prefix stripping
-│                        Credential providers (awssso / gcloudcli / sshagent) live in the external `credproxy` library under `providers/<name>/`
-├── client/proto/               Typed IPC wire layer — imports state/view only (safe for reactor-bridge)
+│   ├── interpret_spawn.go    EffSpawnPaneWindow interpreter (sandbox dispatch,
+│   │                         launcher wiring, env propagation)
+│   ├── inject_prompt.go      EffInjectPrompt — load-buffer + paste-buffer + Enter
+│   ├── pane_injector.go      Helper used by inject_prompt to address backend panes
+│   ├── ipc.go           Host IPC server (accept + SO_PEERCRED uid check,
+│   │                    readLoop, writeLoop)
+│   ├── ipc_container.go Container IPC endpoint (per-project Unix socket;
+│   │                    `hook-event` / `subsystem-event`)
+│   ├── framereg/        Per-frame bearer token + bind-mount registry
+│   │   └── registry.go  Single-writer / multi-reader (event loop writes;
+│   │                    container endpoint handlers read concurrently)
+│   ├── warm_state.go    Persists / replays container tokens across daemon
+│   │                    warm-restart (`<dataDir>/warm/`)
+│   ├── rundir.go        Per-project run directory (host-side dir bind-mounted as
+│   │                    `/opt/agent-reactor/run`)
+│   ├── launcher.go      AgentLauncher interface + DirectLauncher + WrappedLaunch +
+│   │                    container-token wrap
+│   ├── notifier.go      Notification dispatch wiring (driven by EffRecordNotification)
+│   ├── resident.go      Long-lived per-project resources (sandbox managers, etc.)
+│   ├── terminal_relay.go     Per-subscriber pane→client byte relay for the
+│   │                         HTTP/WS gateway (EffSurfaceSubscribeStart)
+│   ├── backends.go      PaneLifecycle / PaneIO / PaneInspect / SessionEnv /
+│   │                    WindowLayout / BackendControl / PaneBackend +
+│   │                    PersistBackend / EventLogBackend / ToolLogBackend /
+│   │                    FSWatcher interfaces and noop fakes
+│   ├── pty_backend.go   PtyBackend — production PaneBackend implementation over
+│   │                    platform/termvt (synthetic "%N" pane ids, per-session
+│   │                    scrollback cap)
+│   ├── panetap.go       PaneTap interface — raw byte stream abstraction
+│   ├── pty_tap.go       PtyPaneTap — subscribes directly to termvt.Manager and
+│   │                    forwards Output events as the raw byte stream
+│   ├── tap_manager.go   per-frame tap lifecycle; runs a goroutine that feeds tap
+│   │                    bytes into a driver/vt.Terminal and emits EvPaneOsc
+│   │                    (OSC 0/2/9/99/777) and EvPanePrompt (OSC 133) into eventCh
+│   ├── stream_backend.go     UDS path resolution for the per-session app-server
+│   ├── subsystem.go          Subsystem dispatcher entry point
+│   ├── subsystem/            Subsystem backend implementations
+│   │   ├── subsystem.go      Subsystem interface + factory registry
+│   │   ├── worktree.go       Managed-worktree subsystem (frame BindFrame hook)
+│   │   ├── cli/              CLI-backed subsystems (hook-driven agents)
+│   │   └── stream/           Stream-backed subsystems (Codex app-server)
+│   ├── peercred_linux.go     SO_PEERCRED uid verification (Linux)
+│   ├── peercred_other.go     no-op stub (non-Linux)
+│   ├── persist.go            PersistBackend concrete implementation (sessions.json)
+│   ├── eventlog.go           EventLogBackend concrete implementation
+│   ├── tool_log.go           ToolLogBackend concrete implementation
+│   ├── fsnotify.go           FSWatcher concrete implementation
+│   ├── convert.go            state.View → proto.SessionInfo conversion
+│   ├── proto_bridge.go       proto.Command → state.Event conversion
+│   ├── proto_bridge_surface.go  surface.* command bridging
+│   ├── bootstrap.go          Initial State construction for warm/cold restart;
+│   │                         RecoverSandboxFrames
+│   ├── bootstrap_coldstart.go    Cold-start frame reconstruction
+│   ├── cleanup.go            Per-frame cleanup callbacks (sandbox release,
+│   │                         container token revoke)
+│   ├── filerelay.go          File relay (per-frame file watcher → event log)
+│   ├── testing.go            Test helper (fake backend)
+│   └── worker/               Worker pool
+│       ├── pool.go           Pool + Submit[In,Out] (typed job submission)
+│       └── registry.go       RegisterRunner[In,Out] + Dispatch
+│                             (JobKind-based runner registry)
+├── client/proto/        Typed IPC wire layer — imports state/view only
+│                        (safe for reactor-bridge)
 │   ├── envelope.go      Envelope wire format ({type, req_id, cmd|name, data})
-│   ├── command.go       Command closed sum type (CmdSubscribe, CmdUnsubscribe, CmdEvent, CmdHookEvent (container-only), CmdSurface*, CmdDriverList, CmdPeer*)
-│   ├── response.go      Response closed sum type (RespOK, RespSurfaceText, RespDriverList, RespPeerList, RespPeerDrainInbox). Session-related types live in proto/sessions
+│   ├── command.go       Command closed sum type (CmdSubscribe, CmdUnsubscribe,
+│   │                    CmdEvent, CmdHookEvent (container-only), CmdSurface*,
+│   │                    CmdDriverList, CmdPeer*)
+│   ├── surface_command.go    Surface command variants (read_text / send_text /
+│   │                         send_key / subscribe / unsubscribe / resize /
+│   │                         write_raw)
+│   ├── surface_event.go      EvtSurfaceOutput / EvtPromptEvent wire types
+│   ├── response.go      Response closed sum type (RespOK, RespSurfaceText,
+│   │                    RespDriverList, RespPeerList, RespPeerDrainInbox).
+│   │                    Session-related types live in proto/sessions
 │   ├── event.go         ServerEvent closed sum type
 │   ├── codec.go         NDJSON encode/decode
-│   ├── client.go        proto.Client (Dial / DialConn / Send / Events); used by TUI, bridge, palette
-│   ├── client_helpers.go  Peer helpers (PeerSend/List/SetSummary/DrainInbox), SendEvent, SendHookEvent
+│   ├── client.go        proto.Client (Dial / DialConn / Send / Events); used by
+│   │                    the operator CLI, reactor-bridge, HTTP/WS gateway
+│   ├── client_helpers.go     Peer helpers (PeerSend/List/SetSummary/DrainInbox),
+│   │                         SendEvent, SendHookEvent
 │   ├── reqid.go         Request ID generation
-│   └── errors.go        ErrCode enum
-├── client/proto/sessions/      Session management layer — imports proto + state (NOT used by reactor-bridge)
-│   ├── client.go        sessions.Client wraps *proto.Client; session helpers (CreateSession, StopSession, ListSessions, PushDriver, ActivateFrame, ...)
-│   ├── helpers.go       sendJSONEvent / sendJSONEventTimeout helpers; timeout constants
-│   ├── client_test.go   External tests (TestCreateSessionUsesLongTimeout, TestPushDriverDecodesCreateSessionReply, ...)
-│   ├── canonical_test.go  canonicalProjectPath unit tests
-│   └── sync_test.go     Integration: proto.CmdNamePeer* == state.EventPeer* (divergence detection)
+│   ├── errors.go        ErrCode enum
+│   └── protofake/       In-memory proto.Client fake for tests
+├── client/proto/sessions/    Session management layer — imports proto + state
+│                             (NOT used by reactor-bridge)
+│   ├── client.go        sessions.Client wraps *proto.Client; session helpers
+│   │                    (CreateSession, StopSession, ListSessions, PushDriver,
+│   │                    ActivateFrame, ...)
+│   └── helpers.go       sendJSONEvent / sendJSONEventTimeout helpers;
+│                        timeout constants
+├── client/web/          Browser frontend (xterm.js)
+│   ├── index.html       Single-page shell
+│   ├── package.json     Frontend deps (vite, xterm, vitest)
+│   ├── vite.config.ts   Build config (output → dist/)
+│   ├── src/             TypeScript sources
+│   │   ├── main.tsx          Entry point
+│   │   ├── App.tsx           Top-level component
+│   │   ├── socket/           WebSocket client (gateway protocol)
+│   │   ├── wire/             Wire-format encoders / decoders mirroring proto/
+│   │   ├── store/            Client-side state (active session, subscriptions)
+│   │   ├── components/       Pane / session-list / palette UI
+│   │   ├── hooks/            Reusable React hooks
+│   │   ├── lib/              Pure helpers
+│   │   ├── css/              Stylesheets
+│   │   └── auth.ts           Bearer-token handshake
+│   ├── dist/            Built bundle (vite build output)
+│   ├── embed.go         //go:embed dist/* — exposes the built bundle to cmd/web
+│   ├── headers.go       Static-asset header helpers
+│   └── host.go          HTTP host that serves the embedded bundle
+├── client/procio/
+│   └── procio.go        Buffered stdin/stdout helpers for subcommand wiring
 ├── client/tools/
-│   └── tools.go         Tool + Param + ToolContext + Registry + DefaultRegistry
-├── platform/agentlaunch/
-│   ├── spawn.go         Spawn — argv-direct process launch (no host shell), SpawnResult{Stdout,Stdin,Wait,PID}
-│   ├── splitargs.go     SplitArgs — POSIX shell-word tokenizer (single/double quotes, backslash-escape)
-│   ├── types.go         LaunchPlan{Command,Argv,…} / WrappedLaunch{Command,Argv,…} — dual representation
-│   ├── devcontainer.go  DevcontainerLauncher — Wrap produces docker exec argv (TTY conditional on consumer)
-│   ├── direct.go        DirectDispatcher — pass-through (no-op wrapping)
-│   └── mounts.go        WrappedLaunch.HostPath — container→host path translation via Mounts
-├── platform/lib/
-│   ├── codex/
-│   │   └── argv.go      Per-agent argv builders: AppServerListenArgs / RemoteAttachArgs / ParseCommand([]string) / ShellJoinArgv / CommandConfig / driver constants
-│   ├── claude/
-│   │   ├── command.go   Claude subcommand handler (registers "claude" in init)
-│   │   ├── cli/
-│   │   │   └── argv.go  SandboxFlags (strip --enable-auto-mode, append skip flag) / AppServerArgs (resume + append-system-prompt ordering)
-│   │   ├── setup.go     Hook registration/removal in Claude settings.json
-│   │   └── transcript/  Claude JSONL transcript parsing + diff tracking
-│   ├── git/
-│   │   └── git.go       Git branch detection (DetectBranch)
-│   ├── github/
-│   │   └── github.go    GitHub API client
-│   ├── pathmap/         Container↔host path translation for IPC payloads (uses WrappedLaunch.Mounts)
-│   ├── vcs/
-│   │   └── vcs.go       VCS abstraction
-│   └── plastic/
-│       └── plastic.go   Plastic SCM integration
+│   ├── tools.go         Tool + Param + ToolContext + Registry + DefaultRegistry
+│   └── builtin.go       Built-in tool registrations
+├── client/lib/          Client-only helpers (not used by reactor-bridge)
+│   ├── claude/          Claude CLI + transcript glue
+│   ├── codex/           Codex CLI glue
+│   ├── editor/          $EDITOR launcher
+│   └── peers/           Peer-mesh client helpers
 ├── client/config/
-│   ├── config.go        TOML configuration loading (`ROOST_DATA_DIR` env override)
-│   ├── merge.go         MergeSandbox — user-scope settings merged into per-project overrides
-│   ├── sandbox_resolver.go SandboxResolver — resolves effective sandbox mode per project (mtime-cached)
+│   ├── config.go        TOML configuration loading (`ROOST_DATA_DIR` env override).
+│   │                    Source of truth for user-facing settings.toml fields
+│   ├── notify.go        Notification rule matching
 │   ├── project.go       Project enumeration from `project_roots` / `project_paths`
-│   ├── workspace_resolver.go Reads each project's `.agent-reactor/settings.toml` for workspace grouping
-│   └── notify.go        Notification rule matching
-├── tmux/
-│   ├── interfaces.go    PaneOperator
-│   ├── client.go        tmux command wrapper (concrete implementation)
-│   └── pane.go          Pane operations
-├── client/tui/
-│   ├── model.go         Session list Model (UI state only. Directly imports state.Status)
-│   ├── view.go          Session list rendering
-│   ├── mouse.go         Mouse input handler
-│   ├── keys.go          Keybinding definitions + keyboard input handler
-│   ├── main_model.go    Main TUI Model (viewport scrolling)
-│   ├── main_view.go     Main TUI rendering
-│   ├── palette.go       Command palette
-│   ├── log_model.go     Log TUI (dynamic session tabs)
-│   ├── log_view.go      Log TUI rendering
-│   ├── log_info.go      INFO tab rendering
-│   ├── log_io.go        Log file I/O
-│   ├── filter.go        Session list filtering
-│   ├── layout.go        Layout calculation
-│   ├── panes.go         Pane management
-│   └── theme.go         Theme (state color mapping)
-└── logger/
+│   └── workspace_resolver.go  Reads each project's `.agent-reactor/settings.toml`
+│                              for workspace grouping
+├── platform/agentlaunch/
+│   ├── spawn.go         Spawn — argv-direct process launch (no host shell),
+│   │                    SpawnResult{Stdout,Stdin,Wait,PID}
+│   ├── splitargs.go     SplitArgs — POSIX shell-word tokenizer
+│   │                    (single/double quotes, backslash-escape)
+│   ├── types.go         LaunchPlan{Command,Argv,…} /
+│   │                    WrappedLaunch{Command,Argv,…} — dual representation
+│   ├── devcontainer.go  DevcontainerLauncher — Wrap produces docker exec argv
+│   │                    (TTY conditional on consumer)
+│   ├── direct.go        DirectDispatcher — pass-through (no-op wrapping)
+│   └── mounts.go        WrappedLaunch.HostPath — container→host path translation
+│                        via Mounts
+├── platform/sandbox/    Project-level sandbox backends (generic Manager[I any])
+│   ├── manager.go       Instance[I] / Manager[I] / StartOptions interface
+│   │                    definitions
+│   └── devcontainer/    Devcontainer backend (per-project container lifecycle
+│                        via docker)
+├── platform/hostexec/   Host-exec broker (`container.Provider` impl): per-project
+│                        Unix socket server that runs allowlisted host binaries on
+│                        behalf of container processes via SCM_RIGHTS stdio
+│                        forwarding; deny/allow glob policy with env-assignment
+│                        prefix stripping. Credential providers (awssso /
+│                        gcloudcli / sshagent) live in the external `credproxy`
+│                        library under `providers/<name>/`
+├── platform/termvt/     Pty + VT manager that PtyBackend builds on. Owns the
+│                        Manager → Session map and emits structured Output events.
+├── platform/lib/        Provider-specific helpers usable by both client and
+│                        orchestrator layers (claude, codex, gemini, git, github,
+│                        plastic, vcs, …)
+├── platform/pathmap/    Container↔host path translation for IPC payloads
+│                        (uses WrappedLaunch.Mounts)
+└── platform/logger/
     └── logger.go        slog initialization
 ```

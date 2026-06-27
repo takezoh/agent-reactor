@@ -30,7 +30,6 @@ func TestWrapCommandWithStdinProducesBashC(t *testing.T) {
 // is never persisted.
 func TestSnapshotSessionsStripsInitialInput(t *testing.T) {
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      newFakeBackend(),
 		Persist:      noopPersist{},

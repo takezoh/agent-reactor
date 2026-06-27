@@ -14,10 +14,7 @@ package state
 // frame. Pass true when the backend window still exists (e.g. EvPaneDied);
 // pass false when the window has already vanished (e.g. EvPaneWindowVanished).
 //
-// Effect ordering: deactivate → reactivate → cleanup → persist → broadcast.
-// Reactivate precedes cleanup so that EffActivateSession swaps the parent
-// pane into 0.1 before EffKillSessionWindow destroys the old window —
-// preventing kill-window from targeting window 0.
+// Effect ordering: cleanup → persist → broadcast.
 func evictFrame(s State, frameID FrameID, killWindow bool) (State, []Effect, bool) {
 	sessID, sess, idx, ok := findFrame(s, frameID)
 	if !ok {
@@ -33,14 +30,10 @@ func evictRootFrame(s State, sessID SessionID, sess Session, killWindow bool) (S
 	allRemoved := truncateFrames(sess, 0)
 	s.Sessions = cloneSessions(s.Sessions)
 	delete(s.Sessions, sessID)
-	var effs []Effect
 	if s.ActiveSession == sessID {
 		s.ActiveSession = ""
-		if s.ActiveOccupant == OccupantFrame {
-			s.ActiveOccupant = OccupantMain
-			effs = append(effs, EffDeactivateSession{})
-		}
 	}
+	var effs []Effect
 	for _, frame := range allRemoved {
 		if killWindow {
 			effs = append(effs, EffKillSessionWindow{FrameID: frame.ID})
@@ -66,16 +59,6 @@ func evictChildFrame(s State, sessID SessionID, sess Session, idx int, frameID F
 	s.Sessions[sessID] = sess
 
 	var effs []Effect
-	if s.ActiveSession == sessID && wasActive {
-		var pre []Effect
-		s, pre = ensureMainAtVisibleSlot(s)
-		s.ActiveOccupant = OccupantFrame
-		effs = append(effs, pre...)
-		effs = append(effs,
-			EffActivateSession{SessionID: sessID, Reason: EventSwitchSession},
-			EffSyncStatusLine{Line: ""},
-		)
-	}
 	if killWindow {
 		effs = append(effs, EffKillSessionWindow{FrameID: removed.ID})
 	}

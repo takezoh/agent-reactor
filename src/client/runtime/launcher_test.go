@@ -33,7 +33,7 @@ func TestDirectLauncher_passthrough(t *testing.T) {
 }
 
 func TestDirectLauncher_injectsROOST_SOCKET(t *testing.T) {
-	l := DirectLauncher{SockPath: "/opt/agent-reactor/run/arc.sock"}
+	l := DirectLauncher{SockPath: "/opt/agent-reactor/run/server.sock"}
 	plan := state.LaunchPlan{Command: "claude", StartDir: "/work"}
 	env := map[string]string{"ROOST_FRAME_ID": "f1"}
 
@@ -41,8 +41,8 @@ func TestDirectLauncher_injectsROOST_SOCKET(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WrapLaunch returned error: %v", err)
 	}
-	if got.Env["ROOST_SOCKET"] != "/opt/agent-reactor/run/arc.sock" {
-		t.Errorf("ROOST_SOCKET = %q, want /opt/agent-reactor/run/arc.sock", got.Env["ROOST_SOCKET"])
+	if got.Env["ROOST_SOCKET"] != "/opt/agent-reactor/run/server.sock" {
+		t.Errorf("ROOST_SOCKET = %q, want /opt/agent-reactor/run/server.sock", got.Env["ROOST_SOCKET"])
 	}
 	if got.Env["ROOST_FRAME_ID"] != "f1" {
 		t.Errorf("ROOST_FRAME_ID lost, got %v", got.Env)

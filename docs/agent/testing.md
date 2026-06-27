@@ -17,8 +17,7 @@ Both decision-loop layers (`client/` and `orchestrator/scheduler`) share the Fun
 
 - **`state.Reduce` / `scheduler.Reduce` tests** — no mocks. Pure function tests that verify the return value `(state', []Effect)` of `Reduce(state, event, …)`. No goroutine / channel / timing dependencies; time enters as a value.
 - **`Driver.Step` tests** — no mocks. Directly verify the return value `(next, effects, view)` of `Step(prev, driverEvent)`.
-- **shell tests** (`client/runtime`, `orchestrator/scheduler` loop) — inject fakes for backend interfaces (`runtime.Config` `noopTmux`/`noopPersist`; scheduler `Deps{ Tracker, Spawn, Clock, … }` with a fake clock). Drive events through the loop and assert the published state.
-- **TUI tests** — pass messages directly to Bubbletea's `Model.Update` and verify the returned model. No real terminal required.
+- **shell tests** (`client/runtime`, `orchestrator/scheduler` loop) — inject fakes for backend interfaces (`runtime.Config` `noopPane`/`noopPersist`; scheduler `Deps{ Tracker, Spawn, Clock, … }` with a fake clock). Drive events through the loop and assert the published state.
 
 ## Multiplexed-subsystem routing harness
 
@@ -36,7 +35,7 @@ the test-pinned enforcement catalogued in
 
 ## Fan-out isolation harness (termvt multiplexer)
 
-The arc server's `platform/termvt` is the same shape — one source
+The backend's `platform/termvt` is the same shape — one source
 (a pty) multiplexed to many subscribers — so it carries the analogous
 safety-critical property: **fan-out isolation** (every event reaches exactly the
 live subscribers of its own session, in order; a slow subscriber is severed, not
@@ -79,7 +78,7 @@ Coverage targets are tiered by architectural blast radius. A regression in `stat
 |------|--------|-------|---------|
 | **S** | ≥85% | Pure domain layer & wire types | `state`, `state/view`, `proto`, `features`, `orchestrator/scheduler` (pure `Reduce` + transitions) |
 | **A** | ≥75% | Core execution layer | `runtime`, `runtime/worker`, `runtime/subsystem/*`, `driver`, `driver/vt`, `config`, `sandbox/devcontainer`, `platform/termvt`, `server/session`, `server/web` |
-| **B** | ≥60% | Infrastructure integrations | `lib/*` (except thin CLI wrappers), `proto/sessions`, `hostexec`, `mcpproxy`, `tui`, `tools` |
+| **B** | ≥60% | Infrastructure integrations | `lib/*` (except thin CLI wrappers), `proto/sessions`, `hostexec`, `mcpproxy`, `tools` |
 | **C** | ≥40% | Thin CLI & wiring | `main`, `cli`, `lib/gemini`, `lib/notify` |
 | **D** | smoke tests minimum | Trivial packages | `event`, `internal/globutil`, `lib/wsl`, `runtime/subsystem` (shared utilities), `sandbox`, `cmd/bridge` |
 

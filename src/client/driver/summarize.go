@@ -28,7 +28,7 @@ func summarizeWithCommand(ctx context.Context, prompt, command string) (string, 
 
 // filteredRoostEnv returns a copy of src with ROOST_SOCKET removed so
 // hook subprocesses spawned inside the summarizer cannot reach the daemon.
-// ROOST_SOCKET is the gate checked by `arc event`; removing it is
+// ROOST_SOCKET is the gate checked by `server event`; removing it is
 // sufficient to prevent impersonation without stripping all ROOST_* vars.
 func filteredRoostEnv(src []string) []string {
 	out := make([]string, 0, len(src))

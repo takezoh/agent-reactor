@@ -1,10 +1,8 @@
 package runtime
 
 import (
-	"fmt"
 	"log/slog"
 	"sort"
-	"time"
 
 	"github.com/takezoh/agent-reactor/client/proto"
 	"github.com/takezoh/agent-reactor/client/state"
@@ -70,16 +68,14 @@ func (r *Runtime) translateResponseBody(body any) proto.Response {
 			SessionID: b.SessionID,
 		}
 	case state.SessionsReply:
-		infos, active, occupant := r.buildSessionInfos()
-		return proto.RespSessions{Sessions: infos, ActiveSessionID: active, ActiveOccupant: occupant, Features: r.buildFeatureList()}
+		infos, active := r.buildSessionInfos()
+		return proto.RespSessions{Sessions: infos, ActiveSessionID: active, Features: r.buildFeatureList()}
 	case state.ActiveSessionReply:
 		return proto.RespActiveSession{ActiveSessionID: b.ActiveSessionID}
 	case state.SurfaceReadTextReply:
 		return r.buildSurfaceText(b)
 	case state.DriverListReply:
 		return r.buildDriverList()
-	case state.PeerListReply:
-		return r.buildPeerListResp(b)
 	}
 	slog.Warn("runtime: unknown response body type, sending RespOK",
 		"type", typeNameOf(body))
@@ -131,11 +127,10 @@ func (r *Runtime) syncRelayWatches() {
 // current state and queues it on every subscribed connection.
 func (r *Runtime) broadcastSessionsChanged(preview bool) {
 	r.syncRelayWatches()
-	infos, active, occupant := r.buildSessionInfos()
+	infos, active := r.buildSessionInfos()
 	ev := proto.EvtSessionsChanged{
 		Sessions:        infos,
 		ActiveSessionID: active,
-		ActiveOccupant:  occupant,
 		IsPreview:       preview,
 		Features:        r.buildFeatureList(),
 	}
@@ -152,23 +147,9 @@ func (r *Runtime) broadcastSessionsChanged(preview bool) {
 // the effect determines the variant.
 func (r *Runtime) broadcastGenericEvent(e state.EffBroadcastEvent) {
 	var event proto.ServerEvent
-	switch e.Name {
-	case "project-selected":
+	if e.Name == "project-selected" {
 		if p, ok := e.Payload.(state.ProjectSelectedPayload); ok {
 			event = proto.EvtProjectSelected{Project: p.Project}
-		}
-	case "pane-focused":
-		if p, ok := e.Payload.(state.PaneFocusedPayload); ok {
-			event = proto.EvtPaneFocused{Pane: p.Pane}
-		}
-	case "peer-message":
-		if p, ok := e.Payload.(state.PeerMessagePayload); ok {
-			event = proto.EvtPeerMessage{
-				ToSessionID: string(p.ToSessionID),
-				FromFrameID: string(p.FromFrameID),
-				Text:        p.Text,
-				SentAt:      p.SentAt.Format(time.RFC3339),
-			}
 		}
 	}
 	if event == nil {
@@ -247,9 +228,8 @@ func (r *Runtime) closeConn(id state.ConnID) {
 
 // buildSessionInfos materializes the current state.Sessions map into
 // the proto.SessionInfo wire format. Calls each driver's View() pure
-// getter to fill the View payload. Returns sessions, active session id,
-// and active occupant kind string ("main" | "log" | "frame").
-func (r *Runtime) buildSessionInfos() ([]proto.SessionInfo, string, string) {
+// getter to fill the View payload. Returns sessions and active session id.
+func (r *Runtime) buildSessionInfos() ([]proto.SessionInfo, string) {
 	sorted := make([]state.Session, 0, len(r.state.Sessions))
 	for _, sess := range r.state.Sessions {
 		sorted = append(sorted, sess)
@@ -263,18 +243,7 @@ func (r *Runtime) buildSessionInfos() ([]proto.SessionInfo, string, string) {
 			infos = append(infos, info)
 		}
 	}
-	return infos, string(r.state.ActiveSession), occupantString(r.state.ActiveOccupant)
-}
-
-func occupantString(k state.OccupantKind) string {
-	switch k {
-	case state.OccupantLog:
-		return proto.OccupantLog
-	case state.OccupantFrame:
-		return proto.OccupantFrame
-	default:
-		return proto.OccupantMain
-	}
+	return infos, string(r.state.ActiveSession)
 }
 
 func (r *Runtime) buildOneSessionInfo(sess state.Session) (proto.SessionInfo, bool) {
@@ -300,9 +269,6 @@ func (r *Runtime) buildOneSessionInfo(sess state.Session) (proto.SessionInfo, bo
 	}
 	if sess.Sandbox == state.SandboxOverrideHost {
 		view.Card.Tags = append(view.Card.Tags, state.HostTag())
-	}
-	if len(frame.PeerInbox) > 0 && view.Card.BorderBadge == "" {
-		view.Card.BorderBadge = fmt.Sprintf("💬 %d", len(frame.PeerInbox))
 	}
 	frames := make([]proto.FrameInfo, 0, len(sess.Frames))
 	for _, sf := range sess.Frames {
@@ -365,24 +331,6 @@ func (r *Runtime) buildSurfaceText(b state.SurfaceReadTextReply) proto.Response 
 	return proto.RespSurfaceText{Text: text}
 }
 
-// buildPeerListResp converts a state.PeerListReply into the proto wire format.
-func (r *Runtime) buildPeerListResp(reply state.PeerListReply) proto.RespPeerList {
-	peers := make([]proto.PeerPeerInfo, 0, len(reply.Peers))
-	for _, p := range reply.Peers {
-		peers = append(peers, proto.PeerPeerInfo{
-			FrameID:    p.FrameID,
-			SessionID:  p.SessionID,
-			Driver:     p.Driver,
-			Project:    p.Project,
-			Workspace:  r.workspaceResolver.Resolve(p.Project),
-			Summary:    p.Summary,
-			Status:     p.Status.String(),
-			InboxCount: p.InboxCount,
-		})
-	}
-	return proto.RespPeerList{Peers: peers}
-}
-
 // buildDriverList returns the list of registered drivers sorted by name.
 func (r *Runtime) buildDriverList() proto.Response {
 	reg := state.GetRegistry()
@@ -411,8 +359,6 @@ func typeNameOf(v any) string {
 		return "state.SurfaceReadTextReply"
 	case state.DriverListReply:
 		return "state.DriverListReply"
-	case state.PeerListReply:
-		return "state.PeerListReply"
 	}
 	return "unknown"
 }

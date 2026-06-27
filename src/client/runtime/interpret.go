@@ -8,7 +8,6 @@ import (
 
 	"github.com/takezoh/agent-reactor/client/runtime/worker"
 	"github.com/takezoh/agent-reactor/client/state"
-	"github.com/takezoh/agent-reactor/client/uiproc"
 )
 
 // execute is the side-effect interpreter. Each Effect type has a
@@ -19,12 +18,10 @@ import (
 // risking deadlock on the channel.
 func (r *Runtime) execute(eff state.Effect) {
 	switch e := eff.(type) {
-	case state.EffSpawnPaneWindow, state.EffKillSessionWindow, state.EffActivateSession,
-		state.EffDeactivateSession, state.EffRegisterPane, state.EffUnregisterPane,
-		state.EffSelectPane, state.EffSyncStatusLine, state.EffSetPaneEnv,
-		state.EffUnsetPaneEnv, state.EffCheckPaneAlive, state.EffRespawnPane,
-		state.EffSwapHidden, state.EffDetachClient, state.EffDisplayPopup,
-		state.EffKillSession, state.EffReconcileWindows:
+	case state.EffSpawnPaneWindow, state.EffKillSessionWindow,
+		state.EffRegisterPane, state.EffUnregisterPane,
+		state.EffSetPaneEnv, state.EffUnsetPaneEnv,
+		state.EffReconcileWindows:
 		r.executePaneEffect(e)
 
 	case state.EffSendResponse, state.EffSendResponseSync, state.EffSendError,
@@ -36,9 +33,6 @@ func (r *Runtime) execute(eff state.Effect) {
 
 	case state.EffSendPaneKeys:
 		r.executeSendPaneKeys(e)
-
-	case state.EffInjectPrompt:
-		r.executeInjectPrompt(e)
 
 	case state.EffSurfaceSubscribeStart, state.EffSurfaceSubscribeStop,
 		state.EffSurfaceResize, state.EffSurfaceWriteRaw,
@@ -72,9 +66,6 @@ func (r *Runtime) executeMiscEffect(eff state.Effect) {
 	case state.EffStartJob:
 		r.submitJob(e)
 
-	case state.EffNotify:
-		r.cfg.Notifier.Dispatch(e)
-
 	case state.EffRecordNotification:
 		r.executeRecordNotification(e)
 
@@ -97,7 +88,6 @@ func (r *Runtime) executeRecordNotification(e state.EffRecordNotification) {
 	if err := r.cfg.EventLog.Append(e.FrameID, oscEventLogLine(source, e.Title, e.Body)); err != nil {
 		slog.Debug("runtime: osc event log failed", "frame", e.FrameID, "err", err)
 	}
-	r.cfg.Notifier.DispatchOSC(e.Title, e.Body, source)
 }
 
 func (r *Runtime) executeSendPaneKeys(e state.EffSendPaneKeys) {
@@ -128,13 +118,6 @@ func (r *Runtime) executeSendPaneKeys(e state.EffSendPaneKeys) {
 		return
 	}
 	r.executeIPCEffect(state.EffSendResponse{ConnID: e.ConnID, ReqID: e.ReqID, Body: nil})
-}
-
-func (r *Runtime) executeInjectPrompt(e state.EffInjectPrompt) {
-	inj := NewRuntimePaneInjector(r.sessionPanes, r.cfg.Backend)
-	if err := InjectPrompt(inj, e.FrameID, e.Text); err != nil {
-		slog.Warn("runtime: inject prompt failed", "frame", e.FrameID, "err", err)
-	}
 }
 
 // executeSurfaceEffect dispatches the six surface-streaming effects to
@@ -202,36 +185,14 @@ func (r *Runtime) executePaneEffect(eff state.Effect) {
 		go spawnPaneWindow(r.buildSpawnDeps(), e)
 	case state.EffKillSessionWindow:
 		r.executeKillSessionWindow(e)
-	case state.EffActivateSession:
-		r.activateSession(e.SessionID)
-	case state.EffDeactivateSession:
-		r.deactivateSession()
 	case state.EffRegisterPane:
 		r.executeRegisterPane(e)
 	case state.EffUnregisterPane:
 		r.executeUnregisterPane(e)
-	case state.EffSelectPane:
-		target := substitutePlaceholdersString(e.Target, r.cfg.SessionName, r.cfg.RoostExe)
-		_ = r.cfg.Backend.SelectPane(target)
-	case state.EffSyncStatusLine:
-		r.executeSyncStatusLine(e)
 	case state.EffSetPaneEnv:
 		_ = r.cfg.Backend.SetEnv(e.Key, e.Value)
 	case state.EffUnsetPaneEnv:
 		_ = r.cfg.Backend.UnsetEnv(e.Key)
-	case state.EffCheckPaneAlive:
-		r.executeCheckPaneAlive(e)
-	case state.EffRespawnPane:
-		target := substitutePlaceholdersString(e.Pane, r.cfg.SessionName, r.cfg.RoostExe)
-		_ = r.cfg.Backend.RespawnPane(target, e.Proc.Command(r.cfg.RoostExe))
-	case state.EffSwapHidden:
-		r.swapHidden()
-	case state.EffDetachClient:
-		_ = r.cfg.Backend.DetachClient()
-	case state.EffDisplayPopup:
-		_ = r.cfg.Backend.DisplayPopup(e.Width, e.Height, uiproc.Palette(e.Tool, e.Args, "").Command(r.cfg.RoostExe))
-	case state.EffKillSession:
-		_ = r.cfg.Backend.KillSession()
 	case state.EffReconcileWindows:
 		r.reconcileWindows()
 	}
@@ -283,54 +244,6 @@ func (r *Runtime) executeUnregisterPane(e state.EffUnregisterPane) {
 	r.cfg.EventLog.Close(e.FrameID)
 	if r.cfg.TerminalEvict != nil {
 		r.cfg.TerminalEvict(target)
-	}
-}
-
-func (r *Runtime) executeSyncStatusLine(e state.EffSyncStatusLine) {
-	line := e.Line
-	if line == "" {
-		line = r.activeStatusLine()
-	}
-	_ = r.cfg.Backend.SetStatusLine(line)
-}
-
-func (r *Runtime) executeCheckPaneAlive(e state.EffCheckPaneAlive) {
-	// active frame の 0.1 は positional ではなく pane_id で probe する。
-	// remain-on-exit off で frame pane が破棄されると backend が layout を詰めて
-	// 別 pane が 0.1 を占めるため、positional クエリは alive を誤検知する。
-	// pane_id ならプロセスと共に消えるので、err も dead 扱いにする。
-	if e.Pane == "{sessionName}:0.1" && r.activeFrameID != "" {
-		if paneID := r.sessionPanes[r.activeFrameID]; paneID != "" {
-			alive, err := r.cfg.Backend.PaneAlive(paneID)
-			if err != nil && !isMissingPaneErr(err) {
-				// A transient probe failure (e.g. "context deadline exceeded"
-				// when the backend is slow under load) is NOT death — re-probe on the
-				// next tick instead of evicting a live session.
-				slog.Warn("runtime: active frame pane probe transient error (ignored)",
-					"pane", e.Pane, "target", paneID, "owner", r.activeFrameID, "err", err)
-				return
-			}
-			if err == nil && alive {
-				return
-			}
-			// Genuine death: either err==nil && !alive (dead pane kept by
-			// remain-on-exit) or isMissingPaneErr(err) (pane_id vanished).
-			ev := state.EvPaneDied{Pane: e.Pane, OwnerFrameID: r.activeFrameID}
-			slog.Info("runtime: active frame pane died",
-				"pane", e.Pane, "target", paneID, "owner", ev.OwnerFrameID, "err", err)
-			r.Enqueue(ev)
-			return
-		}
-	}
-	target := substitutePlaceholdersString(e.Pane, r.cfg.SessionName, r.cfg.RoostExe)
-	if alive, err := r.cfg.Backend.PaneAlive(target); err == nil && !alive {
-		ev := state.EvPaneDied{Pane: e.Pane}
-		if e.Pane == "{sessionName}:0.1" {
-			ev.OwnerFrameID = r.findPaneOwner(target)
-		}
-		slog.Info("runtime: pane alive check failed",
-			"pane", e.Pane, "target", target, "owner", ev.OwnerFrameID)
-		r.Enqueue(ev)
 	}
 }
 
@@ -434,28 +347,6 @@ func (r *Runtime) snapshotSessions() []SessionSnapshot {
 	return out
 }
 
-// activeStatusLine returns the View().StatusLine of whichever session
-// is currently shown in pane 0.0. Empty when no session is active
-// or no driver matches.
-func (r *Runtime) activeStatusLine() string {
-	if r.mainPaneSession == "" {
-		return ""
-	}
-	sess, ok := r.state.Sessions[r.mainPaneSession]
-	if !ok {
-		return ""
-	}
-	frame, ok := sessionActiveFrame(sess)
-	if !ok {
-		return ""
-	}
-	drv := state.GetDriver(frame.Command)
-	if drv == nil {
-		return ""
-	}
-	return drv.View(frame.Driver).StatusLine
-}
-
 // reconcileWindows checks whether each tracked session pane still
 // exists. Two distinct conditions are surfaced:
 //
@@ -468,16 +359,8 @@ func (r *Runtime) activeStatusLine() string {
 //     error: the pane window was destroyed externally (user kill-window).
 //     Emit EvPaneWindowVanished to evict unconditionally — there is
 //     nothing left to inspect.
-//
-// The active frame is skipped because it is swap-paned into arc:0.1
-// and detected reactively via swapSessionIntoMain returning
-// isMissingPaneErr.
 func (r *Runtime) reconcileWindows() {
 	for frameID, target := range r.sessionPanes {
-		if frameID == r.activeFrameID {
-			slog.Debug("runtime: reconcile pane skipped (active)", "frame", frameID, "target", target)
-			continue
-		}
 		dead, code, err := r.cfg.Backend.PaneExitStatus(target)
 		if err != nil {
 			if isMissingPaneErr(err) {
@@ -500,11 +383,4 @@ func (r *Runtime) reconcileWindows() {
 		}
 		r.Enqueue(state.EvFrameCommandExited{FrameID: frameID, ExitCode: code})
 	}
-}
-
-// findPaneOwner returns the FrameID currently active in pane 0.0.
-func (r *Runtime) findPaneOwner(_ string) state.FrameID {
-	slog.Info("runtime: findPaneOwner",
-		"activeFrameID", r.activeFrameID, "mainPaneSession", r.mainPaneSession)
-	return r.activeFrameID
 }

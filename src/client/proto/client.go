@@ -150,7 +150,7 @@ func (c *Client) SendNoWait(cmd Command) error {
 
 // SendWithTimeout is the bounded version — waits up to timeout
 // for a response, but returns nil on success without parsing the
-// body. Used by `arc event` so the hook bridge knows the
+// body. Used by `server event` so the hook bridge knows the
 // daemon accepted the event.
 func (c *Client) SendWithTimeout(cmd Command, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

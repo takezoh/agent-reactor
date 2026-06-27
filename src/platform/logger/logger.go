@@ -24,7 +24,7 @@ var (
 // LogFilePath returns the on-disk path of the global daemon log file.
 // After Init(level) or InitWithDataDir(level, dataDir) has been called,
 // this returns the resolved path. Before Init it returns the default
-// (~/.agent-reactor/arc.log).
+// (~/.agent-reactor/server.log).
 func LogFilePath() string {
 	if logPath != "" {
 		return logPath
@@ -40,9 +40,9 @@ func Init(level string) error {
 }
 
 // Rotate shifts existing log files under dir at process startup:
-// arc.log → arc.log.1, …, up to maxRotations. Must be called
+// server.log → server.log.1, …, up to maxRotations. Must be called
 // before InitWithDataDir so that the file handle opened by Init always
-// points at the freshly-created arc.log inode. Only the coordinator
+// points at the freshly-created server.log inode. Only the coordinator
 // process should call this; subprocess calls to InitWithDataDir append
 // to the coordinator's log file without rotating.
 func Rotate(dir string) {
@@ -80,7 +80,7 @@ func InitWithDataDir(level, dir string) error {
 const maxRotations = 5
 
 // rotateLogs shifts existing log files at startup:
-// arc.log → arc.log.1, arc.log.1 → arc.log.2, … up to maxRotations.
+// server.log → server.log.1, server.log.1 → server.log.2, … up to maxRotations.
 // Errors are silently ignored; missing files are not an error.
 func rotateLogs(logPath string) {
 	_ = os.Remove(fmt.Sprintf("%s.%d", logPath, maxRotations))

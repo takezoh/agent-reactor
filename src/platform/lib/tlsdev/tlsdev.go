@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"net"
 	"net/http"
 	"time"
 )
@@ -31,6 +32,26 @@ func Serve(srv *http.Server, insecure bool, certFile, keyFile string) error {
 		}
 		srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 		return srv.ListenAndServeTLS("", "")
+	}
+}
+
+// ServeListener is Serve's variant for callers that have already bound a
+// listener (so a port-conflict bind error surfaces synchronously to the
+// goroutine that opened the listener, not to the serve loop). Same TLS
+// modes as Serve.
+func ServeListener(srv *http.Server, ln net.Listener, insecure bool, certFile, keyFile string) error {
+	switch {
+	case insecure:
+		return srv.Serve(ln)
+	case certFile != "" && keyFile != "":
+		return srv.ServeTLS(ln, certFile, keyFile)
+	default:
+		cert, err := SelfSignedCert()
+		if err != nil {
+			return err
+		}
+		srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+		return srv.ServeTLS(ln, "", "")
 	}
 }
 

@@ -202,7 +202,7 @@ deny    = ["delete_*"]
 GOOGLE_APPLICATION_CREDENTIALS = "~/.config/gcloud/application_default_credentials.json"
 ```
 
-The map key (`observability`) is the MCP server alias. At container launch arc writes a `.mcp.json` into the project workspace (read-only bind-mount) that routes each configured alias through `arc mcp-exec <alias>`, overriding any project-local `.mcp.json` entry for the same names. No manual `.mcp.json` edits are required.
+The map key (`observability`) is the MCP server alias. At container launch the backend writes a `.mcp.json` into the project workspace (read-only bind-mount) that routes each configured alias through `server mcp-exec <alias>`, overriding any project-local `.mcp.json` entry for the same names. No manual `.mcp.json` edits are required.
 
 `allow`/`deny` patterns match the tool name with `*` as wildcard and use deny-first, default-deny semantics. User-scope and project-scope server maps are merged; project entries override user entries on the same alias.
 

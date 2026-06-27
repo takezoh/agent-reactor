@@ -1,66 +1,61 @@
 # Web client⇄server (`server` + `web`)
 
-The tmux-free system is split into three processes:
+The runtime stack is two processes:
 
-- **`arc daemon`** — the long-lived owner of all sessions. Each session is a pty
-  managed by the daemon (host or devcontainer launch), and the same daemon
-  serves the TUI (`arc`) and the browser via a typed proto over a Unix socket
-  (`-arc-sock`). Sessions outlive any single client and several clients can
-  attach to and share one session.
-- **`server`** — a stateless HTTP/WS gateway in front of the daemon. It owns no
-  sessions; it only translates browser REST/WebSocket traffic into daemon proto
-  calls. Restarting `server` does not lose sessions.
+- **`server`** — the single-process backend. One Go binary that owns both
+  the pty session daemon (typed proto over a Unix socket, `-data-dir`
+  rooted) and the HTTP/WS gateway that translates browser REST/WebSocket
+  traffic into in-process daemon calls. Every session is a pty managed in
+  the same process (host or devcontainer launch); several browser tabs can
+  attach to and share one session. Sessions outlive any single browser
+  client.
 - **`web` (web-client host)** — serves the browser UI (React + xterm.js) and
   reverse-proxies `/api` and `/ws` to `server`, so the browser talks only to
   this one origin. Future native clients connect to `server` directly.
 
 Wire-level detail and the full REST + WebSocket vocabulary live in
-[server gateway internals](../technical/web-gateway.md). Architecture context:
-[remote-client design](../../plans/remote-client-design.md).
+[server gateway internals](../technical/web-gateway.md).
 
 ## Build & run
 
 The fastest path for local dev launches the **entire** stack — an isolated
-arc daemon plus the gateway and web host — together:
+`server` backend plus the web host — together:
 
 ```sh
 make run-dev
-#   → daemon  : $ROOT/.run-dev/arc/arc.sock  (scratch dir, removed on Ctrl-C)
-#     backend : http://127.0.0.1:8443
+#   → backend : http://127.0.0.1:8443  (sock: $ROOT/.run-dev/server/server.sock)
 #     web     : http://127.0.0.1:8080
-#     Open →   http://127.0.0.1:8080/#token=<generated>
-#   Ctrl-C stops all three processes and removes the scratch dir.
+#     Open  →  http://127.0.0.1:8080/
+#   Ctrl-C stops both processes (the scratch dir is preserved by default;
+#   set CLEAN_DATA_DIR=1 to wipe it).
 ```
 
 The scratch data dir means `make run-dev` never collides with the user's
-production `arc` daemon (`~/.agent-reactor/`); the two can run side by side.
-Overrides: `BACKEND_ADDR`, `WEB_ADDR`, `TOKEN`, `ARC_DATA_DIR` (custom
-isolated dir), `KEEP_DATA_DIR=1` (preserve the scratch dir for post-mortem,
-including the daemon log at `<ARC_DATA_DIR>/arc.log`).
+production `server` backend (`~/.agent-reactor/`); the two can run side by
+side. Overrides: `BACKEND_ADDR`, `WEB_ADDR`, `SERVER_DATA_DIR` (custom
+isolated dir), `CLEAN_DATA_DIR=1` (wipe the scratch dir on exit).
 
-Or run the gateway standalone with its own isolated arc daemon:
+Or run the backend + web host standalone:
 
 ```sh
-make build build-server build-web      # → ./arc ./server ./web
+make build-server build-web      # → ./server ./web
 
-# Spawn mode (RECOMMENDED): the gateway forks and owns its own arc daemon
-# under -data-dir. SIGTERM the gateway and the daemon dies with it. The TUI
-# daemon at $HOME/.agent-reactor (if any) is completely untouched.
-# Pick any writable path; the example uses an XDG-style cache dir so the
-# command works for non-root users out of the box.
+# The server binary boots the daemon and a co-resident HTTP/WS gateway in
+# one process under -data-dir. SIGTERM tears down both. Pick any writable
+# path; the example uses an XDG-style cache dir so the command works for
+# non-root users out of the box.
 ./server -addr :8443 -data-dir "$HOME/.cache/agent-reactor-web"
-#   → "agent-reactor backend on https://:8443  arc-sock=…/arc.sock  mode=spawn"
+#   → "agent-reactor backend on https://:8443  sock=…/server.sock"
 
 # Web-client host, pointed at the backend:
 ./web -addr :8080 -server https://127.0.0.1:8443
 ```
 
-The gateway requires explicit daemon configuration (no implicit fallback): pass
-either `-data-dir` (recommended, spawn mode) or `-arc-sock <path>` (attach mode,
-for an externally-managed daemon — e.g. when orchestrating arc with systemd).
-Attaching to `$HOME/.agent-reactor/arc.sock` (the TUI default) is refused unless
-`ARC_ALLOW_SHARED_DAEMON=1` is set, because a gateway-induced wedge there would
-cascade to every TUI session.
+The backend always owns its socket — there is no "attach mode" because the
+gateway is in-process. The socket path is derived from `-data-dir`
+(`<data-dir>/server.sock`); two backends with distinct `-data-dir` values
+run independently, which is what `make run-dev` relies on to stay isolated
+from a user-scope `~/.agent-reactor/` install.
 
 Open `http://<web-host>:8080/#token=<token>` in a browser. The token goes in the
 URL **fragment** (`#…`), not the query string, so it is never sent to a server,

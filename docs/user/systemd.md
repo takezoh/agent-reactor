@@ -1,30 +1,26 @@
 # Run as a systemd service (production)
 
-This guide brings the three-process production stack (`runtime`, `server`,
-`web`) up as per-user systemd units. The dev launcher (`scripts/run-dev.sh`)
-remains the right tool for ad-hoc work — the systemd path is for hosts that
-should restart on crash, autostart on boot, and persist logs through
-`journald`.
+This guide brings the two-process production stack (`server`, `web`) up as
+per-user systemd units. The dev launcher (`scripts/run-dev.sh`) remains the
+right tool for ad-hoc work — the systemd path is for hosts that should
+restart on crash, autostart on boot, and persist logs through `journald`.
 
-> The TUI's data directory (`~/.agent-reactor/`) and the service's
-> (`~/.local/state/agent-reactor/`) are independent — both can run in
-> parallel without interfering.
+> A user-launched `server` backend's data directory (`~/.agent-reactor/`)
+> and the service's (`~/.local/state/agent-reactor/`) are independent — both
+> can run in parallel without interfering.
 
-## Architecture (multi-client model)
+## Architecture (gateway + web host)
 
 ```
-runtime  ── owns sessions, sockets, on-disk state (-data-dir)
+server   ── owns sessions, sockets, on-disk state (-data-dir),
+            and serves the HTTP/WS gateway in the same process
    ▲
-   ├── server    ── HTTP/WS gateway. One of many runtime clients.
-   │      ▲
-   │      └── web    ── browser UI + reverse proxy to server
-   ├── (TUI client)
-   └── (future native clients)
+   └── web    ── browser UI + reverse proxy to server
 ```
 
-Restarting `server` does not lose sessions — sessions live in `runtime`.
-Restarting `runtime` drops every attached client and recreates sessions from
-disk on the next boot.
+Restarting `web` does not lose sessions — sessions live in `server`.
+Restarting `server` drops every attached browser tab and recreates sessions
+from disk on the next boot.
 
 ## Prerequisites
 
@@ -37,27 +33,26 @@ disk on the next boot.
 ## Install
 
 ```sh
-# 1) build the three production binaries + libexec helpers
-make build build-server build-web
+# 1) build the production binaries + libexec helpers
+make build-server build-web
 
 # 2) install binaries (renamed to service vocabulary) and unit files
 make install-systemd
-#   → ~/.local/bin/agent-reactor-runtime
 #   → ~/.local/bin/agent-reactor-server
 #   → ~/.local/bin/agent-reactor-web
 #   → ~/.local/lib/agent-reactor/{reactor-bridge,notify.ps1}
-#   → ~/.config/systemd/user/agent-reactor-{runtime,server,web}.service
+#   → ~/.config/systemd/user/agent-reactor-{server,web}.service
 
 # 3) make services survive logout (boot-time autostart)
 loginctl enable-linger $USER
 
-# 4) start the stack (cascades down to runtime + server)
+# 4) start the stack (cascades down to server)
 systemctl --user daemon-reload
 systemctl --user enable --now agent-reactor-web.service
 ```
 
-The cascade is by `Requires=` / `BindsTo=`: enabling `web` pulls in `server`,
-which pulls in `runtime`. There is no need to enable the lower units
+The cascade is by `Requires=` / `BindsTo=`: enabling `web` pulls in
+`server` (the daemon + gateway). There is no need to enable the lower unit
 separately.
 
 ## Connect from a browser
@@ -81,24 +76,25 @@ deleting the file and restarting `agent-reactor-server`.
 ## Logs
 
 ```sh
-journalctl --user -u agent-reactor-runtime -f
-journalctl --user -u agent-reactor-server  -f
-journalctl --user -u agent-reactor-web     -f
+journalctl --user -u agent-reactor-server -f
+journalctl --user -u agent-reactor-web    -f
 ```
+
+The backend's slog output is appended to
+`~/.local/state/agent-reactor/server.log` (rotated per startup), and its
+session socket is at `~/.local/state/agent-reactor/server.sock`.
 
 ## Verify the cascade
 
 ```sh
-# stopping runtime cascades down: server and web both stop within a few seconds.
-systemctl --user stop agent-reactor-runtime
-systemctl --user status agent-reactor-server  # → inactive
+# stopping server cascades down: web stops within a few seconds.
+systemctl --user stop agent-reactor-server
 systemctl --user status agent-reactor-web     # → inactive
 
-# restart server alone — runtime stays active, sessions survive.
-systemctl --user start agent-reactor-runtime
-systemctl --user start agent-reactor-web      # cascades server too
-systemctl --user restart agent-reactor-server
-# (existing browser tab keeps its session list; server reconnect happens transparently)
+# restart web alone — server stays active, sessions survive.
+systemctl --user start agent-reactor-server
+systemctl --user restart agent-reactor-web
+# (existing browser tab keeps its session list; web reconnect is transparent)
 ```
 
 ## LAN / external exposure
@@ -179,9 +175,9 @@ open on the same port.
 
 ```sh
 systemctl --user disable --now agent-reactor-web.service
-systemctl --user stop agent-reactor-server.service agent-reactor-runtime.service
-rm ~/.config/systemd/user/agent-reactor-{runtime,server,web}.service
-rm ~/.local/bin/agent-reactor-{runtime,server,web}
+systemctl --user stop agent-reactor-server.service
+rm ~/.config/systemd/user/agent-reactor-{server,web}.service
+rm ~/.local/bin/agent-reactor-{server,web}
 rm -rf ~/.local/lib/agent-reactor
 # Optionally also drop persistent state (sessions, token, logs):
 rm -rf ~/.local/state/agent-reactor

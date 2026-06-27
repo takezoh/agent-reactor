@@ -11,7 +11,7 @@ import (
 )
 
 // Client wraps proto.Client with session management methods.
-// All proto.Client methods (Send, Close, Events, Peer*, SendEvent, etc.)
+// All proto.Client methods (Send, Close, Events, SendEvent, etc.)
 // are available through embedding.
 type Client struct {
 	*proto.Client
@@ -49,14 +49,14 @@ func (c *Client) StopSession(id string) error {
 	return err
 }
 
-// ListSessions returns the current session table, active session id,
-// active occupant kind, and the list of enabled runtime feature flags.
-func (c *Client) ListSessions() ([]proto.SessionInfo, string, string, []string, error) {
+// ListSessions returns the current session table, active session id, and the
+// list of enabled runtime feature flags.
+func (c *Client) ListSessions() ([]proto.SessionInfo, string, []string, error) {
 	r, err := sendJSONEvent[proto.RespSessions](c.Client, state.EventListSessions, nil)
 	if err != nil {
-		return nil, "", "", nil, err
+		return nil, "", nil, err
 	}
-	return r.Sessions, r.ActiveSessionID, r.ActiveOccupant, r.Features, nil
+	return r.Sessions, r.ActiveSessionID, r.Features, nil
 }
 
 // PreviewSession swaps a session into pane 0.0 without focusing it.
@@ -83,31 +83,9 @@ func (c *Client) PreviewProject(project string) error {
 	return err
 }
 
-// FocusPane focuses the named control pane.
-func (c *Client) FocusPane(pane string) error {
-	_, err := sendJSONEvent[proto.RespOK](c.Client, state.EventFocusPane, map[string]string{"pane": pane})
-	return err
-}
-
-// LaunchTool tells the daemon to display a popup running the named tool.
-func (c *Client) LaunchTool(toolName string, args map[string]string) error {
-	m := map[string]string{"tool": toolName}
-	for k, v := range args {
-		m[k] = v
-	}
-	_, err := sendJSONEvent[proto.RespOK](c.Client, state.EventLaunchTool, m)
-	return err
-}
-
 // Shutdown tells the daemon to terminate.
 func (c *Client) Shutdown() error {
 	_, err := sendJSONEvent[proto.RespOK](c.Client, state.EventShutdown, nil)
-	return err
-}
-
-// Detach asks the daemon to detach the backend client (legacy).
-func (c *Client) Detach() error {
-	_, err := sendJSONEvent[proto.RespOK](c.Client, state.EventDetach, nil)
 	return err
 }
 
@@ -141,28 +119,6 @@ func (c *Client) ForkSession(sessionID string) (string, error) {
 		return "", err
 	}
 	return r.SessionID, nil
-}
-
-// ActivateOccupant changes what occupies the main pane (0.1).
-func (c *Client) ActivateOccupant(kind, sessionID, frameID string) error {
-	_, err := sendJSONEvent[proto.RespOK](c.Client, state.EventActivateOccupant, state.ActivateOccupantParams{
-		Kind:      state.OccupantKind(kind),
-		SessionID: sessionID,
-		FrameID:   frameID,
-	})
-	return err
-}
-
-// ActivateLog respawns pane 0.1 with the log TUI.
-func (c *Client) ActivateLog() error { return c.ActivateOccupant("log", "", "") }
-
-// ActivateMain restores pane 0.1 to the main TUI.
-func (c *Client) ActivateMain() error { return c.ActivateOccupant("main", "", "") }
-
-// StatusLineClick notifies the daemon that the user clicked a named region.
-func (c *Client) StatusLineClick(rangeName string) error {
-	_, err := sendJSONEvent[proto.RespOK](c.Client, state.EventStatusLineClick, map[string]string{"range": rangeName})
-	return err
 }
 
 // canonicalProjectPath returns the canonical absolute path for a project directory.

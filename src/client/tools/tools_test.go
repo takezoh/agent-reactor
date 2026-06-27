@@ -58,7 +58,7 @@ func TestGetReturnsHiddenTool(t *testing.T) {
 
 func TestPushCommandsHiddenWhenNoDriverFrame(t *testing.T) {
 	// Without MainHasDriverFrame, no command: entries are registered.
-	r := DefaultRegistry(features.Set{features.Peers: true}, PaletteContext{
+	r := DefaultRegistry(features.Set{}, PaletteContext{
 		Scope:        ScopeProject,
 		PushCommands: []string{"shell", "vim"},
 	})
@@ -73,7 +73,7 @@ func TestPushCommandsHiddenWhenNoDriverFrame(t *testing.T) {
 }
 
 func TestPushCommandsVisibleWhenMainHasDriverFrame(t *testing.T) {
-	r := DefaultRegistry(features.Set{features.Peers: true}, PaletteContext{
+	r := DefaultRegistry(features.Set{}, PaletteContext{
 		Scope:              ScopeProject,
 		MainHasDriverFrame: true,
 		PushCommands:       []string{"shell", "vim"},
@@ -145,13 +145,13 @@ func TestForkVisibleWhenForkableDriver(t *testing.T) {
 }
 
 func TestStandardScopeOmitsProjectTools(t *testing.T) {
-	r := DefaultRegistry(features.Set{features.Peers: true})
+	r := DefaultRegistry(features.Set{})
 	for _, name := range []string{"command: shell", "fork-session"} {
 		if r.Get(name) != nil {
 			t.Errorf("standard scope: %q should not be registered", name)
 		}
 	}
-	for _, name := range []string{"detach", "shutdown", "new-session"} {
+	for _, name := range []string{"shutdown", "new-session"} {
 		if r.Get(name) == nil {
 			t.Errorf("standard scope: %q should be registered", name)
 		}
@@ -159,8 +159,8 @@ func TestStandardScopeOmitsProjectTools(t *testing.T) {
 }
 
 func TestProjectScopeOmitsStandardOnlyTools(t *testing.T) {
-	r := DefaultRegistry(features.Set{features.Peers: true}, PaletteContext{Scope: ScopeProject})
-	for _, name := range []string{"detach", "shutdown", "create-project", "stop-session", "send-to-session", "command: shell"} {
+	r := DefaultRegistry(features.Set{}, PaletteContext{Scope: ScopeProject})
+	for _, name := range []string{"shutdown", "create-project", "stop-session", "command: shell"} {
 		if r.Get(name) != nil {
 			t.Errorf("project scope: %q should not be registered", name)
 		}

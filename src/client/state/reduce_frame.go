@@ -20,33 +20,18 @@ func reduceActivateFrame(s State, connID ConnID, reqID string, p ActivateFramePa
 		return s, []Effect{errResp(connID, reqID, ErrCodeNotFound, "frame not found")}
 	}
 
-	frameChanged := sess.ActiveFrameID != fid
-	needOccupantSwitch := s.ActiveSession == sid && s.ActiveOccupant != OccupantFrame
-
-	if !frameChanged && !needOccupantSwitch {
+	if sess.ActiveFrameID == fid {
 		return s, []Effect{okResp(connID, reqID, nil)}
 	}
 
-	effs := []Effect{okResp(connID, reqID, nil)}
+	sess = pushMRU(sess, sess.ActiveFrameID)
+	sess.ActiveFrameID = fid
+	s.Sessions = cloneSessions(s.Sessions)
+	s.Sessions[sid] = sess
 
-	if frameChanged {
-		sess = pushMRU(sess, sess.ActiveFrameID)
-		sess.ActiveFrameID = fid
-		s.Sessions = cloneSessions(s.Sessions)
-		s.Sessions[sid] = sess
-		effs = append(effs, EffPersistSnapshot{})
+	return s, []Effect{
+		okResp(connID, reqID, nil),
+		EffPersistSnapshot{},
+		EffBroadcastSessionsChanged{},
 	}
-	effs = append(effs, EffBroadcastSessionsChanged{})
-
-	if s.ActiveSession == sid {
-		var pre []Effect
-		s, pre = ensureMainAtVisibleSlot(s)
-		s.ActiveOccupant = OccupantFrame
-		effs = append(effs, pre...)
-		effs = append(effs,
-			EffActivateSession{SessionID: sid, Reason: EventActivateFrame},
-			EffSyncStatusLine{Line: ""},
-		)
-	}
-	return s, effs
 }

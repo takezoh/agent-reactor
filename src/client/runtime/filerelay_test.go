@@ -107,7 +107,7 @@ func TestWatchFileIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	fr := newTestFileRelay(t)
 
-	path := filepath.Join(dir, "arc.log")
+	path := filepath.Join(dir, "server.log")
 	if err := os.WriteFile(path, []byte("line\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -160,9 +160,7 @@ func TestBroadcastRaceWithConnChurn(t *testing.T) {
 	}
 
 	r := New(Config{
-		SessionName: "reactor-test",
-		RoostExe:    "/usr/bin/roost",
-		Backend:     newFakeBackend(),
+		Backend: newFakeBackend(),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = r.Run(ctx) }()

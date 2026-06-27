@@ -308,9 +308,8 @@ func (d ClaudeDriver) handleUserPromptSubmit(cs ClaudeState, hp hookPayload, now
 //   - ✳ (U+2733) prefix → agent is idle, waiting for user input
 //   - Braille spinner (U+2800–U+28FF) prefix → agent is working
 //
-// Status transitions trigger EffNotify{NotifyKindDone} automatically via
-// stepDriver's ClassifyStatusTransition diff, so this function returns no
-// effects of its own.
+// Status transitions are not emitted as effects here — the driver mutates
+// its DriverState directly so the next View() call reflects the new status.
 func (d ClaudeDriver) handleWindowTitle(cs ClaudeState, title string, now time.Time) ClaudeState {
 	if title == cs.LastWindowTitle {
 		return cs

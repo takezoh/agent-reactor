@@ -4,7 +4,7 @@ This is the canonical overview of the system: its scope, design principles, and 
 
 ## Scope
 
-agent-reactor's client (run via the `arc` command) is a **session lifecycle manager — not an agent orchestrator**. It does not control what agents do; it gives you visibility and fast access to every agent session from a single TUI (originally tmux-backed, now driven by an in-process pty multiplexer — see ADR 0004). The separate `orchestrator` binary *does* drive agents autonomously against an issue tracker — a different concern in a different layer. This split is the top-level boundary the layer structure below enforces.
+agent-reactor's client (shipped as the `server` binary that runs both the daemon and the HTTP/WS gateway in one process) is a **session lifecycle manager — not an agent orchestrator**. It does not control what agents do; it gives you visibility and fast access to every agent session through the embedded HTTP/WS gateway and its browser UI (driven by an in-process pty multiplexer — see ADR 0004). The separate `orchestrator` binary *does* drive agents autonomously against an issue tracker — a different concern in a different layer. This split is the top-level boundary the layer structure below enforces.
 
 ## Design Principles
 
@@ -22,7 +22,7 @@ The **core principles** below are normative for every layer that owns a decision
 A layer's *role* decides how it realizes the core. The canonical detail lives in the per-layer deep dive linked under [Layer Structure](#layer-structure).
 
 - **Decision-loop layers — `client/` and `orchestrator/` — realize the core as strict Functional Core / Imperative Shell.** Each is a pure `Reduce(state, event) → (state', []Effect)` over an **immutable `State` (no mutex)**, interpreted by a single event-loop shell that owns all I/O and live handles (workers, timers) in id→handle maps. Both enforce no-mutex on the functional core via `forbidigo` (`client/state`, `orchestrator/scheduler`). Time enters `Reduce` as a value, never read from the wall clock inside it. Observability reads an immutable published snapshot **lock-free** (`atomic.Pointer[State]`), so there is no lock to contend or time out.
-  - **`client/`** adds: value-type Driver plugins (per-frame `DriverState` round-trips through `Driver.Step`); Driver/Subsystem **isolation** keeping tool-specific concepts out of `state/`, `runtime/`, `tui/`, `proto/`, `sandbox/`. The only synchronous I/O permitted inside `Reduce` is bounded read-only filesystem stat. **Routing isolation** is the no-fabricated-fallbacks principle applied to multiplexed subsystems: a backend that fronts one app-server connection for many frames must bind each server thread to the frame that *initiated* it, never to an inferred/active frame, so one agent's output cannot surface in another agent's session (pinned by the `runtime/subsystem/stream` routing contract + fuzz — see [stream backend testing](docs/technical/client/stream-backend-testing.md)). Full detail: [client deep dive](docs/technical/client/README.md).
+  - **`client/`** adds: value-type Driver plugins (per-frame `DriverState` round-trips through `Driver.Step`); Driver/Subsystem **isolation** keeping tool-specific concepts out of `state/`, `runtime/`, `proto/`, `sandbox/`. The only synchronous I/O permitted inside `Reduce` is bounded read-only filesystem stat. **Routing isolation** is the no-fabricated-fallbacks principle applied to multiplexed subsystems: a backend that fronts one app-server connection for many frames must bind each server thread to the frame that *initiated* it, never to an inferred/active frame, so one agent's output cannot surface in another agent's session (pinned by the `runtime/subsystem/stream` routing contract + fuzz — see [stream backend testing](docs/technical/client/stream-backend-testing.md)). Full detail: [client deep dive](docs/technical/client/README.md).
   - **`orchestrator/`** adds: **single-authority** (`ErrDuplicateDispatch` enforces SPEC §7.4); **agent-agnostic** dispatch (codex and `claude-app-server` emit one uniform event sequence); **reconcile = truth reconciliation** (agents transition issue state autonomously; reconcile re-reads the tracker and detects it). `scheduler.Reduce` returns `[]Effect`; the shell in `scheduler.go` interprets them and feeds I/O results back as events. Full detail: [orchestrator deep dive](docs/technical/orchestrator/README.md).
 - **`platform/` is a library layer, not a decision loop, so FC/IS does not apply** — its testability comes from **dependency-injection seams** instead: external dependencies (`exec`, docker, network) sit behind injectable interfaces or env-var overrides (e.g. `lib/github.Runner`) so callers substitute fakes in tests. It is the base layer (imports neither `client/` nor `orchestrator/`); tool-specific knowledge (paths, env-var names, CLI invocations) is concentrated here so it stays out of the generic layers above; the agent-launch primitive (`agentlaunch`) is agent-agnostic; wire-format and persistence types are stdlib-only. Enforcement (import boundaries, name-literal leaks, no-mutex) is catalogued in [code & architecture enforcement](docs/technical/code-enforcement.md).
 
@@ -36,10 +36,10 @@ Three top-level trees under `src/`:
 
 ```
 platform/      Shared infrastructure — the client, server, and orchestrator all depend on this
-client/        client-specific code — TUI, state machine, runtime, drivers
+client/        client-specific code — state machine, runtime, drivers, IPC, web frontend
 orchestrator/  Symphony SPEC implementation — poll/dispatch/reconcile + observability HTTP
-server/        HTTP/WS gateway — stateless proxy fronting the arc daemon over its Unix socket
-cmd/           Binary entry points — cmd/arc/, cmd/server/, cmd/reactor-bridge/, cmd/orchestrator/, cmd/claude-app-server/
+server/        HTTP/WS gateway — stateless proxy fronting the in-process daemon over its Unix socket
+cmd/           Binary entry points — cmd/server/, cmd/reactor-bridge/, cmd/orchestrator/, cmd/claude-app-server/
 ```
 
 **Import direction**: `cmd/*` → `client/*` + `orchestrator/*` + `server/*` + `platform/*` → (no reverse). The layer boundaries are enforced by `depguard` (see `src/.golangci.yml`, rules `platform-no-client-or-orchestrator`, `client-no-orchestrator`, and `server-layer`):
@@ -62,17 +62,17 @@ The full set of `depguard` rules (including the intra-`client/` isolation rules)
 ### The layers at a glance
 
 - **[`platform/`](docs/technical/platform/README.md)** — shared base: the agent-launch primitive (`agentlaunch`: argv-based `Spawn` + `SplitArgs`, host/container `Dispatcher`, on `procgroup`), sandbox backends, host-exec and MCP-proxy brokers, path translation, logger, tool wrappers (`lib/<tool>`), trackers, metrics, credential providers. Tool-specific knowledge is allowed here so it stays out of the generic layers above. Agent-agnostic launch lives here; per-agent command construction stays in `lib/<tool>`, while transport, `codexclient.Conn`, and `Handler` remain per-layer.
-- **[`client/`](docs/technical/client/README.md)** — all of the client: the pure `state/` domain core, `runtime/` imperative shell, value-type `driver/` plugins, `runtime/subsystem/` (`cli` and `stream`), the `proto/` IPC wire layer, and the Bubbletea `tui/`. Terminology, the design-decision log, and the full dependency graph are documented there.
-- **[`orchestrator/`](docs/technical/orchestrator/README.md)** — a TUI-less, single-authority service implementing the [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md): `workflowfile/`, `wfconfig/`, `scheduler/` (poll/dispatch/reconcile), `workspace/`, `agent/`, `prompt/`, `httpserver/`, `lineargql/`. It shares `platform/` with the client but does not import `client/`. Per-issue workspaces are local git clones of the source repo (GitHub); issue state lives in the tracker (Linear or GitHub). SPEC ↔ package correspondence and deviation posture: [`docs/technical/orchestrator/symphony-conformance.md`](docs/technical/orchestrator/symphony-conformance.md).
-- **`server/`** — HTTP/WS gateway that fronts the `arc daemon` over its Unix socket; stateless proxy bridging the browser front-end to `client/runtime`. Does not import `orchestrator/*`. See [Server gateway (server/*)](#server-gateway-server) below for full detail.
+- **[`client/`](docs/technical/client/README.md)** — all of the client: the pure `state/` domain core, `runtime/` imperative shell, value-type `driver/` plugins, `runtime/subsystem/` (`cli` and `stream`), the `proto/` IPC wire layer, and the `web/` browser frontend assets. Terminology, the design-decision log, and the full dependency graph are documented there.
+- **[`orchestrator/`](docs/technical/orchestrator/README.md)** — a single-authority headless service implementing the [Symphony SPEC](https://github.com/openai/symphony/blob/main/SPEC.md): `workflowfile/`, `wfconfig/`, `scheduler/` (poll/dispatch/reconcile), `workspace/`, `agent/`, `prompt/`, `httpserver/`, `lineargql/`. It shares `platform/` with the client but does not import `client/`. Per-issue workspaces are local git clones of the source repo (GitHub); issue state lives in the tracker (Linear or GitHub). SPEC ↔ package correspondence and deviation posture: [`docs/technical/orchestrator/symphony-conformance.md`](docs/technical/orchestrator/symphony-conformance.md).
+- **`server/`** — HTTP/WS gateway that fronts the in-process session daemon over its Unix socket; stateless proxy bridging the browser front-end to `client/runtime`. Does not import `orchestrator/*`. See [Server gateway (server/*)](#server-gateway-server) below for full detail.
 
 ### Server gateway (server/*)
 
-`server/*` is the HTTP/WS façade that fronts a long-lived `arc daemon`
+`server/*` is the HTTP/WS façade that fronts the co-resident session daemon
 (the `client/runtime` event loop) over its Unix socket. It is a **stateless
 proxy** — sessions and side effects live in the daemon — so the same daemon
-can be reached by the TUI (`cmd/arc`), the browser front-end (`cmd/server` +
-xterm.js), and future native clients with consistent behaviour.
+can be reached by the browser front-end (`cmd/server` + xterm.js) and future
+native clients with consistent behaviour.
 
 - `server/web/daemon_client.go` wraps `proto.Client` with an eager dial +
   supervisor goroutine. `Health()` / `LastError()` / `LastAttemptAt()` give
@@ -87,12 +87,13 @@ xterm.js), and future native clients with consistent behaviour.
   `proto.CmdEvent{Event: state.Event{Create,List,Stop}Session}` via the
   daemon client; cols/rows are packed into `state.LaunchOptions`
   ([ADR 0005](docs/adr/0005-cmd-server-as-arc-daemon-gateway.md), FR-022).
-- `cmd/server/main.go` is the binary entry point: it resolves the daemon
-  socket via `platform/socketpath.ResolveDaemonSocket(-arc-sock, ARC_SOCKET,
-  ~/.agent-reactor/arc.sock)`, boots `DaemonClient`, and serves
+- `cmd/server/main.go` is the binary entry point for the merged backend: it
+  boots the coordinator (event loop + IPC socket listener + persistence) and
+  a co-resident gateway goroutine. The gateway resolves the daemon socket
+  via `platform/socketpath.ResolveDaemonSocket(-server-sock, ARC_SOCKET,
+  ~/.agent-reactor/server.sock)`, dials it via `DaemonClient`, and serves
   `server/web.NewMux(daemon, token)` behind a bearer-token + ws-ticket gate
-  (auth invariant unchanged from the previous in-process design;
-  [ADR 0017](docs/adr/0017-platform-socketpath-helper.md)).
+  ([ADR 0017](docs/adr/0017-platform-socketpath-helper.md)).
 - `server/session` was removed in A1-ε
   ([ADR 0014](docs/adr/0014-server-session-legacy-build-tag.md), superseded);
   the directory and its `legacy_session` build tag no longer exist.
@@ -101,7 +102,8 @@ xterm.js), and future native clients with consistent behaviour.
 or any other platform primitive that controls agent I/O directly. All session
 state and side effects remain in the daemon. The server layer is purely a
 protocol translator: JSON-over-HTTP/WS on the external face, typed `proto`
-IPC on the daemon face.
+IPC on the daemon face. Session lifecycle (create / attach / detach / stop)
+is driven by browser-originated REST + WebSocket traffic against this gateway.
 
 **Import direction** (enforced by `depguard` rule `server-layer`,
 [ADR 0016](docs/adr/0016-depguard-server-layer-rule.md)): `server/*` may
@@ -116,4 +118,4 @@ Related ADRs: [0005](docs/adr/0005-cmd-server-as-arc-daemon-gateway.md) (cmd/ser
 
 Files matching `client/state/reduce_*.go` host state-machine dispatch tables. They are exempt from the 80-line function limit (see [AGENTS.md](AGENTS.md)) because forced extraction of dispatch arms fragments the state machine without adding clarity. File-length (500 lines) and naming rules still apply.
 
-The daemon and TUI are separate processes communicating via typed IPC (`proto`) over a Unix socket, with two physical endpoints (host + container). Details, the per-package breakdown, terminology, and the design-decision log are in the [client deep dive](docs/technical/client/README.md).
+The daemon is reached by clients (the `server` HTTP/WS gateway and any future native client) via typed IPC (`proto`) over a Unix socket, with two physical endpoints (host + container). Details, the per-package breakdown, terminology, and the design-decision log are in the [client deep dive](docs/technical/client/README.md).

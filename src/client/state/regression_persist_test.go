@@ -158,7 +158,7 @@ func TestReduceFrameCommandExited_IdempotentAfterStopped(t *testing.T) {
 // fires SessionEnd → status=stopped before the pty actually closes.
 // When the pane subsequently exits cleanly (code 0/129/130/137/143),
 // the reducer must still evict the frame. Otherwise the session
-// sticks in the list forever (the arc web server has no fast
+// sticks in the list forever (the agent-reactor server has no fast
 // EvPaneDied path and relies entirely on reconcileWindows →
 // EvFrameCommandExited for eviction).
 func TestReduceFrameCommandExited_IntentionalExitEvictsEvenWhenDriverStopped(t *testing.T) {

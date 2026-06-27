@@ -19,10 +19,8 @@ import (
 func startRuntimeWithIPC(t *testing.T, ctx context.Context) (*Runtime, string) { //nolint:unparam
 	t.Helper()
 	dir := t.TempDir()
-	sock := filepath.Join(dir, "arc.sock")
+	sock := filepath.Join(dir, "server.sock")
 	r := New(Config{
-		SessionName:  "reactor-test",
-		RoostExe:     "/usr/bin/roost",
 		DataDir:      dir,
 		TickInterval: 10 * time.Second,
 		Backend:      newFakeBackend(),

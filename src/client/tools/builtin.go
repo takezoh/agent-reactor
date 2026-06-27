@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/takezoh/agent-reactor/client/lib/editor"
-	"github.com/takezoh/agent-reactor/client/proto"
 	"github.com/takezoh/agent-reactor/client/state"
 	"github.com/takezoh/agent-reactor/platform/features"
 )
@@ -21,7 +19,7 @@ type PaletteScope int
 
 const (
 	// ScopeStandard registers project-independent tools (new-session,
-	// create-project, stop-session, detach, shutdown, send-to-session).
+	// create-project, stop-session, detach, shutdown).
 	ScopeStandard PaletteScope = iota
 	// ScopeProject registers project-dependent tools (new-session,
 	// push-driver, fork-session) for operating within an active session.
@@ -45,9 +43,12 @@ type PaletteContext struct {
 }
 
 // DefaultRegistry returns the built-in palette tool set.
-// feats gates optional tools behind runtime feature flags.
+// feats gates optional tools behind runtime feature flags (currently unused
+// after the peers feature removal, but kept on the signature so callers do
+// not need to be updated atomically with every flag churn).
 // pctx gates per-invocation context-sensitive tools; zero value omits them.
 func DefaultRegistry(feats features.Set, pctx ...PaletteContext) *Registry {
+	_ = feats
 	r := NewRegistry()
 	var pc PaletteContext
 	if len(pctx) > 0 {
@@ -55,7 +56,7 @@ func DefaultRegistry(feats features.Set, pctx ...PaletteContext) *Registry {
 	}
 	registerNewSession(r)
 	if pc.Scope == ScopeStandard {
-		registerStandardTools(r, feats)
+		registerStandardTools(r)
 	}
 	if pc.Scope == ScopeProject {
 		registerProjectTools(r, pc)
@@ -88,7 +89,7 @@ func registerNewSession(r *Registry) {
 	})
 }
 
-func registerStandardTools(r *Registry, feats features.Set) {
+func registerStandardTools(r *Registry) {
 	r.Register(Tool{
 		Name:        "create-project",
 		Description: "Create new project dir and start session",
@@ -109,22 +110,12 @@ func registerStandardTools(r *Registry, feats features.Set) {
 		},
 	})
 	r.Register(Tool{
-		Name:        "detach",
-		Description: "Detach (keep session)",
-		Run: func(ctx *ToolContext, args map[string]string) (*ToolInvocation, error) {
-			return nil, ctx.Client.Detach()
-		},
-	})
-	r.Register(Tool{
 		Name:        "shutdown",
 		Description: "Shutdown (discard sessions)",
 		Run: func(ctx *ToolContext, args map[string]string) (*ToolInvocation, error) {
 			return nil, ctx.Client.Shutdown()
 		},
 	})
-	if feats.On(features.Peers) {
-		registerSendToSession(r)
-	}
 }
 
 func registerProjectTools(r *Registry, pc PaletteContext) {
@@ -134,7 +125,7 @@ func registerProjectTools(r *Registry, pc PaletteContext) {
 				Name:        "command: " + cmd,
 				Description: "Push " + cmd + " onto active session",
 				Run: func(ctx *ToolContext, _ map[string]string) (*ToolInvocation, error) {
-					_, activeID, _, _, err := ctx.Client.ListSessions()
+					_, activeID, _, err := ctx.Client.ListSessions()
 					if err != nil || activeID == "" {
 						return nil, fmt.Errorf("no active session")
 					}
@@ -148,7 +139,7 @@ func registerProjectTools(r *Registry, pc PaletteContext) {
 			Name:        "fork-session",
 			Description: "Fork active session (new branch)",
 			Run: func(ctx *ToolContext, _ map[string]string) (*ToolInvocation, error) {
-				_, activeID, _, _, err := ctx.Client.ListSessions()
+				_, activeID, _, err := ctx.Client.ListSessions()
 				if err != nil || activeID == "" {
 					return nil, fmt.Errorf("no active session")
 				}
@@ -157,64 +148,6 @@ func registerProjectTools(r *Registry, pc PaletteContext) {
 			},
 		})
 	}
-}
-
-func registerSendToSession(r *Registry) {
-	r.Register(Tool{
-		Name:        "send-to-session",
-		Description: "Send message to a session (appears as [peer-msg from=palette])",
-		Params: []Param{
-			{
-				Name: "target",
-				Options: func(ctx *ToolContext) []string {
-					sessions, _, _, _, err := ctx.Client.ListSessions()
-					if err != nil {
-						return nil
-					}
-					opts := make([]string, 0, len(sessions))
-					for _, s := range sessions {
-						subtitle := s.View.Card.Subtitle
-						var label string
-						if subtitle != "" {
-							label = fmt.Sprintf("%s (%s)", s.Name(), subtitle)
-						} else {
-							label = s.Name()
-						}
-						opts = append(opts, s.ID+":"+label)
-					}
-					return opts
-				},
-			},
-			{
-				Name:    "text",
-				Options: func(ctx *ToolContext) []string { return nil },
-			},
-		},
-		Run: runSendToSession,
-	})
-}
-
-func runSendToSession(ctx *ToolContext, args map[string]string) (*ToolInvocation, error) {
-	target := args["target"]
-	text := args["text"]
-	if target == "" || text == "" {
-		return nil, fmt.Errorf("target and text are required")
-	}
-	sessionID := target
-	if idx := strings.Index(target, ":"); idx > 0 {
-		sessionID = target[:idx]
-	}
-	// Palette has no ROOST_FRAME_ID so we cannot route through
-	// peer.send (which requires a frame-to-frame link). Instead,
-	// push the message into the session's pane via surface.send_text,
-	// formatted so the receiving agent recognises it as a peer message.
-	formatted := "[peer-msg from=palette]\n" + text
-	bgCtx := context.Background()
-	_, err := ctx.Client.Send(bgCtx, proto.CmdSurfaceSendText{
-		SessionID: sessionID,
-		Text:      formatted,
-	})
-	return nil, err
 }
 
 func runCreateProject(ctx *ToolContext, args map[string]string) (*ToolInvocation, error) {

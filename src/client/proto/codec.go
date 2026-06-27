@@ -121,18 +121,6 @@ func DecodeCommand(env Envelope) (Command, error) {
 	case CmdNameDriverList:
 		var c CmdDriverList
 		return decodeInto(env.Data, &c)
-	case CmdNamePeerSend:
-		var c CmdPeerSend
-		return decodeInto(env.Data, &c)
-	case CmdNamePeerList:
-		var c CmdPeerList
-		return decodeInto(env.Data, &c)
-	case CmdNamePeerSetSummary:
-		var c CmdPeerSetSummary
-		return decodeInto(env.Data, &c)
-	case CmdNamePeerDrainInbox:
-		var c CmdPeerDrainInbox
-		return decodeInto(env.Data, &c)
 	case CmdNameHookEvent:
 		var c CmdHookEvent
 		return decodeInto(env.Data, &c)
@@ -192,12 +180,6 @@ func DecodeResponseByCommand(env Envelope) (Response, error) {
 	case has(probe, "drivers"):
 		var r RespDriverList
 		return decodeResponse(env.Data, &r)
-	case has(probe, "peers"):
-		var r RespPeerList
-		return decodeResponse(env.Data, &r)
-	case has(probe, "messages"):
-		var r RespPeerDrainInbox
-		return decodeResponse(env.Data, &r)
 	}
 	return RespOK{}, nil
 }
@@ -239,9 +221,6 @@ func DecodeEvent(env Envelope) (ServerEvent, error) {
 		return decodeIntoEvent(env.Data, &e)
 	case EvtNameAgentNotification:
 		var e EvtAgentNotification
-		return decodeIntoEvent(env.Data, &e)
-	case EvtNamePeerMessage:
-		var e EvtPeerMessage
 		return decodeIntoEvent(env.Data, &e)
 	case EvtNameSurfaceOutput:
 		var e EvtSurfaceOutput

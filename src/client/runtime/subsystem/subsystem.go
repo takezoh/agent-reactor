@@ -70,7 +70,7 @@ type Subsystem interface {
 type Factory interface {
 	// Ensure returns the Subsystem and its SubsystemID for (sessionID, project, plan).
 	// Idempotent: same sessionID returns the same Subsystem instance so that all
-	// frames in one session (root + peers) share one backend.
+	// frames in one session (root + pushed frames) share one backend.
 	// ctx is used for backend startup (e.g. Stream's app-server dial).
 	// The returned SubsystemID is opaque to callers — only the factory
 	// (and the Subsystem it manages) knows the encoding.

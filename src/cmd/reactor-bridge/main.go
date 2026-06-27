@@ -5,7 +5,10 @@
 //	host-exec <bin>       – PATH shim target (proxies stdio to host via SCM_RIGHTS)
 //	mcp-exec <alias>      – MCP proxy client (relays stdio to host MCP server via SCM_RIGHTS)
 //	secret-run run ...    – secret env-file resolver shim (impersonates "credproxy run")
-//	setup <agent>         – postCreate integration setup (claude / codex / gemini)
+//
+// Agent integration setup (Claude / Codex / Gemini hook registration) is
+// owned by repo-root scripts/setup-{claude,codex,gemini}.sh as of phase F-C;
+// the in-binary `setup <agent>` subcommand has been removed.
 package main
 
 import (
@@ -20,9 +23,6 @@ import (
 	"github.com/takezoh/agent-reactor/client/event"
 	"github.com/takezoh/agent-reactor/platform/appid"
 	"github.com/takezoh/agent-reactor/platform/hostexec"
-	"github.com/takezoh/agent-reactor/platform/lib/claude"
-	"github.com/takezoh/agent-reactor/platform/lib/codex"
-	"github.com/takezoh/agent-reactor/platform/lib/gemini"
 	"github.com/takezoh/agent-reactor/platform/mcpproxy"
 	"github.com/takezoh/agent-reactor/platform/secretenv"
 )
@@ -53,8 +53,6 @@ func main() {
 		err = runHostExec(rest)
 	case "mcp-exec":
 		err = runMCPExec(rest)
-	case "setup":
-		err = runSetup(rest)
 	case "secret-run":
 		err = runSecretRun(rest)
 	case "sockbridge":
@@ -279,22 +277,6 @@ func splitPath(path string) []string {
 	return dirs
 }
 
-func runSetup(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: setup <agent> (claude|codex|gemini)")
-	}
-	switch args[0] {
-	case "claude":
-		return claude.RunSetup()
-	case "codex":
-		return codex.RunSetup()
-	case "gemini":
-		return gemini.RunSetup()
-	default:
-		return fmt.Errorf("setup: unknown agent %q (want claude|codex|gemini)", args[0])
-	}
-}
-
 func usage() {
 	fmt.Fprint(os.Stderr, `Usage: reactor-bridge <subcommand> [args...]
 
@@ -303,7 +285,6 @@ Subcommands:
   host-exec <bin>            Execute a host binary via the hostexec broker
   mcp-exec <alias>           Relay stdio to a host MCP server via the mcpproxy broker
   secret-run run --env-file  Resolve secret env-file and exec command (credproxy shim)
-  setup <agent>              Run agent integration setup (claude|codex|gemini)
   sockbridge                 TCP↔unix socket bridge (fixed-socket; credproxy broker)
 `)
 }

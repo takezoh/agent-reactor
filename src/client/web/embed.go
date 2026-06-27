@@ -1,4 +1,4 @@
-// Package web is the web-client host for the arc server: it embeds the
+// Package web is the web-client host for the agent-reactor server: it embeds the
 // browser client (Vite/React UI built into dist/) and provides Handler, which
 // serves that UI under a strict Content-Security-Policy and reverse-proxies the
 // data plane (/api, /ws) to the headless backend (cmd/server). The browser

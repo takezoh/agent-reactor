@@ -816,8 +816,8 @@ func TestContainerName_shared(t *testing.T) {
 
 // TestContainerName_customPrefix pins the cross-daemon isolation invariant:
 // a non-default NamePrefix MUST flow through ContainerName for both isolation
-// kinds. Two arc daemons configured under distinct prefixes (e.g. the user's
-// "reactor" TUI daemon and scripts/run-dev.sh's "reactor-dev" gateway) must
+// kinds. Two server daemons configured under distinct prefixes (e.g. the user's
+// "reactor" main daemon and scripts/run-dev.sh's "reactor-dev" gateway) must
 // produce non-overlapping container names per project, otherwise the
 // mount-hash drift recreate path would docker rm -f the peer's container.
 func TestContainerName_customPrefix(t *testing.T) {
@@ -1174,7 +1174,7 @@ func TestEnsureInstance_WarmStartReusesExistingContainer(t *testing.T) {
 	}
 }
 
-// Reproduces "arc 起動中に shared→project へ変更し project config を設置したが
+// Reproduces "server 起動中に shared→project へ変更し project config を設置したが
 // host_exec がマージされない": a project container created before the host_exec
 // overlay was configured carries a stale mount-hash, so its mounts drift from the
 // freshly-resolved spec. ensureContainer must discard it and recreate so the new
@@ -1311,8 +1311,8 @@ func TestEnsureInstance_CachedSecondCall(t *testing.T) {
 
 // Shutdown 仕様: shared container も含めてすべて破棄する。Cold start で
 // 必ず新しい container が作られるよう、shutdown は資源を完全に解放する。
-// detach 経路 (EffDetachClient) は DestroyInstance を呼ばないので、warm
-// restart 用に container を残したい場合は detach を使う。
+// ctx-cancel-driven warm restart (EffReleaseFrameSandboxes を emit しない経路)
+// は DestroyInstance を呼ばないので、次回 daemon 起動時に container を adopt できる。
 func TestDestroyInstance_SharedRemoved(t *testing.T) {
 	stopID, rmID := "", ""
 	origStop, origRm := stopContainerFn, removeContainerFn

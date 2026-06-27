@@ -223,7 +223,7 @@ func (r *Runtime) startRestoredTaps() {
 //
 // Drops are logged at Debug (not Warn) because the daemon's own log file is
 // streamed back to clients via FileRelay. Every Warn would be written to
-// arc.log, the FileRelay watcher would observe the write, the sweep would
+// server.log, the FileRelay watcher would observe the write, the sweep would
 // enqueue an internalBroadcastWire, and if internalCh is already saturated
 // the enqueue would drop and emit ANOTHER Warn — a self-sustaining feedback
 // loop that wedges the daemon (observed: 39MB of identical lines at 10/s).

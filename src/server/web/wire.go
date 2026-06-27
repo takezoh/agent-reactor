@@ -1,4 +1,4 @@
-// Package web bridges a browser to arc daemon over WebSocket. wire.go
+// Package web bridges a browser to the server daemon over WebSocket. wire.go
 // encodes daemon-side proto events into the asciicast v2 + control wire
 // the browser UI already speaks, and decodes inbound browser frames
 // into proto.Command values.
@@ -67,21 +67,9 @@ func controlFrame(kind string, code int, data string) []byte {
 // click + CreateSessionForm post-create selectSession) and only need the
 // daemon's notion of activeSessionID as an initial seed via the hello
 // frame.
-//
-// ActiveOccupant IS mirrored on view-update frames (distinct from
-// ActiveSessionID rationale above): the daemon-global occupant of pane 0.1
-// ("main" | "log" | "frame") is a property of the daemon's UI state, NOT a
-// per-session selection. The web palette's push scope (FR-005/FR-006)
-// follows it live so a frame pushed / popped by another client correctly
-// toggles the push segment between enabled and disabled here. Empty string
-// omitted from the wire via omitempty; browser treats absent / unknown
-// value as "no frame" → push scope fail-closed-disables. ADR-0044 forbids
-// adding per-session occupant fields; the daemon-global one carried here
-// is exempt because it is exactly the daemon's single global state.
 type viewUpdateFrame struct {
-	K              string              `json:"k"` // always "v"
-	Sessions       []proto.SessionInfo `json:"sessions"`
-	ActiveOccupant string              `json:"activeOccupant,omitempty"`
+	K        string              `json:"k"` // always "v"
+	Sessions []proto.SessionInfo `json:"sessions"`
 }
 
 // encodeFromSessionsChanged encodes EvtSessionsChanged as a view-update
@@ -91,16 +79,14 @@ type viewUpdateFrame struct {
 // requires `sessions` to be an array, never receives `"sessions":null`.
 //
 // ev.ActiveSessionID is intentionally dropped — see viewUpdateFrame doc.
-// ev.ActiveOccupant IS forwarded (see viewUpdateFrame doc).
 func encodeFromSessionsChanged(ev proto.EvtSessionsChanged) []byte {
 	sessions := ev.Sessions
 	if sessions == nil {
 		sessions = []proto.SessionInfo{}
 	}
 	f := viewUpdateFrame{
-		K:              "v",
-		Sessions:       sessions,
-		ActiveOccupant: ev.ActiveOccupant,
+		K:        "v",
+		Sessions: sessions,
 	}
 	b, err := json.Marshal(f)
 	if err != nil {

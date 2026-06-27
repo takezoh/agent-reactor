@@ -2,14 +2,14 @@
 
 **Run many AI agents in parallel without losing track of any of them.**
 
-Agent Reactor is a TUI / Web control surface for running Claude, Codex, Gemini, and other CLI agents across all your projects at once. It replaces the manual work of opening tabs, remembering which agent is doing what, and checking back for completion — and it can also run agents unattended against an issue tracker.
+Agent Reactor is a web control surface for running Claude, Codex, Gemini, and other CLI agents across all your projects at once. It replaces the manual work of opening tabs, remembering which agent is doing what, and checking back for completion — and it can also run agents unattended against an issue tracker.
 
 ### What it does
 
 - **Launch an agent without typing commands.** Select a project from the list and Reactor handles the directory, environment, and command for you.
 - **See every agent's status at a glance.** Each session shows whether the agent is running, waiting for your input, awaiting tool approval, or idle.
 - **Jump into any session instantly.** Live-preview a session, then press Enter to take over. Supervise dozens of concurrent tasks without losing focus.
-- **Keep agents running after you disconnect.** Sessions live in an in-process pty multiplexer attached to the daemon, so closing the UI or dropping the connection doesn't stop the work.
+- **Keep agents running after you disconnect.** Sessions live in an in-process pty multiplexer owned by the `server` backend, so closing the browser tab or dropping the connection doesn't stop the work.
 - **Run each agent in its own sandbox.** Optional per-project devcontainer with brokered AWS / gcloud / SSH credentials and a policy-gated host-exec channel. Long-lived secrets stay on the host.
 - **Automate end to end.** The orchestrator reads a `WORKFLOW.md`, polls a tracker, and drives agents through issues with no human in the loop.
 
@@ -17,7 +17,7 @@ Agent Reactor is a TUI / Web control surface for running Claude, Codex, Gemini, 
 
 This module builds three binaries from a single Go module, mapping onto a three-layer architecture (`platform/` · `client/` · `orchestrator/`):
 
-- **`arc`** — the interactive TUI for managing agent sessions (pty-multiplexer–backed; the `client` layer)
+- **`server`** — the single-process backend: the pty session daemon that owns every agent session (pty-multiplexer–backed; the `client` layer) plus the HTTP/WS gateway that translates browser REST/WS traffic into in-process daemon calls
 - **`orchestrator`** — the scheduling brain that reads `WORKFLOW.md`, dispatches work to agents, and reconciles state — the `orchestrator` layer
 - **`claude-app-server`** — a stdio JSON-RPC shim that wraps a Claude agent as a drop-in Codex app-server
 
@@ -33,12 +33,14 @@ The layers and their enforced import boundaries are defined in [ARCHITECTURE.md]
 make install
 ```
 
-Installs to `~/.local/bin/arc`. Then:
+Installs to `~/.local/bin/server`. Then:
 
 ```bash
-arc                   # start the daemon and open the TUI
-arc claude setup    # register agent integration (also: codex / gemini)
+server                              # start the backend (daemon + HTTP/WS gateway)
+bash scripts/setup-claude.sh ~/.local/bin/server   # register Claude Code hooks (also: setup-codex.sh / setup-gemini.sh)
 ```
+
+To reach sessions from a browser, run `make run-dev` (boots `server` + `web` together) or follow [web stack (ad-hoc launch)](docs/user/web-server.md).
 
 See [Getting started](docs/user/getting-started.md) for the full walkthrough.
 
@@ -48,6 +50,6 @@ Documentation is organized by **audience × architecture layer** under [`docs/`]
 
 | | Start here |
 |---|---|
-| **Using the tools** | [User guide](docs/user/README.md) — [getting started](docs/user/getting-started.md), [client TUI](docs/user/reactor-tui.md), [orchestrator](docs/user/orchestrator.md), [sandbox](docs/user/sandbox.md) |
+| **Using the tools** | [User guide](docs/user/README.md) — [getting started](docs/user/getting-started.md), [web stack](docs/user/web-server.md), [orchestrator](docs/user/orchestrator.md), [sandbox](docs/user/sandbox.md), [systemd service](docs/user/systemd.md) |
 | **Working in the repo** | [Agent guide](docs/agent/README.md) — [contributing](docs/agent/contributing.md), [WORKFLOW.md authoring](docs/agent/workflow-authoring.md), [testing](docs/agent/testing.md) |
 | **Internals** | [Technical docs](docs/technical/README.md) — [platform/](docs/technical/platform/README.md), [client/](docs/technical/client/README.md), [orchestrator/](docs/technical/orchestrator/README.md) · [ARCHITECTURE.md](ARCHITECTURE.md) |

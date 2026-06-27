@@ -424,7 +424,7 @@ func TestResolveFrameContext_SharedMode_DropsProject(t *testing.T) {
 func TestFrameScopeEnv_DropsContainerScopeAndPlaceholders(t *testing.T) {
 	in := map[string]string{
 		"PATH":               "/opt/agent-reactor/run/hostexec-shims:$PATH",
-		"ROOST_SOCKET":       "/opt/agent-reactor/run/arc.sock",
+		"ROOST_SOCKET":       "/opt/agent-reactor/run/server.sock",
 		"ROOST_DATA_DIR":     "/opt/agent-reactor/run",
 		"SSH_AUTH_SOCK":      "/opt/agent-reactor/run/agent.sock",
 		"AWS_PROFILE":        "prod",

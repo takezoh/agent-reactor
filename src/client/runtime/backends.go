@@ -29,9 +29,6 @@ type PaneLifecycle interface {
 	KillPaneWindow(paneTarget string) error
 	// RespawnPane runs respawn-pane against a dead pane.
 	RespawnPane(target, command string) error
-	// PaneAlive returns true if the named pane is currently alive
-	// (i.e. #{pane_dead} == 0). False on error or dead pane.
-	PaneAlive(target string) (bool, error)
 	// PaneExitStatus reports the exit code of a dead pane via
 	// #{pane_dead_status}. Returns (true, code) when the pane is
 	// dead and exit status was captured; (false, -1) when the pane
@@ -240,7 +237,6 @@ func (noopBackend) ResizeWindow(string, int, int) error       { return nil }
 func (noopBackend) SetStatusLine(string) error                { return nil }
 func (noopBackend) SetEnv(string, string) error               { return nil }
 func (noopBackend) UnsetEnv(string) error                     { return nil }
-func (noopBackend) PaneAlive(string) (bool, error)            { return true, nil }
 func (noopBackend) PaneExitStatus(string) (bool, int, error)  { return false, -1, nil }
 func (noopBackend) RespawnPane(string, string) error          { return nil }
 func (noopBackend) CapturePane(string, int) (string, error)   { return "", nil }

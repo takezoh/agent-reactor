@@ -22,8 +22,6 @@ type spawnDeps struct {
 	backend      PaneBackend
 	launcher     AgentLauncher
 	factories    map[state.LaunchSubsystem]rsubsystem.Factory
-	sessionName  string
-	mainPaneSize func() paneSize
 	sendInternal func(internalEvent)
 	sendEvent    func(state.Event)
 }
@@ -36,8 +34,6 @@ func (r *Runtime) buildSpawnDeps() spawnDeps {
 		backend:      r.cfg.Backend,
 		launcher:     launcher(r.cfg),
 		factories:    r.subsystemFactories,
-		sessionName:  r.cfg.SessionName,
-		mainPaneSize: r.mainPaneSize,
 		sendInternal: r.sendSpawnComplete,
 		sendEvent:    r.Enqueue,
 	}
@@ -106,8 +102,7 @@ func spawnPaneWindow(deps spawnDeps, e state.EffSpawnPaneWindow) {
 	name := windowName(e.Project, string(e.FrameID))
 	spawnCmd := buildSpawnCommand(wrapped.Command, e.Stdin)
 	slog.Info("runtime: spawning window", "frame", e.FrameID, "cmd", spawnCmd)
-	size := deps.mainPaneSize()
-	target, paneID, err := deps.backend.SpawnWindow(name, spawnCmd, wrapped.StartDir, wrapped.Env)
+	_, paneID, err := deps.backend.SpawnWindow(name, spawnCmd, wrapped.StartDir, wrapped.Env)
 	if err != nil {
 		// wrapLaunchForSpawn already acquired the sandbox/container; the pane never
 		// launched and no EvPaneSpawned/kill path will reach this frame, so
@@ -119,11 +114,6 @@ func spawnPaneWindow(deps spawnDeps, e state.EffSpawnPaneWindow) {
 		}
 		sendFailed(err.Error())
 		return
-	}
-	if size.width > 0 && size.height > 0 {
-		if rerr := deps.backend.ResizeWindow(deps.sessionName+":"+target, size.width, size.height); rerr != nil {
-			slog.Debug("runtime: resize-window failed", "target", target, "err", rerr)
-		}
 	}
 
 	deps.sendInternal(internalSpawnComplete{
@@ -256,15 +246,6 @@ func windowName(project, sessionID string) string {
 		project = "session"
 	}
 	return project + ":" + sessionID
-}
-
-func substitutePlaceholdersString(s, sessionName, roostExe string) string {
-	if s == "" {
-		return s
-	}
-	s = strings.ReplaceAll(s, "{sessionName}", sessionName)
-	s = strings.ReplaceAll(s, "{roostExe}", roostExe)
-	return s
 }
 
 // isShellCommand returns true if the command should be spawned as the user's

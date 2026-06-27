@@ -1,10 +1,17 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
 
-// main/run bind sockets and block, so they are structurally untestable in a unit
-// test (the handler is covered by server/web; TLS serving by platform/lib/tlsdev).
-// randToken is pure and covered here.
+	"github.com/takezoh/agent-reactor/client/config"
+)
+
+// === randToken / isLoopbackAddr — gateway helpers ===
 
 func TestRandTokenDistinctNonEmpty(t *testing.T) {
 	a, b := randToken(), randToken()
@@ -46,5 +53,165 @@ func TestIsLoopbackAddr(t *testing.T) {
 		if got := isLoopbackAddr(c.addr); got != c.want {
 			t.Errorf("isLoopbackAddr(%q) = %v, want %v", c.addr, got, c.want)
 		}
+	}
+}
+
+// === runMain dispatch — daemon, subcommand, help ===
+
+func TestRunMainDaemonSuccess(t *testing.T) {
+	restore := stubMainDeps(t)
+	defer restore()
+
+	dir := t.TempDir()
+	loadBootstrapConfig = func() (*config.Config, error) {
+		cfg := config.DefaultConfig()
+		cfg.DataDir = dir
+		return cfg, nil
+	}
+	runDaemonFn = func(*daemonFlagSet) error { return nil }
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runMain(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d, want 0 (stderr=%q)", code, stderr.String())
+	}
+	if got := stdout.String(); got != "server: exited\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestRunMainDaemonErrorLogsAndPrints(t *testing.T) {
+	restore := stubMainDeps(t)
+	defer restore()
+
+	dir := t.TempDir()
+	wantErr := errors.New("boom")
+	loadBootstrapConfig = func() (*config.Config, error) {
+		cfg := config.DefaultConfig()
+		cfg.DataDir = dir
+		return cfg, nil
+	}
+	runDaemonFn = func(*daemonFlagSet) error { return wantErr }
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runMain(nil, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("code = %d, want 1", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if got := stderr.String(); got != "server: boom\n" {
+		t.Fatalf("stderr = %q", got)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "server.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "main failed") {
+		t.Fatalf("log = %q, want main failed entry", string(data))
+	}
+}
+
+func TestRunMainUnknownCommandDoesNotRunDaemon(t *testing.T) {
+	restore := stubMainDeps(t)
+	defer restore()
+
+	dir := t.TempDir()
+	loadBootstrapConfig = func() (*config.Config, error) {
+		cfg := config.DefaultConfig()
+		cfg.DataDir = dir
+		return cfg, nil
+	}
+	daemonCalled := false
+	runDaemonFn = func(*daemonFlagSet) error {
+		daemonCalled = true
+		return nil
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runMain([]string{"totally-unknown-command"}, &stdout, &stderr)
+	if daemonCalled {
+		t.Fatal("runDaemonFn must not be called for unknown subcommands")
+	}
+	if code == 0 {
+		t.Fatal("unknown command should exit non-zero")
+	}
+}
+
+func TestRunMainHelp(t *testing.T) {
+	restore := stubMainDeps(t)
+	defer restore()
+
+	loadBootstrapConfig = func() (*config.Config, error) {
+		return config.DefaultConfig(), nil
+	}
+	runDaemonFn = func(*daemonFlagSet) error {
+		t.Fatal("daemon must not run on help")
+		return nil
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runMain([]string{"help"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "Usage:") {
+		t.Fatalf("stdout = %q, want usage banner", stdout.String())
+	}
+}
+
+func TestRunMainClassifies(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want commandKind
+	}{
+		{"empty", nil, commandKindDaemon},
+		{"data-dir flag", []string{"-data-dir", "/tmp/x"}, commandKindDaemon},
+		{"addr flag", []string{"-addr", "127.0.0.1:0"}, commandKindDaemon},
+		{"insecure flag", []string{"-insecure"}, commandKindDaemon},
+		{"help", []string{"help"}, commandKindHelp},
+		{"-h", []string{"-h"}, commandKindHelp},
+		{"--help", []string{"--help"}, commandKindHelp},
+		{"event subcommand", []string{"event", "SomeType"}, commandKindCLI},
+		{"host-exec subcommand", []string{"host-exec", "ls"}, commandKindCLI},
+		{"mcp-exec subcommand", []string{"mcp-exec", "alias"}, commandKindCLI},
+		{"unknown positional", []string{"bogus-command"}, commandKindCLI},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyCommand(tc.args); got != tc.want {
+				t.Fatalf("classifyCommand(%v) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+func stubMainDeps(t *testing.T) func() {
+	t.Helper()
+	t.Setenv("ROOST_DATA_DIR", "")
+	prevLoadBootstrapConfig := loadBootstrapConfig
+	prevInitLogger := initLoggerWithDataDir
+	prevCloseLogger := closeLogger
+	prevRedirectStderr := redirectStderr
+	prevParseDaemonArgs := parseDaemonArgsFn
+	prevRunDaemon := runDaemonFn
+
+	return func() {
+		loadBootstrapConfig = prevLoadBootstrapConfig
+		initLoggerWithDataDir = prevInitLogger
+		closeLogger = prevCloseLogger
+		redirectStderr = prevRedirectStderr
+		parseDaemonArgsFn = prevParseDaemonArgs
+		runDaemonFn = prevRunDaemon
 	}
 }

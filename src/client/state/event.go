@@ -14,21 +14,16 @@ type Event interface {
 
 // Event type constants for dispatch by reduceEvent.
 const (
-	EventCreateSession    = "create-session"
-	EventStopSession      = "stop-session"
-	EventListSessions     = "list-sessions"
-	EventPreviewSession   = "preview-session"
-	EventSwitchSession    = "switch-session"
-	EventPreviewProject   = "preview-project"
-	EventFocusPane        = "focus-pane"
-	EventLaunchTool       = "launch-tool"
-	EventShutdown         = "shutdown"
-	EventDetach           = "detach"
-	EventPushDriver       = "push-driver"
-	EventForkSession      = "fork-session"
-	EventActivateFrame    = "activate-frame"
-	EventActivateOccupant = "activate-occupant"
-	EventStatusLineClick  = "statusline-click"
+	EventCreateSession  = "create-session"
+	EventStopSession    = "stop-session"
+	EventListSessions   = "list-sessions"
+	EventPreviewSession = "preview-session"
+	EventSwitchSession  = "switch-session"
+	EventPreviewProject = "preview-project"
+	EventShutdown       = "shutdown"
+	EventPushDriver     = "push-driver"
+	EventForkSession    = "fork-session"
+	EventActivateFrame  = "activate-frame"
 )
 
 // === IPC commands (caller → daemon) ===
@@ -128,7 +123,7 @@ type EvCmdDriverList struct {
 }
 
 // EvDriverEvent is a driver hook event from the agent process via
-// `arc event <eventType>`. Routed to the session's driver.
+// `server event <eventType>`. Routed to the session's driver.
 type EvDriverEvent struct {
 	ConnID    ConnID
 	ReqID     string
@@ -184,16 +179,6 @@ type EvJobResult struct {
 	JobID  JobID
 	Result any
 	Err    error
-}
-
-// EvPaneDied is fired when the runtime detects via the backend liveness probe
-// that a pane is dead. For control panes (0.1 / 0.2) the reducer
-// respawns them. For pane 0.0 (active agent), the reducer evicts the
-// owning session. OwnerSessionID is set by the runtime when it detects
-// pane 0.0 is dead.
-type EvPaneDied struct {
-	Pane         string
-	OwnerFrameID FrameID // set for pane 0.0 dead detection
 }
 
 // EvPaneWindowVanished is fired by ReconcileWindows when the pane backend's
@@ -302,7 +287,6 @@ func (EvConnClosed) isEvent()            {}
 func (EvTick) isEvent()                  {}
 func (EvFileChanged) isEvent()           {}
 func (EvJobResult) isEvent()             {}
-func (EvPaneDied) isEvent()              {}
 func (EvPaneWindowVanished) isEvent()    {}
 func (EvFrameCommandExited) isEvent()    {}
 func (EvPaneSpawned) isEvent()           {}

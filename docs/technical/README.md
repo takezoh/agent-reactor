@@ -6,7 +6,7 @@ Internals organized by the three architecture layers. The canonical overview —
 
 ```
 platform/      Shared infrastructure — the client and orchestrator both depend on this
-client/        client-specific code — TUI, state machine, runtime, drivers
+client/        client-specific code — state machine, runtime, drivers, IPC, web frontend
 orchestrator/  Symphony SPEC implementation — poll/dispatch/reconcile + observability HTTP
 cmd/           Binary entry points
 ```
@@ -21,7 +21,7 @@ Import direction (enforced by `depguard`, `src/.golangci.yml`): `cmd/* → clien
   - [Agent protocol](platform/agent-protocol.md) — `codexclient`/`codexschema`/`lib`: the Codex app-server stdio protocol
   - [Sandbox backends](platform/sandbox.md) — per-project devcontainer isolation, image resolution, credential proxy
 - **[client/](client/README.md)** — the client session lifecycle manager
-  - [Process model](client/process-model.md) — daemon/TUI processes, pane layout, rendering boundary
+  - [Process model](client/process-model.md) — daemon process, pty multiplexer, rendering boundary
   - [IPC and tool system](client/ipc.md) — message format, command surface, concurrency model
   - [State monitoring](client/state-monitoring.md) — driver plugins, the polling pipeline, hook routing
   - [Interfaces](client/interfaces.md) — Go type definitions, data files, source tree

@@ -58,7 +58,6 @@ type fakeBackend struct {
 	envs             map[string]string
 	popups           []string
 	alive            map[string]bool
-	aliveErr         map[string]error // pane target → transient error from PaneAlive
 	exitStatusErr    map[string]error // pane target → error from PaneExitStatus
 	exitStatus       map[string]int   // pane target → exit code (when dead)
 	captured         string
@@ -76,7 +75,6 @@ type fakeBackend struct {
 func newFakeBackend() *fakeBackend {
 	return &fakeBackend{
 		alive:         map[string]bool{},
-		aliveErr:      map[string]error{},
 		exitStatusErr: map[string]error{},
 		exitStatus:    map[string]int{},
 		envs:          map[string]string{},
@@ -198,18 +196,6 @@ func (f *fakeBackend) UnsetEnv(k string) error {
 	delete(f.envs, k)
 	return nil
 }
-func (f *fakeBackend) PaneAlive(target string) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if err, ok := f.aliveErr[target]; ok {
-		return false, err
-	}
-	v, ok := f.alive[target]
-	if !ok {
-		return true, nil
-	}
-	return v, nil
-}
 func (f *fakeBackend) PaneExitStatus(target string) (bool, int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -306,8 +292,6 @@ func (r *recordingWatcher) Close() error           { return nil }
 
 func TestRuntimeStartsAndShutsDown(t *testing.T) {
 	r := New(Config{
-		SessionName:  "reactor-test",
-		RoostExe:     "/usr/local/bin/roost",
 		TickInterval: 50 * time.Millisecond,
 		Backend:      newFakeBackend(),
 	})
@@ -326,32 +310,12 @@ func TestRuntimeStartsAndShutsDown(t *testing.T) {
 	}
 }
 
-func TestExecuteKillSession(t *testing.T) {
-	backend := newFakeBackend()
-	r := New(Config{
-		SessionName: "reactor-test",
-		RoostExe:    "/usr/local/bin/roost",
-		Backend:     backend,
-	})
-
-	r.execute(state.EffKillSession{})
-
-	backend.mu.Lock()
-	defer backend.mu.Unlock()
-	if backend.sessionKillCalls != 1 {
-		t.Fatalf("sessionKillCalls = %d, want 1", backend.sessionKillCalls)
-	}
-}
-
 func TestSendResponseSyncFlushesImmediately(t *testing.T) {
 	server, client := net.Pipe()
 	defer server.Close()
 	defer client.Close()
 
-	r := New(Config{
-		SessionName: "reactor-test",
-		RoostExe:    "/usr/local/bin/roost",
-	})
+	r := New(Config{})
 	cc := newIPCConn(1, server)
 	r.conns[1] = cc
 
@@ -392,7 +356,6 @@ func TestRuntimeCreateSessionFlow(t *testing.T) {
 	backend := newFakeBackend()
 	persist := &recordingPersist{}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second, // suppress periodic ticks
 		Backend:      backend,
 		Persist:      persist,
@@ -428,8 +391,11 @@ func TestRuntimeCreateSessionFlow(t *testing.T) {
 	if backend.spawnCalls != 1 {
 		t.Errorf("spawnCalls = %d, want 1", backend.spawnCalls)
 	}
-	if backend.resizeCalls == 0 {
-		t.Error("expected spawned window to be resized to main pane size")
+	// With the TUI gone there is no "main pane" to resize new spawns to;
+	// spawnDeps no longer carries a paneSize provider, so ResizeWindow stays
+	// at zero calls on this path.
+	if backend.resizeCalls != 0 {
+		t.Errorf("resizeCalls = %d, want 0 (no main pane to size to)", backend.resizeCalls)
 	}
 	persist.mu.Lock()
 	defer persist.mu.Unlock()
@@ -438,145 +404,6 @@ func TestRuntimeCreateSessionFlow(t *testing.T) {
 	}
 	if len(persist.last) != 1 {
 		t.Errorf("last snapshot len = %d, want 1", len(persist.last))
-	}
-}
-
-func TestRuntimeTickFiresHealthChecks(t *testing.T) {
-	backend := newFakeBackend()
-	r := New(Config{
-		SessionName:  "reactor-test",
-		TickInterval: 10 * time.Millisecond,
-		Backend:      backend,
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = r.Run(ctx) }()
-
-	// Wait for several ticks
-	time.Sleep(40 * time.Millisecond)
-	cancel()
-	<-r.Done()
-	// Health checks call PaneAlive on the control panes; with our
-	// noop default returning alive=true, no respawns should fire.
-	backend.mu.Lock()
-	defer backend.mu.Unlock()
-	if len(backend.respawnCmds) != 0 {
-		t.Errorf("expected 0 respawns when panes are alive, got %d", len(backend.respawnCmds))
-	}
-}
-
-func TestRuntimeRespawnsDeadPane(t *testing.T) {
-	backend := newFakeBackend()
-	backend.alive["reactor-test:0.2"] = false // pane 0.2 is the sessions pane
-	r := New(Config{
-		SessionName:  "reactor-test",
-		RoostExe:     "/usr/bin/roost",
-		TickInterval: 10 * time.Millisecond,
-		Backend:      backend,
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = r.Run(ctx) }()
-
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		backend.mu.Lock()
-		n := len(backend.respawnCmds)
-		backend.mu.Unlock()
-		if n > 0 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	cancel()
-	<-r.Done()
-	backend.mu.Lock()
-	defer backend.mu.Unlock()
-	if len(backend.respawnCmds) == 0 {
-		t.Fatal("expected respawn for dead pane")
-	}
-	if backend.respawnCmds[0] != "'/usr/bin/roost' --tui sessions" {
-		t.Errorf("respawn cmd = %q", backend.respawnCmds[0])
-	}
-}
-
-func TestActivateSessionInitializesMainPaneIDOnDemand(t *testing.T) {
-	backend := newFakeBackend()
-	r := New(Config{
-		SessionName:       "reactor-test",
-		MainPaneHeightPct: 70,
-		Backend:           backend,
-	})
-	r.state.Sessions["sess-1"] = state.Session{
-		ID:      "sess-1",
-		Command: "shell",
-		Driver:  driver.NewGenericDriver("shell", "shell", 0).NewState(time.Now()),
-		Frames:  []state.SessionFrame{{ID: "frame-1", Command: "shell", Driver: driver.NewGenericDriver("shell", "shell", 0).NewState(time.Now())}},
-	}
-	r.sessionPanes["frame-1"] = "%3"
-
-	r.execute(state.EffActivateSession{
-		SessionID: "sess-1",
-		Reason:    state.EventPreviewSession,
-	})
-
-	if r.sessionPanes["_main"] != "%1" {
-		t.Fatalf("sessionPanes[_main] = %q, want %%1", r.sessionPanes["_main"])
-	}
-	backend.mu.Lock()
-	defer backend.mu.Unlock()
-	if backend.envs["ROOST_FRAME__main"] != "%1" {
-		t.Fatalf("ROOST_FRAME__main = %q, want %%1", backend.envs["ROOST_FRAME__main"])
-	}
-	if backend.swapCalls != 1 {
-		t.Fatalf("swapCalls = %d, want 1", backend.swapCalls)
-	}
-}
-
-func TestActivateSessionMissingPaneEnqueuesWindowVanished(t *testing.T) {
-	backend := newFakeBackend()
-	backend.swapErr = fmt.Errorf("runtime: unknown pane %q: %w", "%3", ErrPaneMissing)
-	r := New(Config{
-		SessionName:       "reactor-test",
-		MainPaneHeightPct: 70,
-		Backend:           backend,
-	})
-	r.sessionPanes["_main"] = "%main"
-	r.state.Sessions["sess-1"] = state.Session{
-		ID:      "sess-1",
-		Frames:  []state.SessionFrame{{ID: "frame-1", Command: "shell", Driver: driver.NewGenericDriver("shell", "shell", 0).NewState(time.Now())}},
-		Command: "shell",
-		Driver:  driver.NewGenericDriver("shell", "shell", 0).NewState(time.Now()),
-	}
-	r.sessionPanes["frame-1"] = "%3"
-
-	r.execute(state.EffActivateSession{
-		SessionID: "sess-1",
-		Reason:    state.EventPreviewSession,
-	})
-
-	select {
-	case ev := <-r.eventCh:
-		v, ok := ev.(state.EvPaneWindowVanished)
-		if !ok {
-			t.Fatalf("event type = %T, want EvPaneWindowVanished", ev)
-		}
-		if v.FrameID != "frame-1" {
-			t.Fatalf("FrameID = %q, want frame-1", v.FrameID)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("expected EvPaneWindowVanished")
-	}
-}
-
-func TestSubstitutePlaceholders(t *testing.T) {
-	got := substitutePlaceholdersString("{sessionName}:0.1", "myroost", "/r")
-	if got != "myroost:0.1" {
-		t.Errorf("got %q", got)
-	}
-	got2 := substitutePlaceholdersString("{roostExe} --tui log", "x", "/r")
-	if got2 != "/r --tui log" {
-		t.Errorf("got %q", got2)
 	}
 }
 
@@ -624,7 +451,6 @@ func TestEventTypeName(t *testing.T) {
 func TestRuntimeStopSession(t *testing.T) {
 	backend := newFakeBackend()
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      backend,
 	})
@@ -659,214 +485,14 @@ func TestRuntimeStopSession(t *testing.T) {
 	}
 }
 
-func TestFastTickDetectsActivePaneDeath(t *testing.T) {
-	backend := newFakeBackend()
-	backend.alive["%42"] = false // frame pane destroyed
-	r := New(Config{
-		SessionName:      "reactor-test",
-		TickInterval:     10 * time.Second,
-		FastTickInterval: 10 * time.Millisecond,
-		Backend:          backend,
-	})
-	r.activeFrameID = "frame-1"
-	r.sessionPanes["frame-1"] = "%42"
-
-	r.scheduleActiveFramePaneProbe()
-
-	select {
-	case ev := <-r.eventCh:
-		pd, ok := ev.(state.EvPaneDied)
-		if !ok {
-			t.Fatalf("expected EvPaneDied, got %T", ev)
-		}
-		if pd.OwnerFrameID != "frame-1" {
-			t.Errorf("OwnerFrameID = %q, want frame-1", pd.OwnerFrameID)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("expected EvPaneDied to be enqueued within 500ms")
-	}
-}
-
-func TestFastTickSkipsWhenNoActiveFrame(t *testing.T) {
-	backend := newFakeBackend()
-	r := New(Config{
-		SessionName:      "reactor-test",
-		TickInterval:     10 * time.Second,
-		FastTickInterval: 10 * time.Millisecond,
-		Backend:          backend,
-	})
-	// activeFrameID remains empty
-
-	r.scheduleActiveFramePaneProbe()
-
-	select {
-	case ev := <-r.eventCh:
-		t.Fatalf("expected no event, got %T", ev)
-	case <-time.After(50 * time.Millisecond):
-		// OK: no-op
-	}
-}
-
-func TestFastTickIgnoresAliveActivePane(t *testing.T) {
-	backend := newFakeBackend()
-	backend.alive["%42"] = true
-	r := New(Config{
-		SessionName:      "reactor-test",
-		TickInterval:     10 * time.Second,
-		FastTickInterval: 10 * time.Millisecond,
-		Backend:          backend,
-	})
-	r.activeFrameID = "frame-1"
-	r.sessionPanes["frame-1"] = "%42"
-
-	r.scheduleActiveFramePaneProbe()
-
-	select {
-	case ev := <-r.eventCh:
-		t.Fatalf("expected no event for alive pane, got %T", ev)
-	case <-time.After(100 * time.Millisecond):
-		// OK: no-op
-	}
-}
-
-// Regression: when an active frame's program exits, the backend destroys the pane
-// (remain-on-exit off) and the layout reflows — so positional target
-// "{sessionName}:0.1" then resolves to a different, alive pane. The probe
-// must target the frame's pane_id, not the positional slot.
-func TestFastTickDetectsActivePaneDeathByPaneID(t *testing.T) {
-	backend := newFakeBackend()
-	// Frame pane is destroyed → dead at its pane_id.
-	backend.alive["%42"] = false
-	// Positional 0.1 now points at a different, alive pane (shifted up).
-	backend.alive["reactor-test:0.1"] = true
-	r := New(Config{
-		SessionName:      "reactor-test",
-		TickInterval:     10 * time.Second,
-		FastTickInterval: 10 * time.Millisecond,
-		Backend:          backend,
-	})
-	r.activeFrameID = "frame-1"
-	r.sessionPanes["frame-1"] = "%42"
-
-	r.scheduleActiveFramePaneProbe()
-
-	select {
-	case ev := <-r.eventCh:
-		pd, ok := ev.(state.EvPaneDied)
-		if !ok {
-			t.Fatalf("expected EvPaneDied, got %T", ev)
-		}
-		if pd.OwnerFrameID != "frame-1" {
-			t.Errorf("OwnerFrameID = %q, want frame-1", pd.OwnerFrameID)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("expected EvPaneDied to be enqueued within 500ms")
-	}
-}
-
-// Same scenario via the tick-driven EffCheckPaneAlive path.
-func TestExecuteCheckPaneAliveResolvesActiveFramePaneID(t *testing.T) {
-	backend := newFakeBackend()
-	backend.alive["%42"] = false
-	backend.alive["reactor-test:0.1"] = true
-	r := New(Config{
-		SessionName: "reactor-test",
-		Backend:     backend,
-	})
-	r.activeFrameID = "frame-1"
-	r.sessionPanes["frame-1"] = "%42"
-
-	r.executeCheckPaneAlive(state.EffCheckPaneAlive{Pane: "{sessionName}:0.1"})
-
-	select {
-	case ev := <-r.eventCh:
-		pd, ok := ev.(state.EvPaneDied)
-		if !ok {
-			t.Fatalf("expected EvPaneDied, got %T", ev)
-		}
-		if pd.OwnerFrameID != "frame-1" {
-			t.Errorf("OwnerFrameID = %q, want frame-1", pd.OwnerFrameID)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("expected EvPaneDied within 500ms")
-	}
-}
-
-// Repro for "Claude Driver session suddenly disappears": under load the backend
-// `display-message` shell-out times out (context deadline exceeded). The active
-// frame probe at interpret.go:240-247 treats ANY PaneAlive error as death and
-// enqueues EvPaneDied, which evicts the still-alive session. A transient probe
-// error must NOT be interpreted as pane death.
-//
-// Observed in ~/.agent-reactor/arc.log:
-//
-//	msg="runtime: active frame pane alive check failed" target=%5
-//	  err="backend display-message -t %5 -p #{pane_dead}: context deadline exceeded: "
-//	-> state: reducePaneDied entry -> evictFrame ok
-func TestExecuteCheckPaneAliveTransientErrorDoesNotKillActiveFrame(t *testing.T) {
-	backend := newFakeBackend()
-	// The pane is actually alive, but the probe shell-out times out.
-	backend.alive["%42"] = true
-	backend.aliveErr["%42"] = fmt.Errorf("backend display-message -t %%42 -p #{pane_dead}: %w", context.DeadlineExceeded)
-	r := New(Config{
-		SessionName: "reactor-test",
-		Backend:     backend,
-	})
-	r.activeFrameID = "frame-1"
-	r.sessionPanes["frame-1"] = "%42"
-
-	r.executeCheckPaneAlive(state.EffCheckPaneAlive{Pane: "{sessionName}:0.1"})
-
-	select {
-	case ev := <-r.eventCh:
-		if pd, ok := ev.(state.EvPaneDied); ok {
-			t.Fatalf("transient PaneAlive timeout must not kill the active frame, "+
-				"but EvPaneDied was enqueued for owner %q", pd.OwnerFrameID)
-		}
-		t.Fatalf("unexpected event enqueued on transient probe error: %T", ev)
-	case <-time.After(200 * time.Millisecond):
-		// OK: a transient error is ignored; no eviction.
-	}
-}
-
-// Guards against over-suppression: a genuine "can't find pane" error (the
-// pane_id vanished with the process) must still be treated as death.
-func TestExecuteCheckPaneAliveMissingPaneKillsActiveFrame(t *testing.T) {
-	backend := newFakeBackend()
-	backend.aliveErr["%42"] = fmt.Errorf("runtime: unknown pane %q: %w", "%42", ErrPaneMissing)
-	r := New(Config{
-		SessionName: "reactor-test",
-		Backend:     backend,
-	})
-	r.activeFrameID = "frame-1"
-	r.sessionPanes["frame-1"] = "%42"
-
-	r.executeCheckPaneAlive(state.EffCheckPaneAlive{Pane: "{sessionName}:0.1"})
-
-	select {
-	case ev := <-r.eventCh:
-		pd, ok := ev.(state.EvPaneDied)
-		if !ok {
-			t.Fatalf("expected EvPaneDied, got %T", ev)
-		}
-		if pd.OwnerFrameID != "frame-1" {
-			t.Errorf("OwnerFrameID = %q, want frame-1", pd.OwnerFrameID)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("expected EvPaneDied for a genuinely missing pane")
-	}
-}
-
 // reconcileWindows must distinguish a vanished pane from a transient query
-// failure: only errors that wrap ErrPaneMissing should evict an inactive frame.
+// failure: only errors that wrap ErrPaneMissing should evict a frame.
 func TestReconcileWindowsTransientErrorKeepsFrame(t *testing.T) {
 	backend := newFakeBackend()
 	backend.exitStatusErr["%7"] = fmt.Errorf("backend display-message -t %%7 -p ...: %w", context.DeadlineExceeded)
 	r := New(Config{
-		SessionName: "reactor-test",
-		Backend:     backend,
+		Backend: backend,
 	})
-	r.activeFrameID = "active-frame"
 	r.sessionPanes["inactive-frame"] = "%7"
 
 	r.reconcileWindows()
@@ -883,10 +509,8 @@ func TestReconcileWindowsMissingPaneVanishesFrame(t *testing.T) {
 	backend := newFakeBackend()
 	backend.exitStatusErr["%7"] = fmt.Errorf("runtime: unknown pane %q: %w", "%7", ErrPaneMissing)
 	r := New(Config{
-		SessionName: "reactor-test",
-		Backend:     backend,
+		Backend: backend,
 	})
-	r.activeFrameID = "active-frame"
 	r.sessionPanes["inactive-frame"] = "%7"
 
 	r.reconcileWindows()
@@ -921,7 +545,6 @@ func TestRuntimeShellSessionSpawnsLoginShell(t *testing.T) {
 	backend := newFakeBackend()
 	persist := &recordingPersist{}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      backend,
 		Persist:      persist,
@@ -975,7 +598,6 @@ func TestReconcileDetectsVanishedPane(t *testing.T) {
 	fbackend.alive["%3"] = false
 	fbackend.envs["ROOST_FRAME_tracked1"] = "%3"
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 20 * time.Millisecond,
 		Backend:      fbackend,
 	})
@@ -1014,7 +636,6 @@ func TestReconcileDetectsVanishedPane(t *testing.T) {
 func TestReconcileSkipsWithoutTrackedPanes(t *testing.T) {
 	fbackend := newFakeBackend()
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 20 * time.Millisecond,
 		Backend:      fbackend,
 	})
@@ -1036,7 +657,6 @@ func TestReconcileSkipsWithoutTrackedPanes(t *testing.T) {
 func TestRuntimeEnqueueDoesNotBlock(t *testing.T) {
 	backend := newFakeBackend()
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      backend,
 	})
@@ -1050,196 +670,5 @@ func TestRuntimeEnqueueDoesNotBlock(t *testing.T) {
 	// Channel buffer is 256 so 100 fits without dropping.
 	if n.Load() != 100 {
 		t.Errorf("enqueued %d, want 100", n.Load())
-	}
-}
-
-func TestActivateSessionSwapsOnFrameChange(t *testing.T) {
-	backend := newFakeBackend()
-	backend.alive["%0"] = true // main pane
-	backend.alive["%1"] = true // root frame pane
-	backend.alive["%2"] = true // pushed frame pane
-	backend.envs["ROOST_FRAME__main"] = "%0"
-
-	r := New(Config{
-		SessionName:  "reactor-test",
-		TickInterval: 10 * time.Second,
-		Backend:      backend,
-		Persist:      &recordingPersist{},
-	})
-
-	drv := state.GetDriver("shell")
-	sid := state.SessionID("sess-swap")
-	rootFrameID := state.FrameID("frame-root")
-	newFrameID := state.FrameID("frame-new")
-
-	r.state.Sessions[sid] = state.Session{
-		ID:      sid,
-		Project: "/project",
-		Command: "shell",
-		Driver:  drv.NewState(time.Now()),
-		Frames: []state.SessionFrame{
-			{ID: rootFrameID, Project: "/project", Command: "shell", Driver: drv.NewState(time.Now())},
-			{ID: newFrameID, Project: "/project", Command: "shell", Driver: drv.NewState(time.Now())},
-		},
-	}
-	// Root frame is currently active in 0.0.
-	r.sessionPanes[rootFrameID] = "%1"
-	r.sessionPanes[newFrameID] = "%2"
-	r.sessionPanes["_main"] = "%0"
-	r.mainPaneSession = sid
-	r.activeFrameID = rootFrameID // old frame — different from top-of-stack
-
-	r.activateSession(sid)
-
-	backend.mu.Lock()
-	defer backend.mu.Unlock()
-	if backend.swapCalls != 1 {
-		t.Fatalf("swapCalls = %d, want 1 (new frame should be swapped into 0.0)", backend.swapCalls)
-	}
-	// Swap source should be the new frame's pane.
-	if backend.swapSources[0] != "%2" {
-		t.Errorf("swap source = %q, want %%2 (new frame pane)", backend.swapSources[0])
-	}
-	if r.activeFrameID != newFrameID {
-		t.Errorf("activeFrameID = %q, want %q", r.activeFrameID, newFrameID)
-	}
-}
-
-func TestActivateSessionNoopWhenFrameUnchanged(t *testing.T) {
-	backend := newFakeBackend()
-	backend.alive["%0"] = true
-	backend.alive["%1"] = true
-	backend.envs["ROOST_FRAME__main"] = "%0"
-
-	r := New(Config{
-		SessionName:  "reactor-test",
-		TickInterval: 10 * time.Second,
-		Backend:      backend,
-		Persist:      &recordingPersist{},
-	})
-
-	drv := state.GetDriver("shell")
-	sid := state.SessionID("sess-noop")
-	frameID := state.FrameID("frame-only")
-
-	r.state.Sessions[sid] = state.Session{
-		ID:      sid,
-		Project: "/project",
-		Command: "shell",
-		Driver:  drv.NewState(time.Now()),
-		Frames: []state.SessionFrame{
-			{ID: frameID, Project: "/project", Command: "shell", Driver: drv.NewState(time.Now())},
-		},
-	}
-	r.sessionPanes[frameID] = "%1"
-	r.sessionPanes["_main"] = "%0"
-	r.mainPaneSession = sid
-	r.activeFrameID = frameID // already on the active frame
-
-	r.activateSession(sid)
-
-	backend.mu.Lock()
-	defer backend.mu.Unlock()
-	if backend.swapCalls != 0 {
-		t.Fatalf("swapCalls = %d, want 0 (same frame, no swap needed)", backend.swapCalls)
-	}
-}
-
-// TestPopTopFrameSwapBeforeKill verifies Fix A: when the active top frame's pane
-// dies, SwapPane (restoring the parent pane to 0.1) is called before
-// KillPaneWindow (tearing down the top frame's window).
-func TestPopTopFrameSwapBeforeKill(t *testing.T) {
-	backend := newFakeBackend()
-	r := New(Config{
-		SessionName:  "reactor-test",
-		TickInterval: 10 * time.Second,
-		Backend:      backend,
-		Persist:      &recordingPersist{},
-	})
-
-	drv := state.GetDriver("shell")
-	sid := state.SessionID("sess-pop")
-	rootFrameID := state.FrameID("frame-root")
-	topFrameID := state.FrameID("frame-top")
-
-	r.state.Sessions[sid] = state.Session{
-		ID:            sid,
-		Project:       "/project",
-		Command:       "shell",
-		Driver:        drv.NewState(time.Now()),
-		ActiveFrameID: topFrameID,
-		Frames: []state.SessionFrame{
-			{ID: rootFrameID, Project: "/project", Command: "shell", Driver: drv.NewState(time.Now())},
-			{ID: topFrameID, Project: "/project", Command: "shell", Driver: drv.NewState(time.Now())},
-		},
-	}
-	r.state.ActiveOccupant = state.OccupantFrame
-	r.state.ActiveSession = sid
-	r.sessionPanes[rootFrameID] = "%A"
-	r.sessionPanes[topFrameID] = "%B"
-	r.sessionPanes["_main"] = "%main"
-	r.mainPaneSession = sid
-	r.activeFrameID = topFrameID
-
-	// Drive the pane-died event directly (no goroutines needed).
-	next, effs := state.Reduce(r.state, state.EvPaneDied{
-		Pane:         "{sessionName}:0.1",
-		OwnerFrameID: topFrameID,
-	})
-	r.state = next
-	for _, eff := range effs {
-		r.execute(eff)
-	}
-
-	backend.mu.Lock()
-	defer backend.mu.Unlock()
-
-	swapIdx := -1
-	killIdx := -1
-	for i, call := range backend.callLog {
-		switch call {
-		case "swap":
-			swapIdx = i
-		case "kill":
-			killIdx = i
-		}
-	}
-	if swapIdx < 0 {
-		t.Fatal("SwapPane was not called")
-	}
-	if killIdx < 0 {
-		t.Fatal("KillPaneWindow was not called")
-	}
-	if swapIdx > killIdx {
-		t.Errorf("SwapPane (callLog[%d]) must precede KillPaneWindow (callLog[%d])", swapIdx, killIdx)
-	}
-	if r.activeFrameID != rootFrameID {
-		t.Errorf("activeFrameID = %q, want root %q", r.activeFrameID, rootFrameID)
-	}
-}
-
-// TestSwapHiddenUsesPositionalTargets verifies that swapHidden() uses positional
-// targets on every call so repeated toggles never produce a self-swap.
-func TestSwapHiddenUsesPositionalTargets(t *testing.T) {
-	fake := newFakeBackend()
-	r := New(Config{SessionName: "reactor-test", Backend: fake})
-	r.sessionPanes["_log"] = "%42" // must not appear as a SwapPane arg
-
-	r.swapHidden()
-	r.swapHidden()
-
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-
-	if fake.swapCalls != 2 {
-		t.Fatalf("SwapPane call count = %d, want 2", fake.swapCalls)
-	}
-	wantSrc := r.hiddenPaneTarget()
-	wantDst := r.mainPaneTarget()
-	for i, src := range fake.swapSources {
-		dst := fake.swapTargets[i]
-		if src != wantSrc || dst != wantDst {
-			t.Errorf("call %d: SwapPane(%q, %q), want (%q, %q)", i, src, dst, wantSrc, wantDst)
-		}
 	}
 }

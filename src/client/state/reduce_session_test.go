@@ -2,11 +2,8 @@ package state
 
 import (
 	"encoding/json"
-	"reflect"
 	"testing"
 	"time"
-
-	"github.com/takezoh/agent-reactor/client/uiproc"
 )
 
 // === Test driver registration ===
@@ -361,9 +358,6 @@ func TestPaneSpawnedRegistersWindowAndActivates(t *testing.T) {
 	if _, ok := findEff[EffRegisterPane](effs); !ok {
 		t.Error("expected EffRegisterPane")
 	}
-	if _, ok := findEff[EffActivateSession](effs); !ok {
-		t.Error("expected EffActivateSession")
-	}
 	if _, ok := findEff[EffPersistSnapshot](effs); !ok {
 		t.Error("expected EffPersistSnapshot")
 	}
@@ -567,25 +561,21 @@ func TestStopSessionUnknownReturnsError(t *testing.T) {
 	}
 }
 
-func TestStopActiveSessionEmitsDeactivate(t *testing.T) {
+func TestStopActiveSessionClearsActive(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id)
-	s.ActiveOccupant = OccupantFrame
 	s.ActiveSession = id
-	next, effs := Reduce(s, EvEvent{
+	next, _ := Reduce(s, EvEvent{
 		ConnID: 1, ReqID: "r", Event: "stop-session",
 		Payload: mustPayload(map[string]string{"session_id": string(id)}),
 	})
-	if _, ok := findEff[EffDeactivateSession](effs); !ok {
-		t.Error("expected EffDeactivateSession for active session")
-	}
 	if next.ActiveSession != "" {
 		t.Errorf("ActiveSession = %q, want empty", next.ActiveSession)
 	}
 }
 
-func TestStopInactiveSessionNoDeactivate(t *testing.T) {
+func TestStopInactiveSessionEmitsKillWindow(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	other := SessionID("other")
@@ -595,9 +585,6 @@ func TestStopInactiveSessionNoDeactivate(t *testing.T) {
 		ConnID: 1, ReqID: "r", Event: "stop-session",
 		Payload: mustPayload(map[string]string{"session_id": string(id)}),
 	})
-	if _, ok := findEff[EffDeactivateSession](effs); ok {
-		t.Error("must not emit EffDeactivateSession for inactive session")
-	}
 	if _, ok := findEff[EffKillSessionWindow](effs); !ok {
 		t.Error("expected EffKillSessionWindow for inactive session")
 	}
@@ -614,7 +601,6 @@ func TestStopSessionMultiFrameKillsAllWindows(t *testing.T) {
 		Driver:  GetDriver("shell").NewState(sess.CreatedAt),
 	})
 	s.Sessions[id] = sess
-	s.ActiveOccupant = OccupantFrame
 	s.ActiveSession = id
 
 	next, effs := Reduce(s, EvEvent{
@@ -633,16 +619,6 @@ func TestStopSessionMultiFrameKillsAllWindows(t *testing.T) {
 	}
 	if killCount != 2 {
 		t.Errorf("EffKillSessionWindow count = %d, want 2", killCount)
-	}
-	// EffDeactivateSession must appear exactly once
-	deactivateCount := 0
-	for _, e := range effs {
-		if _, ok := e.(EffDeactivateSession); ok {
-			deactivateCount++
-		}
-	}
-	if deactivateCount != 1 {
-		t.Errorf("EffDeactivateSession count = %d, want 1", deactivateCount)
 	}
 }
 
@@ -677,7 +653,7 @@ func TestStopSessionBroadcastBeforeKill(t *testing.T) {
 
 // === reducePreviewSession / reduceSwitchSession ===
 
-func TestPreviewSessionActivatesAndBroadcasts(t *testing.T) {
+func TestPreviewSessionSetsActiveAndBroadcasts(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id)
@@ -688,10 +664,8 @@ func TestPreviewSessionActivatesAndBroadcasts(t *testing.T) {
 	if next.ActiveSession != id {
 		t.Errorf("ActiveSession = %q, want %q", next.ActiveSession, id)
 	}
-	if eff, ok := findEff[EffActivateSession](effs); !ok {
-		t.Error("expected EffActivateSession")
-	} else if eff.Reason != EventPreviewSession {
-		t.Errorf("EffActivateSession.Reason = %q, want %q", eff.Reason, EventPreviewSession)
+	if _, ok := findEff[EffBroadcastSessionsChanged](effs); !ok {
+		t.Error("expected EffBroadcastSessionsChanged")
 	}
 	mustOK(t, effs)
 }
@@ -707,30 +681,27 @@ func TestPreviewSessionUnknownErrors(t *testing.T) {
 	}
 }
 
-func TestSwitchSessionAlsoSelectsPane(t *testing.T) {
+func TestSwitchSessionSetsActiveAndBroadcasts(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id)
-	_, effs := Reduce(s, EvEvent{
+	next, effs := Reduce(s, EvEvent{
 		ConnID: 1, ReqID: "r", Event: "switch-session",
 		Payload: mustPayload(map[string]string{"session_id": string(id)}),
 	})
-	if eff, ok := findEff[EffActivateSession](effs); !ok {
-		t.Error("expected EffActivateSession")
-	} else if eff.Reason != EventSwitchSession {
-		t.Errorf("EffActivateSession.Reason = %q, want %q", eff.Reason, EventSwitchSession)
+	if next.ActiveSession != id {
+		t.Errorf("ActiveSession = %q, want %q", next.ActiveSession, id)
 	}
-	if _, ok := findEff[EffSelectPane](effs); !ok {
-		t.Error("expected EffSelectPane")
+	if _, ok := findEff[EffBroadcastSessionsChanged](effs); !ok {
+		t.Error("expected EffBroadcastSessionsChanged")
 	}
 	mustOK(t, effs)
 }
 
 // === reducePreviewProject ===
 
-func TestPreviewProjectDeactivatesActive(t *testing.T) {
+func TestPreviewProjectClearsActiveAndBroadcasts(t *testing.T) {
 	s := New()
-	s.ActiveOccupant = OccupantFrame
 	s.ActiveSession = "abc"
 	next, effs := Reduce(s, EvEvent{
 		ConnID: 1, ReqID: "r", Event: "preview-project",
@@ -738,9 +709,6 @@ func TestPreviewProjectDeactivatesActive(t *testing.T) {
 	})
 	if next.ActiveSession != "" {
 		t.Errorf("ActiveSession = %q, want empty", next.ActiveSession)
-	}
-	if _, ok := findEff[EffDeactivateSession](effs); !ok {
-		t.Error("expected EffDeactivateSession to swap back")
 	}
 	if _, ok := findEff[EffBroadcastEvent](effs); !ok {
 		t.Error("expected EffBroadcastEvent")
@@ -768,75 +736,19 @@ func TestListSessionsResponds(t *testing.T) {
 	}
 }
 
-// === reduceFocusPane ===
+// === reduceShutdown ===
 
-func TestFocusPaneSelectsAndBroadcasts(t *testing.T) {
-	s := New()
-	_, effs := Reduce(s, EvEvent{
-		ConnID: 1, ReqID: "r", Event: "focus-pane",
-		Payload: mustPayload(map[string]string{"pane": "0.1"}),
-	})
-	if _, ok := findEff[EffSelectPane](effs); !ok {
-		t.Error("expected EffSelectPane")
-	}
-	if _, ok := findEff[EffBroadcastEvent](effs); !ok {
-		t.Error("expected EffBroadcastEvent")
-	}
-}
-
-func TestFocusPaneEmptyErrors(t *testing.T) {
-	s := New()
-	_, effs := Reduce(s, EvEvent{ConnID: 1, ReqID: "r", Event: "focus-pane"})
-	if _, ok := findEff[EffSendError](effs); !ok {
-		t.Error("expected EffSendError")
-	}
-}
-
-// === reduceLaunchTool ===
-
-func TestLaunchToolDisplaysPopup(t *testing.T) {
-	s := New()
-	_, effs := Reduce(s, EvEvent{
-		ConnID: 1, ReqID: "r", Event: "launch-tool",
-		Payload: mustPayload(map[string]string{"tool": "new-session"}),
-	})
-	if _, ok := findEff[EffDisplayPopup](effs); !ok {
-		t.Error("expected EffDisplayPopup")
-	}
-}
-
-func TestLaunchToolEmptyErrors(t *testing.T) {
-	s := New()
-	_, effs := Reduce(s, EvEvent{ConnID: 1, ReqID: "r", Event: "launch-tool"})
-	if _, ok := findEff[EffSendError](effs); !ok {
-		t.Error("expected EffSendError")
-	}
-}
-
-// === reduceShutdown / reduceDetach ===
-
-func TestShutdownKillsSession(t *testing.T) {
+func TestShutdownReleasesSandboxes(t *testing.T) {
 	s := New()
 	_, effs := Reduce(s, EvEvent{ConnID: 1, ReqID: "r", Event: "shutdown"})
-	if _, ok := findEff[EffKillSession](effs); !ok {
-		t.Error("expected EffKillSession")
+	if _, ok := findEff[EffReleaseFrameSandboxes](effs); !ok {
+		t.Error("expected EffReleaseFrameSandboxes")
 	}
 	if _, ok := findEff[EffSendResponseSync](effs); !ok {
 		t.Error("expected EffSendResponseSync")
 	}
 	if _, ok := findEff[EffSendResponse](effs); ok {
 		t.Error("did not expect EffSendResponse")
-	}
-	if _, ok := findEff[EffDetachClient](effs); ok {
-		t.Error("did not expect EffDetachClient")
-	}
-}
-
-func TestDetach(t *testing.T) {
-	s := New()
-	_, effs := Reduce(s, EvEvent{ConnID: 1, ReqID: "r", Event: "detach"})
-	if _, ok := findEff[EffDetachClient](effs); !ok {
-		t.Error("expected EffDetachClient")
 	}
 }
 
@@ -898,124 +810,6 @@ func TestUnsubscribeRemoves(t *testing.T) {
 	next, _ := Reduce(s, EvCmdUnsubscribe{ConnID: 5, ReqID: "r"})
 	if _, ok := next.Subscribers[5]; ok {
 		t.Error("subscriber should be removed")
-	}
-}
-
-// === reducePaneDied ===
-
-func TestPaneDiedEmitsRespawn(t *testing.T) {
-	s := New()
-	_, effs := Reduce(s, EvPaneDied{Pane: "{sessionName}:0.1"})
-	respawn, ok := findEff[EffRespawnPane](effs)
-	if !ok {
-		t.Fatal("expected EffRespawnPane")
-	}
-	if respawn.Pane != "{sessionName}:0.1" {
-		t.Errorf("pane = %q", respawn.Pane)
-	}
-}
-
-func TestPaneDiedUnknownPaneIsNoop(t *testing.T) {
-	s := New()
-	_, effs := Reduce(s, EvPaneDied{Pane: "garbage"})
-	if len(effs) != 0 {
-		t.Errorf("expected 0 effects, got %d", len(effs))
-	}
-}
-
-func TestPaneDiedEvictsSessionByOwnerID(t *testing.T) {
-	s := New()
-	s.Sessions = map[SessionID]Session{
-		"s1": stubSession("s1"),
-	}
-	s.ActiveOccupant = OccupantFrame
-	s.ActiveSession = "s1"
-
-	next, effs := Reduce(s, EvPaneDied{
-		Pane:         "{sessionName}:0.1",
-		OwnerFrameID: "s1",
-	})
-	if _, ok := next.Sessions["s1"]; ok {
-		t.Fatal("session should be deleted")
-	}
-	if next.ActiveSession != "" {
-		t.Errorf("ActiveSession = %q, want empty", next.ActiveSession)
-	}
-	if _, ok := findEff[EffKillSessionWindow](effs); !ok {
-		t.Error("expected EffKillSessionWindow")
-	}
-	if _, ok := findEff[EffBroadcastSessionsChanged](effs); !ok {
-		t.Error("expected EffBroadcastSessionsChanged")
-	}
-	if _, ok := findEff[EffRespawnPane](effs); ok {
-		t.Error("should not respawn pane 0.1 directly after eviction")
-	}
-}
-
-func TestPaneDiedFallbackViaActiveSession(t *testing.T) {
-	s := New()
-	s.Sessions = map[SessionID]Session{
-		"s1": stubSession("s1"),
-	}
-	s.ActiveOccupant = OccupantFrame
-	s.ActiveSession = "s1"
-
-	next, effs := Reduce(s, EvPaneDied{
-		Pane:         "{sessionName}:0.1",
-		OwnerFrameID: "", // runtime couldn't identify owner
-	})
-	if _, ok := next.Sessions["s1"]; ok {
-		t.Fatal("session should be deleted via ActiveSession fallback")
-	}
-	if _, ok := findEff[EffKillSessionWindow](effs); !ok {
-		t.Error("expected EffKillSessionWindow")
-	}
-	if _, ok := findEff[EffRespawnPane](effs); ok {
-		t.Error("should not respawn pane 0.1 directly after fallback eviction")
-	}
-}
-
-func TestPaneDiedNoActiveRespawnsMainTUI(t *testing.T) {
-	s := New()
-	s.Sessions = map[SessionID]Session{
-		"s1": stubSession("s1"),
-	}
-
-	_, effs := Reduce(s, EvPaneDied{
-		Pane:         "{sessionName}:0.1",
-		OwnerFrameID: "",
-	})
-	respawn, ok := findEff[EffRespawnPane](effs)
-	if !ok {
-		t.Fatal("expected EffRespawnPane for main TUI")
-	}
-	if respawn.Pane != "{sessionName}:0.1" {
-		t.Errorf("pane = %q, want {sessionName}:0.1", respawn.Pane)
-	}
-	if !reflect.DeepEqual(respawn.Proc, uiproc.Main()) {
-		t.Errorf("proc = %+v, want Main()", respawn.Proc)
-	}
-}
-
-// TestChildFrameEvictionSyncsStatusLine verifies that when a child frame exits
-// the active session, EffSyncStatusLine is emitted so the parent frame's
-// StatusLine (e.g. "PLAN") is restored in the status bar.
-func TestChildFrameEvictionSyncsStatusLine(t *testing.T) {
-	s := New()
-	id := SessionID("sess1")
-	childID := FrameID("child")
-	sess := stubSession(id)
-	sess.Frames = append(sess.Frames, SessionFrame{
-		ID: childID, Project: "/foo", Command: "stub", Driver: stubDriverState{},
-	})
-	sess.ActiveFrameID = childID
-	s.Sessions = map[SessionID]Session{id: sess}
-	s.ActiveSession = id
-	s.ActiveOccupant = OccupantFrame
-
-	_, effs := Reduce(s, EvPaneDied{Pane: "{sessionName}:0.1", OwnerFrameID: childID})
-	if _, ok := findEff[EffSyncStatusLine](effs); !ok {
-		t.Error("expected EffSyncStatusLine after child frame eviction")
 	}
 }
 
@@ -1435,80 +1229,6 @@ func TestPushDriverNilInputProducesNilStdin(t *testing.T) {
 	if spawn.Stdin != nil {
 		t.Errorf("spawn.Stdin = %q, want nil", spawn.Stdin)
 	}
-}
-
-// === ActiveOccupant / ensureMainAtVisibleSlot integration ===
-
-// TestSwitchSessionSwapsHiddenWhenLog verifies that switching to a session
-// while the log TUI is visible emits EffSwapHidden before EffActivateSession.
-func TestSwitchSessionSwapsHiddenWhenLog(t *testing.T) {
-	s := New()
-	s.ActiveOccupant = OccupantLog
-	s.Sessions["s1"] = stubSession("s1")
-
-	next, effs := Reduce(s, EvEvent{
-		ConnID: 1, ReqID: "r", Event: "switch-session",
-		Payload: mustPayload(map[string]string{"session_id": "s1"}),
-	})
-	if next.ActiveOccupant != OccupantFrame {
-		t.Errorf("ActiveOccupant = %q, want frame (set by switch-session)", next.ActiveOccupant)
-	}
-	assertEffectOrder[EffSwapHidden, EffActivateSession](t, effs)
-	mustOK(t, effs)
-}
-
-// TestPreviewSessionSwapsHiddenWhenLog verifies that preview-session while log
-// is visible emits EffSwapHidden before EffActivateSession.
-func TestPreviewSessionSwapsHiddenWhenLog(t *testing.T) {
-	s := New()
-	s.ActiveOccupant = OccupantLog
-	s.Sessions["s1"] = stubSession("s1")
-
-	next, effs := Reduce(s, EvEvent{
-		ConnID: 1, ReqID: "r", Event: "preview-session",
-		Payload: mustPayload(map[string]string{"session_id": "s1"}),
-	})
-	if next.ActiveOccupant != OccupantFrame {
-		t.Errorf("ActiveOccupant = %q, want frame (set by preview-session)", next.ActiveOccupant)
-	}
-	assertEffectOrder[EffSwapHidden, EffActivateSession](t, effs)
-	mustOK(t, effs)
-}
-
-// TestPaneSpawnedSwapsHiddenWhenLog verifies that a pane spawn while
-// log is visible emits EffSwapHidden before EffActivateSession.
-func TestPaneSpawnedSwapsHiddenWhenLog(t *testing.T) {
-	s := New()
-	s.ActiveOccupant = OccupantLog
-	s.Sessions["s1"] = stubSession("s1")
-	frameID := s.Sessions["s1"].Frames[0].ID
-
-	next, effs := Reduce(s, EvPaneSpawned{
-		SessionID:  "s1",
-		FrameID:    frameID,
-		PaneTarget: "roost:0.1",
-	})
-	if next.ActiveOccupant != OccupantFrame {
-		t.Errorf("ActiveOccupant = %q, want frame (set by pane spawn)", next.ActiveOccupant)
-	}
-	assertEffectOrder[EffSwapHidden, EffActivateSession](t, effs)
-	mustOK(t, effs)
-}
-
-// TestSwitchSessionNoSwapWhenMain verifies that no EffSwapHidden is emitted
-// when main is already at the visible slot.
-func TestSwitchSessionNoSwapWhenMain(t *testing.T) {
-	s := New()
-	s.Sessions["s1"] = stubSession("s1")
-
-	_, effs := Reduce(s, EvEvent{
-		ConnID: 1, ReqID: "r", Event: "switch-session",
-		Payload: mustPayload(map[string]string{"session_id": "s1"}),
-	})
-	if n := countEff[EffSwapHidden](effs); n != 0 {
-		t.Errorf("EffSwapHidden count = %d, want 0 (main already visible)", n)
-	}
-	mustOK(t, effs)
 }
 
 // TestCreateSession_SandboxOverrideHost verifies that SandboxOverrideHost is

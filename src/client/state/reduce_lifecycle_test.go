@@ -4,48 +4,20 @@ import (
 	"testing"
 )
 
-func TestReduceDetachUsesResponseSync(t *testing.T) {
-	s := New()
-	_, effects := reduceDetach(s, 1, "req-1", struct{}{})
-
-	var hasSync, hasDetach, hasPersist bool
-	for _, eff := range effects {
-		switch e := eff.(type) {
-		case EffSendResponseSync:
-			hasSync = true
-			if e.ConnID != 1 || e.ReqID != "req-1" {
-				t.Errorf("EffSendResponseSync conn/req = %d/%q, want 1/req-1", e.ConnID, e.ReqID)
-			}
-		case EffDetachClient:
-			hasDetach = true
-		case EffPersistSnapshot:
-			hasPersist = true
-		case EffSendResponse:
-			t.Errorf("reduceDetach should use EffSendResponseSync, got async EffSendResponse")
-		}
-	}
-	if !hasPersist {
-		t.Error("expected EffPersistSnapshot in effects")
-	}
-	if !hasSync {
-		t.Error("expected EffSendResponseSync in effects")
-	}
-	if !hasDetach {
-		t.Error("expected EffDetachClient in effects")
-	}
-}
-
+// TestReduceShutdownEffects verifies the shutdown reducer persists state,
+// acks the caller synchronously, and asks the runtime to release sandbox
+// resources. Daemon termination itself is driven by the signal handler in
+// the process entrypoint — the reducer no longer asks a backend to tear
+// down a TUI session.
 func TestReduceShutdownEffects(t *testing.T) {
 	s := New()
 	_, effects := reduceShutdown(s, 1, "req-1", struct{}{})
 
-	var hasSync, hasKill, hasPersist, hasRelease bool
+	var hasSync, hasPersist, hasRelease bool
 	for _, eff := range effects {
 		switch eff.(type) {
 		case EffSendResponseSync:
 			hasSync = true
-		case EffKillSession:
-			hasKill = true
 		case EffPersistSnapshot:
 			hasPersist = true
 		case EffReleaseFrameSandboxes:
@@ -61,46 +33,31 @@ func TestReduceShutdownEffects(t *testing.T) {
 	if !hasRelease {
 		t.Error("expected EffReleaseFrameSandboxes in effects")
 	}
-	if !hasKill {
-		t.Error("expected EffKillSession in effects")
-	}
 }
 
-// TestReduceShutdown_emitsSandboxRelease_order verifies that
-// EffReleaseFrameSandboxes precedes EffKillSession in the effect list so
-// containers receive a clean stop signal before the backend session is destroyed.
-func TestReduceShutdown_emitsSandboxRelease_order(t *testing.T) {
+// TestReduceShutdown_releaseBeforeAck verifies persist runs first, then the
+// caller is acked, then sandboxes are released. Containers must NOT be
+// released before the ack so the caller observes the daemon's intent before
+// any sandbox tear-down side-effects fire.
+func TestReduceShutdown_orderPersistAckRelease(t *testing.T) {
 	s := New()
 	_, effects := reduceShutdown(s, 1, "req-1", struct{}{})
 
-	releaseIdx, killIdx := -1, -1
+	persistIdx, ackIdx, releaseIdx := -1, -1, -1
 	for i, eff := range effects {
 		switch eff.(type) {
+		case EffPersistSnapshot:
+			persistIdx = i
+		case EffSendResponseSync:
+			ackIdx = i
 		case EffReleaseFrameSandboxes:
 			releaseIdx = i
-		case EffKillSession:
-			killIdx = i
 		}
 	}
-	if releaseIdx < 0 {
-		t.Fatal("EffReleaseFrameSandboxes not found in shutdown effects")
+	if persistIdx < 0 || ackIdx < 0 || releaseIdx < 0 {
+		t.Fatalf("missing effect: persist=%d ack=%d release=%d", persistIdx, ackIdx, releaseIdx)
 	}
-	if killIdx < 0 {
-		t.Fatal("EffKillSession not found in shutdown effects")
-	}
-	if releaseIdx > killIdx {
-		t.Errorf("EffReleaseFrameSandboxes (idx %d) must precede EffKillSession (idx %d)", releaseIdx, killIdx)
-	}
-}
-
-// TestReduceDetach_omitsSandboxRelease verifies that detach does not release
-// sandbox resources — containers must survive for warm-restart adoption.
-func TestReduceDetach_omitsSandboxRelease(t *testing.T) {
-	s := New()
-	_, effects := reduceDetach(s, 1, "req-1", struct{}{})
-	for _, eff := range effects {
-		if _, ok := eff.(EffReleaseFrameSandboxes); ok {
-			t.Error("reduceDetach must not emit EffReleaseFrameSandboxes; containers must survive for warm-restart")
-		}
+	if persistIdx >= ackIdx || ackIdx >= releaseIdx {
+		t.Errorf("expected persist(%d) < ack(%d) < release(%d)", persistIdx, ackIdx, releaseIdx)
 	}
 }

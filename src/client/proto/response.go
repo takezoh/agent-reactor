@@ -35,7 +35,6 @@ func (RespCreateSession) isResponse() {}
 type RespSessions struct {
 	Sessions        []SessionInfo `json:"sessions"`
 	ActiveSessionID string        `json:"active_session_id,omitempty"`
-	ActiveOccupant  string        `json:"active_occupant,omitempty"` // "main" | "log" | "frame"
 	Features        []string      `json:"features,omitempty"`
 }
 
@@ -126,42 +125,6 @@ func (RespDriverList) isResponse() {}
 type DriverInfo struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"display_name"`
-}
-
-// RespPeerList is the response to peer.list.
-type RespPeerList struct {
-	Peers []PeerPeerInfo `json:"peers"`
-}
-
-func (RespPeerList) isResponse() {}
-
-// PeerMessage is one peer inbox message as returned by CmdPeerDrainInbox.
-type PeerMessage struct {
-	ID        string    `json:"id"`
-	From      string    `json:"from"`
-	Text      string    `json:"text"`
-	ReplyTo   string    `json:"reply_to,omitempty"`
-	SentAt    time.Time `json:"sent_at"`
-	Delivered bool      `json:"delivered"`
-}
-
-// RespPeerDrainInbox is the response to peer.drain_inbox.
-type RespPeerDrainInbox struct {
-	Messages []PeerMessage `json:"messages"`
-}
-
-func (RespPeerDrainInbox) isResponse() {}
-
-// PeerPeerInfo is one peer in the peer list.
-type PeerPeerInfo struct {
-	FrameID    string `json:"frame_id"`
-	SessionID  string `json:"session_id"`
-	Driver     string `json:"driver"`
-	Project    string `json:"project"`
-	Workspace  string `json:"workspace"`
-	Summary    string `json:"summary"`
-	Status     string `json:"status"` // state.Status as string
-	InboxCount int    `json:"inbox_count"`
 }
 
 // baseName mirrors filepath.Base without importing filepath, so the

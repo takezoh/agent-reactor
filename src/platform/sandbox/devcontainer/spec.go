@@ -39,8 +39,8 @@ var envVarRe = regexp.MustCompile(`\$(?:\{containerEnv:([A-Za-z_][A-Za-z0-9_]*)\
 
 // DefaultNamePrefix is the legacy/backwards-compatible container & label prefix
 // used when NamePrefix is empty. Daemons that want process-isolation from a
-// peer arc daemon (e.g. scripts/run-dev.sh side-by-side with the user's TUI
-// daemon) MUST configure a distinct prefix — otherwise both daemons compete
+// peer server daemon (e.g. scripts/run-dev.sh side-by-side with the user's
+// main daemon) MUST configure a distinct prefix — otherwise both daemons compete
 // for the same container name and the mount-hash recreate path will rm each
 // other's containers (see web-gateway-isolation memory).
 const DefaultNamePrefix = "reactor"

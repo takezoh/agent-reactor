@@ -165,41 +165,6 @@ func TestEffReleaseFrameSandboxes_drainsCleanups(t *testing.T) {
 	}
 }
 
-// TestEffDetachClient_doesNotDrainCleanups verifies that the detach path
-// does not touch frame cleanups — containers must survive for warm-restart.
-func TestEffDetachClient_doesNotDrainCleanups(t *testing.T) {
-	var called atomic.Bool
-	r := New(Config{Backend: newFakeBackend()})
-	r.storeFrameCleanup("f-detach", func() error {
-		called.Store(true)
-		return nil
-	})
-
-	r.execute(state.EffDetachClient{})
-
-	if called.Load() {
-		t.Error("EffDetachClient must not drain frame cleanups")
-	}
-}
-
-// TestEffKillSession_doesNotDrainCleanups verifies that EffKillSession alone
-// does not drain cleanups — sandbox release is a separate EffReleaseFrameSandboxes
-// effect that precedes EffKillSession in the shutdown sequence.
-func TestEffKillSession_doesNotDrainCleanups(t *testing.T) {
-	var called atomic.Bool
-	r := New(Config{Backend: newFakeBackend()})
-	r.storeFrameCleanup("f-kill-session", func() error {
-		called.Store(true)
-		return nil
-	})
-
-	r.execute(state.EffKillSession{})
-
-	if called.Load() {
-		t.Error("EffKillSession must not drain frame cleanups; use EffReleaseFrameSandboxes for that")
-	}
-}
-
 // TestSpawnFrameWindow_cleanupCalledOnSpawnError verifies that when WrapLaunch
 // returns a Cleanup callback but SpawnWindow subsequently fails, the Cleanup is
 // still invoked — preventing sandbox resource leaks (ref-count, containers).
@@ -234,7 +199,7 @@ func TestSpawnFrameWindow_cleanupCalledOnSpawnError(t *testing.T) {
 		Driver:  state.DriverStateBase{},
 	}
 
-	err := r.spawnFrameWindow("sess-1", state.SandboxOverrideAuto, frame, paneSize{width: 120, height: 40})
+	err := r.spawnFrameWindow("sess-1", state.SandboxOverrideAuto, frame)
 	if err == nil {
 		t.Fatal("expected error from spawnFrameWindow, got nil")
 	}
@@ -262,7 +227,7 @@ func (l *testLauncher) IsContainer(_ string) bool { return false }
 
 func TestEffKillSessionWindow_invokesCleanup(t *testing.T) {
 	var called atomic.Bool
-	backend := &injectorStubBackend{}
+	backend := noopBackend{}
 	r := New(Config{Backend: backend})
 
 	frameID := state.FrameID("f-kill")

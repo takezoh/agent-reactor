@@ -196,7 +196,6 @@ func stepDriver(s State, frameID FrameID, ev DriverEvent) (State, []Effect, bool
 	if frame.Driver == nil {
 		frame.Driver = drv.NewState(s.Now)
 	}
-	oldStatus := drv.Status(frame.Driver)
 	nextDS, rawEffs, _ := drv.Step(frame.Driver, ctx, ev)
 
 	s.Sessions = cloneSessions(s.Sessions)
@@ -210,27 +209,6 @@ func stepDriver(s State, frameID FrameID, ev DriverEvent) (State, []Effect, bool
 		patched, newState := postProcessEffect(s, sessID, frameID, eff)
 		s = newState
 		out = append(out, patched)
-	}
-
-	newStatus := drv.Status(nextDS)
-	if kind, ok := ClassifyStatusTransition(oldStatus, newStatus); ok {
-		out = append(out, EffNotify{
-			SessionID: sessID,
-			FrameID:   frameID,
-			Driver:    drv.Name(),
-			Command:   FirstToken(frame.Command),
-			Project:   sess.Project,
-			Kind:      kind,
-			OldStatus: oldStatus,
-			NewStatus: newStatus,
-		})
-	}
-
-	// If the frame just became idle, drain its peer inbox.
-	if newStatus != oldStatus {
-		var injectEffs []Effect
-		s, injectEffs = drainPeerInbox(s, sessID, frameID, oldStatus, newStatus)
-		out = append(out, injectEffs...)
 	}
 
 	return s, out, true
@@ -260,7 +238,6 @@ func bootstrapDriverSessionStart(s State, frameID FrameID) (State, []Effect, boo
 		IsRoot:        true,
 	}
 
-	oldStatus := drv.Status(frame.Driver)
 	nextDS, rawEffs := bootstrapper.BootstrapSessionStart(frame.Driver, ctx, s.Now)
 
 	s.Sessions = cloneSessions(s.Sessions)
@@ -276,26 +253,7 @@ func bootstrapDriverSessionStart(s State, frameID FrameID) (State, []Effect, boo
 		out = append(out, patched)
 	}
 
-	newStatus := drv.Status(nextDS)
-	out = appendStatusNotify(out, sessID, frameID, sess, frame, drv, oldStatus, newStatus)
-
 	return s, out, true
-}
-
-func appendStatusNotify(out []Effect, sessID SessionID, frameID FrameID, sess Session, frame SessionFrame, drv Driver, oldStatus, newStatus Status) []Effect {
-	if kind, ok := ClassifyStatusTransition(oldStatus, newStatus); ok {
-		out = append(out, EffNotify{
-			SessionID: sessID,
-			FrameID:   frameID,
-			Driver:    drv.Name(),
-			Command:   FirstToken(frame.Command),
-			Project:   sess.Project,
-			Kind:      kind,
-			OldStatus: oldStatus,
-			NewStatus: newStatus,
-		})
-	}
-	return out
 }
 
 // postProcessEffect fills in session-context fields the driver Step

@@ -18,10 +18,6 @@ func TestCommandNames(t *testing.T) {
 		{CmdSurfaceSendText{}, CmdNameSurfaceSendText},
 		{CmdSurfaceSendKey{}, CmdNameSurfaceSendKey},
 		{CmdDriverList{}, CmdNameDriverList},
-		{CmdPeerSend{}, CmdNamePeerSend},
-		{CmdPeerList{}, CmdNamePeerList},
-		{CmdPeerSetSummary{}, CmdNamePeerSetSummary},
-		{CmdPeerDrainInbox{}, CmdNamePeerDrainInbox},
 		{CmdHookEvent{}, CmdNameHookEvent},
 	}
 	for _, c := range cases {
@@ -42,7 +38,6 @@ func TestEventNames(t *testing.T) {
 		{EvtLogLine{}, EvtNameLogLine},
 		{EvtSessionFileLine{}, EvtNameSessionFileLine},
 		{EvtAgentNotification{}, EvtNameAgentNotification},
-		{EvtPeerMessage{}, EvtNamePeerMessage},
 	}
 	for _, c := range cases {
 		if got := c.e.EventName(); got != c.name {
@@ -58,8 +53,6 @@ func TestResponseInterface(t *testing.T) {
 	var _ Response = RespActiveSession{}
 	var _ Response = RespSurfaceText{}
 	var _ Response = RespDriverList{}
-	var _ Response = RespPeerList{}
-	var _ Response = RespPeerDrainInbox{}
 }
 
 func TestBaseName(t *testing.T) {

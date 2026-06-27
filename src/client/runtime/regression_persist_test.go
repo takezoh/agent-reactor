@@ -114,7 +114,6 @@ func TestRegressionColdStartDropsStoppedFrames(t *testing.T) {
 	backend := newFakeBackend()
 	l := &trackingLauncher{calls: map[string]int{}}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      backend,
 		Persist:      p,
@@ -159,7 +158,6 @@ func TestRegressionCreateSessionReachesDisk(t *testing.T) {
 	backend := newFakeBackend()
 	persist := &recordingPersist{}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      backend,
 		Persist:      persist,
@@ -196,7 +194,6 @@ func TestRegressionSpawnFailureReachesDiskAsDelete(t *testing.T) {
 	backend := newFakeBackend()
 	persist := &recordingPersist{}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      backend,
 		Persist:      persist,
@@ -293,7 +290,6 @@ func TestRegressionRunFlushesPendingMutationsOnCancel(t *testing.T) {
 	backend := newFakeBackend()
 	persist := &recordingPersist{}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second, // suppress periodic ticks that would mask the bug
 		Backend:      backend,
 		Persist:      persist,
@@ -370,15 +366,14 @@ func TestRegressionRunFlushesPendingMutationsOnCancel(t *testing.T) {
 // TestRegressionEvictedSessionStaysEvictedAfterPaneEvents reproduces the
 // "session restored every cold start" bug.
 //
-// Observed: a daemon evicted session "doomed" via EvPaneDied (log shows
-// "reducePaneDied evictFrame ok"), Persist.Delete fired, file removed.
-// Then while the daemon kept running, sessions/doomed.json was written
-// again — Persist.Save received "doomed" in its session list — meaning
-// state.Sessions had re-acquired the session despite the eviction. The
-// only Save path is r.snapshotSessions(), so re-acquisition is the
-// only consistent explanation. No log line attributes this re-add to
-// any specific event (the new diagnostic added in this commit will catch
-// the trigger on the next reproduction).
+// Observed: a daemon evicted session "doomed" via the frame-death path
+// (reconcileWindows → EvPaneWindowVanished → evictFrame), Persist.Delete
+// fired, file removed. Then while the daemon kept running,
+// sessions/doomed.json was written again — Persist.Save received
+// "doomed" in its session list — meaning state.Sessions had re-acquired
+// the session despite the eviction. The only Save path is
+// r.snapshotSessions(), so re-acquisition is the only consistent
+// explanation.
 //
 // The bug must be in some event path that runs AFTER eviction and re-
 // inserts the session. The eviction reducer removes the session from a
@@ -392,19 +387,18 @@ func TestRegressionRunFlushesPendingMutationsOnCancel(t *testing.T) {
 // emitting EvPaneOsc / EvPanePrompt events with the dead FrameID.
 //
 // This test pre-loads "doomed" + a peer "keeper", evicts "doomed" via
-// EvPaneDied (same path the broken daemon took), then fires the events
-// the leaked tap can emit (EvPaneOsc, EvPanePrompt) and verifies the
-// session remains absent from state, no Save call includes its ID, and
-// Persist.Delete was called exactly once.
+// EvPaneWindowVanished (the same reducer the broken daemon's
+// reconcileWindows path drives), then fires the events the leaked tap
+// can emit (EvPaneOsc, EvPanePrompt) and verifies the session remains
+// absent from state, no Save call includes its ID, and Persist.Delete
+// was called exactly once.
 func TestRegressionEvictedSessionStaysEvictedAfterPaneEvents(t *testing.T) {
 	backend := newFakeBackend()
 	persist := &recordingPersist{}
 	r := New(Config{
-		SessionName:      "reactor-test",
-		TickInterval:     50 * time.Millisecond,
-		FastTickInterval: 25 * time.Millisecond,
-		Backend:          backend,
-		Persist:          persist,
+		TickInterval: 50 * time.Millisecond,
+		Backend:      backend,
+		Persist:      persist,
 	})
 
 	drv := state.GetDriver("shell")
@@ -426,7 +420,6 @@ func TestRegressionEvictedSessionStaysEvictedAfterPaneEvents(t *testing.T) {
 	r.sessionPanes["doomed"] = "%doomed"
 	r.sessionPanes["keeper"] = "%keeper"
 	r.state.ActiveSession = "doomed"
-	r.state.ActiveOccupant = state.OccupantFrame
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -436,11 +429,9 @@ func TestRegressionEvictedSessionStaysEvictedAfterPaneEvents(t *testing.T) {
 	r.Enqueue(state.EvEvent{ConnID: 0, ReqID: "warmup", Event: "list-sessions"})
 	time.Sleep(80 * time.Millisecond)
 
-	// Evict via the same path the broken daemon took.
-	r.Enqueue(state.EvPaneDied{
-		Pane:         "{sessionName}:0.1",
-		OwnerFrameID: "doomed",
-	})
+	// Evict via the same reducer the broken daemon's reconcileWindows
+	// path drives.
+	r.Enqueue(state.EvPaneWindowVanished{FrameID: "doomed"})
 
 	// Wait for the eviction's Persist.Delete to land.
 	deadline := time.Now().Add(2 * time.Second)

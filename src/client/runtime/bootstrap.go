@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/takezoh/agent-reactor/client/state"
-	"github.com/takezoh/agent-reactor/client/uiproc"
 )
 
 // Bootstrap helpers used at startup before the event loop starts.
@@ -124,9 +123,11 @@ func restoreSession(snap SessionSnapshot, coldStart bool, now time.Time) (state.
 	return sess, true
 }
 
-// LoadSessionPanes reads the ROOST_FRAME_* pane backend environment
-// variables and populates r.sessionPanes. Called on warm start after
-// LoadSnapshot.
+// LoadSessionPanes reads ROOST_FRAME_* env entries on the pane backend
+// and populates r.sessionPanes. With PtyBackend each daemon boot starts a
+// fresh termvt.Manager whose env table is empty, so this is effectively a
+// no-op today and exists only for backends that opt into ShowEnvironment
+// for diagnostic dumps.
 func (r *Runtime) LoadSessionPanes() error {
 	type envLister interface {
 		ShowEnvironment() (string, error)
@@ -145,10 +146,6 @@ func (r *Runtime) LoadSessionPanes() error {
 		if len(parts) != 2 {
 			continue
 		}
-		if parts[0] == "ROOST_HIDDEN_PANE" {
-			r.sessionPanes["_log"] = parts[1]
-			continue
-		}
 		if !strings.HasPrefix(parts[0], "ROOST_FRAME_") {
 			continue
 		}
@@ -161,6 +158,12 @@ func (r *Runtime) LoadSessionPanes() error {
 // ReconcileOrphans compares the loaded sessionPanes against the snapshot
 // sessions, drops orphan sessions (in JSON but not in sessionPanes) and
 // cleans up stale env entries (in windowMap but not in JSON).
+//
+// In PtyBackend mode sessionPanes is empty at boot, so every persisted
+// session is "orphan" wrt panes. The cold-start spawn path in coordinator
+// recreates panes from snapshot; this reconciler therefore narrows to
+// pruning sessionPanes entries that no persisted frame owns — useful only
+// for backends that survive across daemon restarts (none in the tree today).
 func (r *Runtime) ReconcileOrphans() {
 	for id, sess := range r.state.Sessions {
 		cut := len(sess.Frames)
@@ -182,11 +185,7 @@ func (r *Runtime) ReconcileOrphans() {
 		r.state.Sessions[id] = sess
 	}
 
-	// Find sessionPanes entries without a matching frame (stale env).
 	for frameID := range r.sessionPanes {
-		if frameID == "_main" {
-			continue
-		}
 		found := false
 		for _, sess := range r.state.Sessions {
 			for _, frame := range sess.Frames {
@@ -210,70 +209,10 @@ func (r *Runtime) ReconcileOrphans() {
 	}
 }
 
-// RecoverActivePaneAtMain restores a consistent main-pane owner on warm start.
-func (r *Runtime) RecoverActivePaneAtMain() {
-	paneAtZero, err := r.cfg.Backend.PaneID(r.mainPaneTarget())
-	if err != nil {
-		slog.Debug("bootstrap: could not get pane id at 0.0", "err", err)
-		return
-	}
-	if paneAtZero == "" {
-		return
-	}
-	// Detect if the log TUI ended up at 0.1 (the client crashed while log was visible).
-	if r.sessionPanes["_log"] != "" && r.sessionPanes["_log"] == paneAtZero {
-		r.state.ActiveOccupant = state.OccupantLog
-		slog.Info("bootstrap: log TUI detected at 0.1; setting ActiveOccupant=log", "pane", paneAtZero)
-		return
-	}
-	// Otherwise 0.1 holds main TUI or a frame — normalize occupant from
-	// physical pane state rather than relying on stale snapshot value.
-	r.state.ActiveOccupant = state.OccupantMain
-
-	var owner state.FrameID
-	for id, paneID := range r.sessionPanes {
-		if id == "_main" || id == "_log" || paneID != paneAtZero {
-			continue
-		}
-		owner = id
-		break
-	}
-	if owner == "" {
-		if r.sessionPanes["_main"] != paneAtZero {
-			r.sessionPanes["_main"] = paneAtZero
-			_ = r.cfg.Backend.SetEnv("ROOST_FRAME__main", paneAtZero)
-		}
-		r.mainPaneSession = ""
-		slog.Info("bootstrap: main TUI active at 0.1", "pane", paneAtZero)
-		return
-	}
-	if r.sessionPanes["_main"] == "" {
-		r.activeFrameID = owner
-		for sid, sess := range r.state.Sessions {
-			for _, frame := range sess.Frames {
-				if frame.ID == owner {
-					r.mainPaneSession = sid
-				}
-			}
-		}
-		slog.Warn("bootstrap: main pane id missing; leaving active frame in place", "frame", owner, "pane", paneAtZero)
-		return
-	}
-	r.activeFrameID = owner
-	for sid, sess := range r.state.Sessions {
-		for _, frame := range sess.Frames {
-			if frame.ID == owner {
-				r.mainPaneSession = sid
-			}
-		}
-	}
-	slog.Info("bootstrap: session left active at 0.0; restoring main TUI", "frame", owner, "pane", paneAtZero, "main_pane", r.sessionPanes["_main"])
-	if !r.swapMainIntoMain() {
-		slog.Warn("bootstrap: failed to restore main TUI at 0.0", "session", owner)
-		return
-	}
-	r.mainPaneSession = ""
-}
+// RecoverActivePaneAtMain previously restored the TUI 0.0/0.1 swap on warm
+// start. Removed: PtyBackend pairs one pane per frame so the main-pane-owner
+// concept no longer exists, and cross-daemon-restart pane recovery is out of
+// scope per ADR 0004 decision 2 (daemon and panes share a lifetime).
 
 func (r *Runtime) RecoverWarmStartSessions() {
 	now := time.Now()
@@ -336,56 +275,46 @@ func (r *Runtime) bootstrapSessionEffect(sessID state.SessionID, frameID state.F
 	}
 }
 
-// deactivateBeforeExit ensures pane 0.1 shows the main TUI when the
-// coordinator re-attaches. Handles both an active session frame and the
-// log TUI occupant. Called from the event loop's defer stack in Run.
-func (r *Runtime) deactivateBeforeExit() {
-	if r.mainPaneSession != "" {
-		r.deactivateSession()
-		slog.Info("bootstrap: deactivated session before exit")
-		return
-	}
-	if r.state.ActiveOccupant == state.OccupantLog {
-		r.swapHidden()
-		r.state.ActiveOccupant = state.OccupantMain
-		slog.Info("bootstrap: swapped log TUI back to hidden before exit")
-	}
-}
+// deactivateBeforeExit previously swapped pane 0.1 back to the main TUI on
+// shutdown so the next attach saw a clean layout. Removed alongside the TUI
+// itself; daemon shutdown now closes the IPC socket and tears down panes via
+// PtyBackend without any layout repair.
 
-// RecoverSandboxFrames re-registers all surviving frames with the sandbox
-// backend during warm start. It calls AdoptFrame for each frame that has a
-// registered pane so the backend (e.g. Docker) can reclaim its container and
-// register a Cleanup callback for when that frame is later killed.
-// Must be called after ReconcileOrphans so only live frames are processed.
-func (r *Runtime) RecoverSandboxFrames() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+// RecoverSandboxFrames tries to re-attach each persisted frame to its sandbox
+// (e.g. Docker container) before the cold-start spawn path runs. PtyBackend
+// terminal sessions die with the daemon, but devcontainer containers and
+// codex remote threads outlive a daemon restart — adopting them here lets the
+// subsequent fresh pane re-attach to the same running agent instead of losing
+// the container's working state.
+//
+// Returns the set of frame IDs that were successfully adopted so the cold-start
+// path can decide which frames need a fresh container vs an attach. Frames for
+// which AdoptFrame fails (no surviving container, dispatcher refuses) are left
+// alone — RecreateAll will spawn a fresh container for them via the normal
+// EnsureProject path.
+func (r *Runtime) RecoverSandboxFrames(ctx context.Context) map[state.FrameID]struct{} {
 	l := launcher(r.cfg)
+	r.recoverWarmTokens()
 
-	liveFrames := r.buildLiveFrameSet()
-	r.recoverWarmTokens(liveFrames)
-
+	adopted := make(map[state.FrameID]struct{})
 	for _, sess := range r.state.Sessions {
 		for _, frame := range sess.Frames {
-			if _, ok := r.sessionPanes[frame.ID]; !ok {
-				continue
-			}
 			cleanup, mounts, err := l.AdoptFrame(ctx, frame.ID, frame.Project)
 			if err != nil {
-				slog.Warn("bootstrap: sandbox adopt failed", "frame", frame.ID, "err", err)
+				slog.Info("bootstrap: sandbox adopt skipped (no survivor)",
+					"frame", frame.ID, "project", frame.Project, "err", err)
 				continue
 			}
+			adopted[frame.ID] = struct{}{}
 			if cleanup != nil {
 				r.storeFrameCleanup(frame.ID, cleanup)
 			}
 			if len(mounts) > 0 {
 				// The token was registered by recoverWarmTokens above; store the
 				// mounts on the same registry so token and mounts live behind one
-				// lock. Warm start is pre-Run (serial), so this is the sole writer.
+				// lock. Boot is pre-Run (serial), so this is the sole writer.
 				r.frameReg.StoreMounts(frame.ID, mounts)
 			}
-			// Start the container endpoint for sandboxed frames so hook events
-			// can be received immediately after daemon warm restart.
 			if r.state.SandboxedProject != nil && r.state.SandboxedProject(frame.Project) && r.cfg.DataDir != "" {
 				runDirKey := frame.Project
 				if dl := devcontainerLauncherFor(l); dl != nil {
@@ -394,27 +323,26 @@ func (r *Runtime) RecoverSandboxFrames() {
 				runDir := ProjectRunDir(filepath.Join(r.cfg.DataDir, "run"), runDirKey)
 				r.startContainerEndpointIfNeeded(frame.Project, ContainerSockPath(runDir))
 			}
+			slog.Info("bootstrap: sandbox frame adopted",
+				"frame", frame.ID, "project", frame.Project, "mounts", len(mounts))
 		}
 	}
-}
-
-func (r *Runtime) buildLiveFrameSet() map[string]struct{} {
-	live := make(map[string]struct{})
-	for _, sess := range r.state.Sessions {
-		for _, frame := range sess.Frames {
-			if _, ok := r.sessionPanes[frame.ID]; ok {
-				live[string(frame.ID)] = struct{}{}
-			}
-		}
-	}
-	return live
+	return adopted
 }
 
 // recoverWarmTokens restores container tokens from warm/ so container agents
-// can still send hook events after a daemon warm restart.
-func (r *Runtime) recoverWarmTokens(liveFrames map[string]struct{}) {
+// can still send hook events after a daemon restart. Walks the persisted
+// snapshot to identify live frames; warm entries for frames absent from the
+// snapshot are deleted proactively so warm/ does not accumulate stale files.
+func (r *Runtime) recoverWarmTokens() {
 	if r.warmFrames == nil {
 		return
+	}
+	liveFrames := make(map[string]struct{})
+	for _, sess := range r.state.Sessions {
+		for _, frame := range sess.Frames {
+			liveFrames[string(frame.ID)] = struct{}{}
+		}
 	}
 	states, err := r.warmFrames.LoadAll()
 	if err != nil {
@@ -422,7 +350,6 @@ func (r *Runtime) recoverWarmTokens(liveFrames map[string]struct{}) {
 	}
 	for _, st := range states {
 		if _, ok := liveFrames[st.FrameID]; !ok {
-			// orphan: no live frame — delete proactively so warm restarts don't accumulate stale files
 			_ = r.warmFrames.Delete(state.FrameID(st.FrameID))
 			continue
 		}
@@ -455,21 +382,4 @@ func (r *Runtime) SetDefaultCommand(cmd string) {
 // Kept as a stable hook for future use.
 func (r *Runtime) SetSyncCallbacks(active, status func(string)) {
 	// Reserved.
-}
-
-// RespawnMainPane runs respawn-pane for the main TUI.
-func (r *Runtime) RespawnMainPane() {
-	target := r.sessionPanes["_main"]
-	if target == "" {
-		target = r.mainPaneTarget()
-	}
-
-	// Double check to protect active sessions if mapping failed
-	if target == r.mainPaneTarget() && r.mainPaneSession != "" {
-		slog.Warn("bootstrap: skipping main TUI respawn to protect active session at 0.0")
-		return
-	}
-
-	slog.Info("bootstrap: respawning main TUI", "target", target)
-	_ = r.cfg.Backend.RespawnPane(target, uiproc.Main().Command(r.cfg.RoostExe))
 }

@@ -49,7 +49,6 @@ func (l *trackingLauncher) EnsureProject(_ context.Context, projectPath string) 
 
 func makeRuntimeWithProjects(projects []string, launcher AgentLauncher) *Runtime {
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      noopBackend{},
 		Launcher:     launcher,
@@ -100,7 +99,6 @@ func TestPrewarmContainers_DeduplicatesProject(t *testing.T) {
 	project := "/proj/shared"
 	l := &trackingLauncher{calls: make(map[string]int)}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      noopBackend{},
 		Launcher:     l,
@@ -144,7 +142,6 @@ func TestPrewarmContainers_FailureDoesNotAbort(t *testing.T) {
 func TestPrewarmContainers_SkipsNonSandboxed(t *testing.T) {
 	l := &trackingLauncher{calls: make(map[string]int)}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      noopBackend{},
 		Launcher:     l,
@@ -167,7 +164,6 @@ func TestPrewarmContainers_SkipsNonSandboxed(t *testing.T) {
 func TestPrewarmContainers_NoSessionsIsNoop(t *testing.T) {
 	l := &trackingLauncher{calls: make(map[string]int)}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      noopBackend{},
 		Launcher:     l,
@@ -186,7 +182,6 @@ func TestPrewarmContainers_NoSessionsIsNoop(t *testing.T) {
 func TestPrewarmContainers_SkipsHostOnlyProject(t *testing.T) {
 	l := &trackingLauncher{calls: make(map[string]int)}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Backend:      noopBackend{},
 		Launcher:     l,
@@ -230,10 +225,9 @@ func TestRecreateAll_SpawnFailureLeavesSessionInState(t *testing.T) {
 	backend.spawnErr = errors.New("injected spawn failure")
 	persist := &recordingPersist{}
 	r := New(Config{
-		SessionName: "reactor-test",
-		Backend:     backend,
-		Launcher:    &trackingLauncher{calls: make(map[string]int)},
-		Persist:     persist,
+		Backend:  backend,
+		Launcher: &trackingLauncher{calls: make(map[string]int)},
+		Persist:  persist,
 	})
 	r.SetSandboxedProjectResolver(func(string) bool { return false })
 	r.state.Sessions["s1"] = state.Session{
@@ -319,10 +313,9 @@ func TestRecreateAll_ContinuesPastFailingFrame(t *testing.T) {
 	backend := newFakeBackend()
 	backend.spawnErr = errors.New("injected spawn failure")
 	r := New(Config{
-		SessionName: "reactor-test",
-		Backend:     backend,
-		Launcher:    &trackingLauncher{calls: make(map[string]int)},
-		Persist:     &recordingPersist{},
+		Backend:  backend,
+		Launcher: &trackingLauncher{calls: make(map[string]int)},
+		Persist:  &recordingPersist{},
 	})
 	r.SetSandboxedProjectResolver(func(string) bool { return false })
 	r.state.Sessions["s1"] = state.Session{
@@ -366,9 +359,8 @@ func TestSpawnFrameWindow_SandboxOptionOnColdStart(t *testing.T) {
 			registerMinimalDriver(t)
 			l := &trackingLauncher{calls: make(map[string]int)}
 			r := New(Config{
-				SessionName: "reactor-test",
-				Backend:     newFakeBackend(),
-				Launcher:    l,
+				Backend:  newFakeBackend(),
+				Launcher: l,
 			})
 			r.SetSandboxedProjectResolver(func(string) bool { return true })
 			frame := state.SessionFrame{
@@ -377,7 +369,7 @@ func TestSpawnFrameWindow_SandboxOptionOnColdStart(t *testing.T) {
 				Command: "minimal-test",
 				Driver:  state.DriverStateBase{},
 			}
-			if err := r.spawnFrameWindow("s1", tt.sandbox, frame, paneSize{width: 120, height: 40}); err != nil {
+			if err := r.spawnFrameWindow("s1", tt.sandbox, frame); err != nil {
 				t.Fatalf("spawnFrameWindow: %v", err)
 			}
 			l.mu.Lock()

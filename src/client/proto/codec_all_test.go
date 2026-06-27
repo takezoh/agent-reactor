@@ -15,10 +15,6 @@ func TestEncodeDecodeAllCommands(t *testing.T) {
 		CmdSurfaceSendText{SessionID: "s1", Text: "hi"},
 		CmdSurfaceSendKey{SessionID: "s1", Key: "Escape"},
 		CmdDriverList{},
-		CmdPeerSend{FromFrameID: "f1", ToFrameID: "f2", Text: "hi"},
-		CmdPeerList{Scope: "all"},
-		CmdPeerSetSummary{FromFrameID: "f1", Summary: "s"},
-		CmdPeerDrainInbox{FromFrameID: "f1"},
 		CmdHookEvent{Token: "t", Hook: "PreToolUse"},
 	}
 	for _, c := range cmds {
@@ -61,7 +57,6 @@ func TestEncodeDecodeAllEvents(t *testing.T) {
 		EvtLogLine{Path: "/a", Line: "x"},
 		EvtSessionFileLine{SessionID: "s", Kind: "k", Line: "x"},
 		EvtAgentNotification{SessionID: "s", Cmd: 9, Title: "t"},
-		EvtPeerMessage{ToSessionID: "s", FromFrameID: "f", Text: "hi"},
 	}
 	for _, e := range evts {
 		raw, err := EncodeEvent(e)
@@ -143,8 +138,6 @@ func TestDecodeResponseByCommand(t *testing.T) {
 		{"active", `{"active_session_id":"x"}`},
 		{"text", `{"text":"x"}`},
 		{"drivers", `{"drivers":[]}`},
-		{"peers", `{"peers":[]}`},
-		{"messages", `{"messages":[]}`},
 	}
 	for _, c := range cases {
 		env := Envelope{Type: TypeResponse, Data: json.RawMessage(c.raw)}

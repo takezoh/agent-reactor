@@ -15,68 +15,6 @@ func roundTripWith(t *testing.T, srv *fakeServer, resp Response) {
 	srv.send(wire)
 }
 
-func TestPeerSend(t *testing.T) {
-	c, srv := newFakeServer(t)
-	defer c.Close()
-	go roundTripWith(t, srv, RespOK{})
-	if err := c.PeerSend("f1", "f2", "hi", ""); err != nil {
-		t.Errorf("PeerSend: %v", err)
-	}
-}
-
-func TestPeerList(t *testing.T) {
-	c, srv := newFakeServer(t)
-	defer c.Close()
-	go roundTripWith(t, srv, RespPeerList{Peers: []PeerPeerInfo{{FrameID: "f"}}})
-	peers, err := c.PeerList("from", "all")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(peers) != 1 || peers[0].FrameID != "f" {
-		t.Errorf("peers = %+v", peers)
-	}
-}
-
-func TestPeerListUnexpectedResponse(t *testing.T) {
-	c, srv := newFakeServer(t)
-	defer c.Close()
-	go roundTripWith(t, srv, RespOK{})
-	if _, err := c.PeerList("from", ""); err == nil {
-		t.Error("expected error")
-	}
-}
-
-func TestPeerSetSummary(t *testing.T) {
-	c, srv := newFakeServer(t)
-	defer c.Close()
-	go roundTripWith(t, srv, RespOK{})
-	if err := c.PeerSetSummary("f", "summary"); err != nil {
-		t.Errorf("PeerSetSummary: %v", err)
-	}
-}
-
-func TestPeerDrainInbox(t *testing.T) {
-	c, srv := newFakeServer(t)
-	defer c.Close()
-	go roundTripWith(t, srv, RespPeerDrainInbox{Messages: []PeerMessage{{ID: "m1"}}})
-	msgs, err := c.PeerDrainInbox("f")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(msgs) != 1 || msgs[0].ID != "m1" {
-		t.Errorf("msgs = %+v", msgs)
-	}
-}
-
-func TestPeerDrainInboxUnexpected(t *testing.T) {
-	c, srv := newFakeServer(t)
-	defer c.Close()
-	go roundTripWith(t, srv, RespOK{})
-	if _, err := c.PeerDrainInbox("f"); err == nil {
-		t.Error("expected error")
-	}
-}
-
 func TestSendHookEvent(t *testing.T) {
 	c, srv := newFakeServer(t)
 	defer c.Close()

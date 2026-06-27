@@ -1,20 +1,17 @@
-BINARY           := arc
 BRIDGE           := reactor-bridge
 ORCHESTRATOR     := orchestrator
 CLAUDE_APP_SERVER := claude-app-server
 SERVER           := server
 WEB              := web
-NOTIFY_PS1  := notify.ps1
 SRC_DIR     := src
 INSTALL_DIR    := $(HOME)/.local/bin
 LIBEXEC_DIR    := $(HOME)/.local/lib/agent-reactor
 SYSTEMD_USER_DIR := $(HOME)/.config/systemd/user
 
-# install-systemd renames the three production binaries to their runtime/server/
-# web roles so the systemd unit file ExecStart= lines and `journalctl --user -u
+# install-systemd renames the production binaries to their server/web roles so
+# the systemd unit file ExecStart= lines and `journalctl --user -u
 # agent-reactor-…` namespacing read in service vocabulary rather than the
-# TUI-era binary name. The binaries themselves are unchanged.
-RUNTIME_BIN := agent-reactor-runtime
+# generic binary name. The binaries themselves are unchanged.
 SERVER_BIN  := agent-reactor-server
 WEB_BIN     := agent-reactor-web
 
@@ -23,14 +20,14 @@ CODEX_SCHEMA_TMP := /tmp/codex-schema-gen
 
 .PHONY: build build-orchestrator build-claude-app-server build-server build-web build-all \
         build-web-frontend \
-        run-dev build-experimental install install-systemd clean test test-race vet lint \
+        run-dev install install-systemd clean test test-race vet lint \
         verify-bridge-deps \
         codex-schema-update codex-schema-check
 
-build:
-	cd $(SRC_DIR) && go build -o ../$(BINARY) ./cmd/arc
+# build builds the main backend (cmd/server) — the merged daemon + HTTP/WS
+# gateway — plus the in-container helper binary.
+build: build-server
 	cd $(SRC_DIR) && go build -o ../$(BRIDGE) ./cmd/reactor-bridge
-	cp $(SRC_DIR)/platform/lib/notify/notify.ps1 ./$(NOTIFY_PS1)
 
 build-orchestrator:
 	cd $(SRC_DIR) && go build -o ../$(ORCHESTRATOR) ./cmd/orchestrator
@@ -38,8 +35,8 @@ build-orchestrator:
 build-claude-app-server:
 	cd $(SRC_DIR) && go build -o ../$(CLAUDE_APP_SERVER) ./cmd/claude-app-server
 
-# build-server builds the headless backend (cmd/server): pty session host with a
-# REST + WebSocket API that clients connect to. It serves no UI.
+# build-server builds the headless backend (cmd/server): the merged daemon +
+# REST/WebSocket gateway that browser/CLI clients connect to. It serves no UI.
 build-server:
 	cd $(SRC_DIR) && go build -o ../$(SERVER) ./cmd/server
 
@@ -79,36 +76,26 @@ build-all: build build-orchestrator build-claude-app-server build-server build-w
 run-dev: build-server build-web
 	./scripts/run-dev.sh
 
-build-experimental:
-	cd $(SRC_DIR) && go build -tags experimental -o ../$(BINARY) ./cmd/arc
-
 install: build
 	install -d $(INSTALL_DIR) $(LIBEXEC_DIR)
-	install -m 755 $(BINARY) $(INSTALL_DIR)/$(BINARY)
+	install -m 755 $(SERVER) $(INSTALL_DIR)/$(SERVER)
 	install -m 755 $(BRIDGE) $(LIBEXEC_DIR)/$(BRIDGE)
-	install -m 644 $(NOTIFY_PS1) $(LIBEXEC_DIR)/$(NOTIFY_PS1)
 
-# install-systemd installs the three production binaries (runtime, server, web)
-# plus the runtime's helper libexec (reactor-bridge + notify.ps1) into the
-# user-scope locations consumed by deploy/systemd/agent-reactor-{runtime,server,
-# web}.service, and copies those unit files into ~/.config/systemd/user/.
+# install-systemd installs the server + web binaries plus the in-container
+# helper (reactor-bridge) into the user-scope locations consumed by
+# deploy/systemd/agent-reactor-{server,web}.service, and copies those unit
+# files into ~/.config/systemd/user/.
 # Binaries are renamed to their service role on disk so unit-file ExecStart=
-# lines and journald output stay in runtime/server/web vocabulary.
+# lines and journald output stay in server/web vocabulary.
 #
 # After `make install-systemd`, run `systemctl --user daemon-reload && \
 # systemctl --user enable --now agent-reactor-web.service` to start the stack;
 # see docs/user/systemd.md for the full procedure.
-#
-# The existing `install` target (TUI-only workflow) is intentionally left
-# untouched — operators running both can run both targets independently.
 install-systemd: build build-server build-web
 	install -d $(INSTALL_DIR) $(LIBEXEC_DIR) $(SYSTEMD_USER_DIR)
-	install -m 755 $(BINARY) $(INSTALL_DIR)/$(RUNTIME_BIN)
 	install -m 755 $(SERVER) $(INSTALL_DIR)/$(SERVER_BIN)
 	install -m 755 $(WEB)    $(INSTALL_DIR)/$(WEB_BIN)
 	install -m 755 $(BRIDGE) $(LIBEXEC_DIR)/$(BRIDGE)
-	install -m 644 $(NOTIFY_PS1) $(LIBEXEC_DIR)/$(NOTIFY_PS1)
-	install -m 644 deploy/systemd/agent-reactor-runtime.service $(SYSTEMD_USER_DIR)/
 	install -m 644 deploy/systemd/agent-reactor-server.service  $(SYSTEMD_USER_DIR)/
 	install -m 644 deploy/systemd/agent-reactor-web.service     $(SYSTEMD_USER_DIR)/
 	@echo
@@ -148,7 +135,7 @@ verify-bridge-deps:
 	@cd $(SRC_DIR) && go list -deps ./cmd/reactor-bridge | grep -E 'takezoh/agent-reactor/(client/(state|uiproc)|platform/features)$$' && echo "FAIL: bridge imports forbidden packages" && exit 1 || echo "OK: bridge deps are clean"
 
 clean:
-	rm -f $(BINARY) $(BRIDGE) $(ORCHESTRATOR) $(CLAUDE_APP_SERVER) $(NOTIFY_PS1)
+	rm -f $(SERVER) $(WEB) $(BRIDGE) $(ORCHESTRATOR) $(CLAUDE_APP_SERVER)
 
 # codex-schema-check — verify committed bundle files match current codex output.
 # Comparison is done with sorted keys so JSON object ordering doesn't matter.

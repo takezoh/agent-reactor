@@ -1,7 +1,7 @@
 ## Build & Test
 
 ```sh
-make build                   # Build Go sources under src/ → ./arc (+ reactor-bridge)
+make build-server            # Build Go sources under src/ → ./server (+ reactor-bridge)
 make build-orchestrator      # Build → ./orchestrator
 make build-claude-app-server # Build → ./claude-app-server
 make build-all               # Build all 3 main binaries
@@ -18,11 +18,11 @@ One Go module, three top-level trees under `src/` and three binaries:
 
 | Binary | Source | Layer | Role |
 |---|---|---|---|
-| `arc` | `src/cmd/arc/` | `client/` | TUI session lifecycle manager (formerly roost) |
+| `server` | `src/cmd/server/` | `client/` | Single-process backend — pty session daemon + HTTP/WS gateway in one binary (Unix-socket IPC plus browser-facing REST/WS) |
 | `orchestrator` | `src/cmd/orchestrator/` | `orchestrator/` | Symphony SPEC implementation — autonomous poll/dispatch/reconcile + observability HTTP |
 | `claude-app-server` | `src/cmd/claude-app-server/` | `platform/` + `orchestrator/` | Codex app-server stdio shim for Claude; enables agent-switch via `codex.command` in WORKFLOW.md |
 
-`platform/` is shared infrastructure; `client/` is agent-reactor's client (the `arc` TUI); `orchestrator/` is the Symphony pipeline. Import direction (enforced by `depguard`, `src/.golangci.yml`): `platform/*` imports neither `client/*` nor `orchestrator/*`; `client/*` does not import `orchestrator/*`; `orchestrator/*` does not import `client/*`. Full layer definition: [ARCHITECTURE.md](ARCHITECTURE.md).
+`platform/` is shared infrastructure; `client/` is agent-reactor's session daemon and the embedded HTTP/WS gateway under `client/web/`, both shipped as the single `server` binary; `orchestrator/` is the Symphony pipeline. Import direction (enforced by `depguard`, `src/.golangci.yml`): `platform/*` imports neither `client/*` nor `orchestrator/*`; `client/*` does not import `orchestrator/*`; `orchestrator/*` does not import `client/*`. Full layer definition: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 Orchestrator-scoped test run: `cd src && go test ./orchestrator/... ./platform/tracker/... ./cmd/orchestrator/... ./cmd/claude-app-server/...`
 Conformance: `docs/technical/orchestrator/symphony-conformance.md` — SPEC §17 ↔ test 対応表と逸脱 posture の正本。

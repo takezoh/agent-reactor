@@ -13,23 +13,21 @@ func seedSurfaceCommands() [][]byte {
 		[]byte(`{"type":"cmd","req_id":"r2","cmd":"surface.unsubscribe","data":{"session_id":"s1"}}`),
 		[]byte(`{"type":"cmd","req_id":"r3","cmd":"surface.resize","data":{"session_id":"s1","cols":80,"rows":24}}`),
 		[]byte(`{"type":"cmd","req_id":"r4","cmd":"surface.write_raw","data":{"session_id":"s1","data":"G1tB"}}`),
-		// 既存コマンド 3 個
+		// 既存コマンド 2 個
 		[]byte(`{"type":"cmd","req_id":"r5","cmd":"subscribe","data":{"filters":["sessions-changed"]}}`),
-		[]byte(`{"type":"cmd","req_id":"r6","cmd":"peer.send","data":{"from":"f1","to":"f2","text":"hello"}}`),
 		[]byte(`{"type":"cmd","req_id":"r7","cmd":"hook-event","data":{"token":"deadbeef","hook":"SessionStart","payload":{}}}`),
 	}
 }
 
 // seedSurfaceEvents returns seed bytes for FuzzDecodeEvent.
-// 2 Surface 系 + 2 既存イベントの計 4 シード。
+// 2 Surface 系 + 1 既存イベントの計 3 シード。
 func seedSurfaceEvents() [][]byte {
 	return [][]byte{
 		// Surface 系 2 個
 		[]byte(`{"type":"evt","name":"surface-output","data":{"session_id":"s1","time_sec":1.5,"data_b64":"YWJj","sequence":1}}`),
 		[]byte(`{"type":"evt","name":"prompt-event","data":{"frame_id":"f1","phase":"start","now_rfc":"2026-06-19T00:00:00Z"}}`),
-		// 既存イベント 2 個
+		// 既存イベント 1 個
 		[]byte(`{"type":"evt","name":"sessions-changed","data":{"sessions":[],"active_session_id":""}}`),
-		[]byte(`{"type":"evt","name":"peer-message","data":{"to_session_id":"s1","from_frame_id":"f1","text":"hi","sent_at":"2026-06-19T00:00:00Z"}}`),
 	}
 }
 

@@ -9,7 +9,6 @@
 # gains durable coverage — never lower it without a written justification.
 
 # client/ — reactor-specific session lifecycle layer
-github.com/takezoh/agent-reactor/client/cli                          12
 github.com/takezoh/agent-reactor/client/config                       85
 github.com/takezoh/agent-reactor/client/driver                       75
 github.com/takezoh/agent-reactor/client/driver/vt                    55
@@ -43,12 +42,11 @@ github.com/takezoh/agent-reactor/cmd/linear-graphql-cli               0
 # cmd/orchestrator: buildDevcontainerLauncher (requires Docker) and main() are
 # structurally untestable in unit tests; floor reflects achievable non-Docker coverage.
 github.com/takezoh/agent-reactor/cmd/orchestrator                    55
-github.com/takezoh/agent-reactor/cmd/arc                           15
 github.com/takezoh/agent-reactor/cmd/reactor-bridge                     0
-# cmd/server & cmd/web: main/run bind sockets and block (untestable in a unit
-# test). The cert/serve helpers moved to platform/lib/tlsdev (tested there), so
-# only randToken stays pure in cmd/server — hence the floor dropped from 15.
-github.com/takezoh/agent-reactor/cmd/server                           8
+# cmd/server hosts the merged daemon + HTTP/WS gateway. runDaemon binds sockets
+# and blocks (untestable in a unit test); the dispatch / flag-parse / gateway
+# helpers (resolveAuth, tokenFromFile, classifyCommand, runMain) are covered.
+github.com/takezoh/agent-reactor/cmd/server                           15
 github.com/takezoh/agent-reactor/cmd/web                              0
 
 # orchestrator/ — Symphony scheduler service

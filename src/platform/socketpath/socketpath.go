@@ -1,4 +1,4 @@
-// Package socketpath は arc daemon が listen する Unix socket path を
+// Package socketpath は server daemon が listen する Unix socket path を
 // 一意に解決するヘルパを提供する。
 //
 // 優先順位:
@@ -16,11 +16,11 @@ import (
 	"strings"
 )
 
-// ResolveDaemonSocket は arc daemon の Unix socket path を解決して返す。
+// ResolveDaemonSocket は server daemon の Unix socket path を解決して返す。
 //
 //   - flag: コマンドライン等で明示的に渡された path (空文字なら無視)
 //   - envName: 参照する環境変数名 (空文字なら env ステップをスキップ)
-//   - fallbackBasename: デフォルト使用するファイル名 (例: "arc.sock")
+//   - fallbackBasename: デフォルト使用するファイル名 (例: "server.sock")
 func ResolveDaemonSocket(flag, envName, fallbackBasename string) string {
 	if v := strings.TrimSpace(flag); v != "" {
 		return v

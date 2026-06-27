@@ -56,7 +56,7 @@ type FrameContext struct {
 	IsRoot        bool
 }
 
-// DEvHook is a hook event from the agent via `arc event <eventType>`.
+// DEvHook is a hook event from the agent via `server event <eventType>`.
 // Payload is the raw JSON from stdin.
 type DEvHook struct {
 	Event          string

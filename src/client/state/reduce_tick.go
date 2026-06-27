@@ -1,13 +1,7 @@
 package state
 
-import (
-	"log/slog"
-
-	"github.com/takezoh/agent-reactor/client/uiproc"
-)
-
-// Tick reducer. Fans the tick out to every session's driver and
-// emits periodic reconciliation + health-check effects.
+// Tick reducer. Fans the tick out to every session's driver and emits the
+// periodic frame liveness reconcile.
 
 func reduceTick(s State, e EvTick) (State, []Effect) {
 	s.Now = e.Now
@@ -27,20 +21,13 @@ func reduceTick(s State, e EvTick) (State, []Effect) {
 		return ev
 	})
 
-	// Active-pane death check: every tick (covers the no-active-frame case
-	// where the fast ticker skips; fast ticker handles the active-frame case).
-	effs = append(effs, EffCheckPaneAlive{Pane: "{sessionName}:0.1"})
-
-	// Control-pane health and window reconcile: every 5 ticks to reduce
-	// subprocess pressure. These are non-latency-sensitive: a respawn
-	// triggered 5 s late is indistinguishable from 1 s late for the user.
+	// Frame liveness reconcile: every 5 ticks the runtime walks r.sessionPanes
+	// and emits EvFrameCommandExited / EvPaneWindowVanished per dead frame.
+	// reconcileWindows is the sole frame-death detection path now — the legacy
+	// per-tick EffCheckPaneAlive emissions targeted tmux control panes
+	// (0.0/0.1/0.2/__hidden__.0) that no longer exist under PtyBackend.
 	if e.N%5 == 0 {
-		effs = append(effs,
-			EffCheckPaneAlive{Pane: "{sessionName}:0.0"},
-			EffCheckPaneAlive{Pane: "{sessionName}:0.2"},
-			EffCheckPaneAlive{Pane: "{sessionName}:__hidden__.0"},
-			EffReconcileWindows{},
-		)
+		effs = append(effs, EffReconcileWindows{})
 	}
 
 	if changed {
@@ -49,72 +36,8 @@ func reduceTick(s State, e EvTick) (State, []Effect) {
 	return s, effs
 }
 
-// reducePaneDied handles a dead pane detected by EffCheckPaneAlive.
-//   - Pane __hidden__.0 (log TUI): respawn log TUI in the hidden window
-//   - Panes 0.0/0.2 (header/sessions): always respawn via RespawnTarget
-//   - Pane 0.1 with no active session: main or log TUI crashed — respawn it
-//   - Pane 0.1 with active session: evict the owning session
-func reducePaneDied(s State, e EvPaneDied) (State, []Effect) {
-	slog.Info("state: reducePaneDied entry",
-		"pane", e.Pane, "owner", e.OwnerFrameID,
-		"occupant", s.ActiveOccupant, "activeSession", s.ActiveSession)
-
-	// Hidden pane (log TUI): log TUI process crashed — respawn it in place.
-	if e.Pane == "{sessionName}:__hidden__.0" {
-		slog.Info("state: reducePaneDied branch=hidden-log")
-		return s, []Effect{EffRespawnPane{Pane: e.Pane, Proc: uiproc.Log()}}
-	}
-
-	// Control pane respawn
-	if proc, ok := uiproc.RespawnTarget(e.Pane); ok {
-		slog.Info("state: reducePaneDied branch=control-respawn", "proc", proc.Name)
-		return s, []Effect{
-			EffRespawnPane{Pane: e.Pane, Proc: proc},
-		}
-	}
-
-	// Pane 0.1 dead with no active frame: main or log TUI crashed.
-	if e.Pane == "{sessionName}:0.1" && s.ActiveOccupant != OccupantFrame {
-		proc := uiproc.Main()
-		if s.ActiveOccupant == OccupantLog {
-			proc = uiproc.Log()
-		}
-		slog.Info("state: reducePaneDied branch=no-active-frame-respawn",
-			"proc", proc.Name, "occupant", s.ActiveOccupant)
-		return s, []Effect{
-			EffRespawnPane{Pane: e.Pane, Proc: proc},
-		}
-	}
-
-	// Pane 0.1 dead with active session: evict the owning session.
-	// OwnerFrameID is set by the runtime; fall back to ActiveSession
-	// if the runtime couldn't identify the owner via pane_id.
-	ownerID := e.OwnerFrameID
-	if ownerID == "" {
-		if sess, ok := s.Sessions[s.ActiveSession]; ok {
-			if frame, ok := activeFrame(sess); ok {
-				ownerID = frame.ID
-				slog.Info("state: reducePaneDied owner fallback via ActiveSession",
-					"owner", ownerID)
-			}
-		}
-	}
-	if ownerID == "" {
-		slog.Info("state: reducePaneDied bail=no-owner")
-		return s, nil
-	}
-	s, effs, ok := evictFrame(s, ownerID, true)
-	if !ok {
-		slog.Info("state: reducePaneDied evictFrame returned !ok", "owner", ownerID)
-		return s, nil
-	}
-	slog.Info("state: reducePaneDied evictFrame ok", "owner", ownerID, "neffs", len(effs))
-	return s, effs
-}
-
 // reducePaneWindowVanished evicts a session whose backend window has
 // disappeared (agent process exited) and broadcasts the new list.
-// If the vanished session was active, deactivation restores the main TUI.
 func reducePaneWindowVanished(s State, e EvPaneWindowVanished) (State, []Effect) {
 	s, effs, ok := evictFrame(s, e.FrameID, false)
 	if !ok {

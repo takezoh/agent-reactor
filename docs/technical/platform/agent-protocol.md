@@ -138,6 +138,6 @@ approval / sandbox policy hints are logged but not enforced by the shim — isol
 | `AppServerListenArgs(serverBin, sock, extra, sandboxExternal)` (`:54`) | listen-socket mode |
 | `AppServerStdioArgs(extra, sandboxExternal)` (`:64`) | stdio mode |
 | `RemoteAttachArgs(sock, threadID, startDir)` (`:79`) | remote attach over the app-server UDS (`--remote unix://<sock>`) |
-| `ShellJoinArgv(args)` (`:93`) | shell-join argv for a tmux pane |
+| `ShellJoinArgv(args)` (`:93`) | shell-join argv for a pty pane |
 
-`ShellJoinArgv` is what populates the `Command` form (tmux) in [spawn-and-launch.md](spawn-and-launch.md).
+`ShellJoinArgv` is what populates the `Command` form (pty pane) in [spawn-and-launch.md](spawn-and-launch.md).

@@ -41,7 +41,7 @@ func sendRawCommand(t *testing.T, sockPath string, cmd proto.Command) (proto.Env
 
 func TestContainerEndpointAcceptsHookEvent(t *testing.T) {
 	dir := t.TempDir()
-	sp := filepath.Join(dir, "arc.sock")
+	sp := filepath.Join(dir, "server.sock")
 	reg := framereg.New()
 	fid := state.FrameID("frame-hook")
 	tok := "tok-frame-hook"
@@ -97,12 +97,11 @@ func TestContainerEndpointRejectsUnknownCommands(t *testing.T) {
 		{"surface.send_text", proto.CmdSurfaceSendText{SessionID: "s1", Text: "hi"}},
 		{"surface.send_key", proto.CmdSurfaceSendKey{SessionID: "s1", Key: "C-c"}},
 		{"surface.read_text", proto.CmdSurfaceReadText{SessionID: "s1"}},
-		{"peer.send", proto.CmdPeerSend{FromFrameID: "f1", ToFrameID: "f2", Text: "x"}},
 		{"driver.list", proto.CmdDriverList{}},
 	}
 
 	dir := t.TempDir()
-	sp := filepath.Join(dir, "arc.sock")
+	sp := filepath.Join(dir, "server.sock")
 	reg := framereg.New()
 	ep, err := startContainerEndpoint(sp, reg, func(state.Event) {})
 	if err != nil {
@@ -128,7 +127,7 @@ func TestContainerEndpointRejectsUnknownCommands(t *testing.T) {
 
 func TestContainerEndpointRejectsInvalidToken(t *testing.T) {
 	dir := t.TempDir()
-	sp := filepath.Join(dir, "arc.sock")
+	sp := filepath.Join(dir, "server.sock")
 	reg := framereg.New()
 	reg.Register(state.FrameID("f1"), "tok-f1")
 	ep, err := startContainerEndpoint(sp, reg, func(state.Event) {})
@@ -154,7 +153,7 @@ func TestContainerEndpointRejectsInvalidToken(t *testing.T) {
 
 func TestContainerEndpointRejectsRevokedToken(t *testing.T) {
 	dir := t.TempDir()
-	sp := filepath.Join(dir, "arc.sock")
+	sp := filepath.Join(dir, "server.sock")
 	reg := framereg.New()
 	fid := state.FrameID("frame-revoked")
 	tok := "tok-revoked"
@@ -276,7 +275,7 @@ func TestTranslatePayloadPaths(t *testing.T) {
 // with a container-absolute cwd is enqueued with the host-absolute path.
 func TestContainerEndpointTranslatesCwd(t *testing.T) {
 	dir := t.TempDir()
-	sp := filepath.Join(dir, "arc.sock")
+	sp := filepath.Join(dir, "server.sock")
 
 	reg := framereg.New()
 	frameID := state.FrameID("frame-translate")
@@ -323,7 +322,7 @@ func TestContainerEndpointTranslatesCwd(t *testing.T) {
 
 func TestContainerEndpointSocketPermissions(t *testing.T) {
 	dir := t.TempDir()
-	sp := filepath.Join(dir, "arc.sock")
+	sp := filepath.Join(dir, "server.sock")
 	reg := framereg.New()
 	ep, err := startContainerEndpoint(sp, reg, func(state.Event) {})
 	if err != nil {

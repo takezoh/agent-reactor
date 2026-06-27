@@ -89,8 +89,6 @@ func TestSpawnPaneWindow_emitsInternalSpawnComplete(t *testing.T) {
 		factories: map[state.LaunchSubsystem]rsubsystem.Factory{
 			state.LaunchSubsystemCLI: &fakeFactory{sub: sub},
 		},
-		sessionName:  "roost",
-		mainPaneSize: func() paneSize { return paneSize{} },
 		sendInternal: func(ev internalEvent) { internalCh <- ev },
 		sendEvent:    func(ev state.Event) { eventCh <- ev },
 	}
@@ -141,8 +139,6 @@ func TestSpawnPaneWindow_emitsSpawnFailedOnError(t *testing.T) {
 		factories: map[state.LaunchSubsystem]rsubsystem.Factory{
 			state.LaunchSubsystemCLI: &fakeFactory{sub: sub},
 		},
-		sessionName:  "roost",
-		mainPaneSize: func() paneSize { return paneSize{} },
 		sendInternal: func(ev internalEvent) { internalCh <- ev },
 		sendEvent:    func(ev state.Event) { eventCh <- ev },
 	}
@@ -182,8 +178,6 @@ func TestSpawnPaneWindow_cleanupOnSpawnError(t *testing.T) {
 		factories: map[state.LaunchSubsystem]rsubsystem.Factory{
 			state.LaunchSubsystemCLI: &fakeFactory{sub: &fakeSubsystem{id: "s", kind: state.LaunchSubsystemCLI}},
 		},
-		sessionName:  "roost",
-		mainPaneSize: func() paneSize { return paneSize{} },
 		sendInternal: func(internalEvent) {},
 		sendEvent:    func(state.Event) {},
 	}

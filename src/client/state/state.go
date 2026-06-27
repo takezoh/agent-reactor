@@ -24,15 +24,6 @@ type (
 	JobID       uint64
 )
 
-// OccupantKind identifies what currently occupies pane 0.1.
-type OccupantKind string
-
-const (
-	OccupantMain  OccupantKind = "main"
-	OccupantLog   OccupantKind = "log"
-	OccupantFrame OccupantKind = "frame"
-)
-
 // State is the entire client domain state at one point in time. Reduce
 // produces a new State value from an existing State + an Event; the
 // runtime swaps its single in-memory copy each tick of the event loop.
@@ -67,20 +58,11 @@ type State struct {
 	// read-only value, so it does not break pure-function semantics.
 	Features features.Set
 
-	// ActiveOccupant identifies what currently occupies pane 0.1.
-	// - OccupantMain: the main TUI is in 0.1; log TUI is in __hidden__.0.
-	// - OccupantLog: the log TUI is in 0.1; main TUI is in __hidden__.0.
-	// - OccupantFrame: the ActiveSession's frame pane is in 0.1.
-	// Invariant: ActiveOccupant == OccupantFrame iff the runtime's
-	// mainPaneSession is non-empty.
-	ActiveOccupant OccupantKind
-
-	// ActiveSession is the logically focused session. Independent of
-	// ActiveOccupant: it persists across log/main toggles and is only
-	// cleared when the session is removed or preview-project is entered.
-	// When ActiveOccupant == OccupantFrame, ActiveSession identifies the
-	// frame's session (required). When OccupantMain/OccupantLog, it is
-	// the last focused session used by log and header TUIs to render tabs.
+	// ActiveSession is the logically focused session. The web client tracks
+	// its own active-session-per-tab; the daemon-side ActiveSession is only
+	// used as a fallback for surface RPCs that omit SessionID and for the
+	// session-tagging in reduceFrame/reduceFrameEvict. Cleared when the
+	// session is removed.
 	ActiveSession SessionID
 }
 
@@ -109,8 +91,6 @@ type SessionFrame struct {
 	LaunchOptions LaunchOptions
 	CreatedAt     time.Time
 	Driver        DriverState
-	PeerInbox     []PeerMessage // queued inbound peer messages
-	PeerSummary   string        // short description of what this agent is doing
 }
 
 // Subscriber tracks a connected IPC client that has opted into broadcasts.
@@ -134,10 +114,9 @@ type JobMeta struct {
 // are initialised so callers can write into them without nil checks.
 func New() State {
 	return State{
-		Sessions:       map[SessionID]Session{},
-		Subscribers:    map[ConnID]Subscriber{},
-		SurfaceSubs:    map[ConnID]map[SessionID]struct{}{},
-		Jobs:           map[JobID]JobMeta{},
-		ActiveOccupant: OccupantMain,
+		Sessions:    map[SessionID]Session{},
+		Subscribers: map[ConnID]Subscriber{},
+		SurfaceSubs: map[ConnID]map[SessionID]struct{}{},
+		Jobs:        map[JobID]JobMeta{},
 	}
 }

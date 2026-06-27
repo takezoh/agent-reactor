@@ -46,8 +46,7 @@ type EvtPromptEvent struct {
 	// Omitted (zero-value omitted) when Phase is "start".
 	ExitCode int `json:"exit_code,omitempty"`
 
-	// NowRFC is the wall-clock time of the event in RFC3339 format,
-	// consistent with EvtPeerMessage.SentAt.
+	// NowRFC is the wall-clock time of the event in RFC3339 format.
 	NowRFC string `json:"now_rfc"`
 }
 

@@ -42,8 +42,9 @@ type FactoryConfig struct {
 }
 
 // Factory creates Stream Backends keyed by session. One Backend (= one
-// app-server process) exists per client Session. All frames (root + peers) in
-// the same Session share one Backend; different Sessions get separate Backends.
+// app-server process) exists per client Session. All frames (root + pushed
+// frames) in the same Session share one Backend; different Sessions get
+// separate Backends.
 type Factory struct {
 	cfg      FactoryConfig
 	mu       sync.Mutex
@@ -143,8 +144,8 @@ func (f *Factory) Range(fn func(*Backend) bool) {
 
 // makeID derives the SubsystemID from the session identifier.
 // Every client Session gets its own app-server, so the ID is keyed purely on
-// sessionID. All frames (root + peers) within the same session share the
-// same ID and therefore the same Backend.
+// sessionID. All frames (root + pushed frames) within the same session share
+// the same ID and therefore the same Backend.
 func (f *Factory) makeID(sessionID state.SessionID) state.SubsystemID {
 	return state.SubsystemID("stream:session:" + string(sessionID))
 }

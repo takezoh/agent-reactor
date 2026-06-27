@@ -510,12 +510,12 @@ describe("SessionList tag row", () => {
           project: "/repo/p",
           command: "claude",
           created_at: "2026-06-20T00:00:00Z",
-          view: { card: { title: "alpha", border_badge: "💬3" }, status: "running" },
+          view: { card: { title: "alpha", border_badge: "Q3" }, status: "running" },
         },
       ],
     });
     const { container } = render(<SessionList conn={fakeConn} />);
-    expect(container.querySelector(".session-list__badge")?.textContent).toBe("💬3");
+    expect(container.querySelector(".session-list__badge")?.textContent).toBe("Q3");
   });
 
   it("hides the tag row entirely when no tags and no border_badge", () => {

@@ -1,6 +1,6 @@
 # termvt multiplexer: fan-out isolation test harness
 
-`platform/termvt` is the tmux-free multiplexer primitive: it runs a command in a
+`platform/termvt` is the PTY multiplexer primitive: it runs a command in a
 pty, parses the output through a server-side VT emulator (OSC handling + reattach
 snapshots), and fans typed `Event`s out to any number of subscribers. Its one
 safety-critical property is **fan-out isolation** — the termvt analogue of the

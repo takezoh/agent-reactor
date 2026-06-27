@@ -20,7 +20,7 @@ func TestRedirectStderr(t *testing.T) {
 	marker := "REDIRECT_TEST_MARKER_12345"
 	fmt.Fprintln(os.Stderr, marker)
 
-	data, err := os.ReadFile(filepath.Join(dir, "arc.log"))
+	data, err := os.ReadFile(filepath.Join(dir, "server.log"))
 	if err != nil {
 		t.Fatal(err)
 	}

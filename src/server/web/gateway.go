@@ -145,18 +145,10 @@ func AttachWS(ctx context.Context, sess Attacher, sessionID string, c *websocket
 // It seeds the browser with the current sessions / activeSessionID / features
 // so the React store can render the initial view before any subsequent
 // view-update arrives.
-//
-// ActiveOccupant mirrors proto.EvtSessionsChanged.ActiveOccupant — the
-// daemon-global occupant of pane 0.1 ("main" | "log" | "frame"). Carried so
-// the browser palette can gate the push scope (FR-005/FR-006) without
-// inventing per-session occupant fields (ADR-0044). Empty string omitted
-// from the wire via omitempty; the browser treats the absent / unknown
-// value as "no frame" → push scope fail-closed-disables.
 type helloFrame struct {
 	K               string              `json:"k"` // always "h"
 	Sessions        []proto.SessionInfo `json:"sessions"`
 	ActiveSessionID string              `json:"activeSessionID,omitempty"`
-	ActiveOccupant  string              `json:"activeOccupant,omitempty"`
 	Features        []string            `json:"features"`
 	ServerTime      int64               `json:"serverTime"`
 }
@@ -176,7 +168,6 @@ func encodeHelloFrame(sc proto.EvtSessionsChanged, serverTime int64) []byte {
 		K:               "h",
 		Sessions:        sessions,
 		ActiveSessionID: sc.ActiveSessionID,
-		ActiveOccupant:  sc.ActiveOccupant,
 		Features:        features,
 		ServerTime:      serverTime,
 	}

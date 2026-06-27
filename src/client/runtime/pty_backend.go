@@ -152,18 +152,6 @@ func (p *PtyBackend) RespawnPane(target, command string) error {
 	return nil
 }
 
-// PaneAlive reports whether the session is still running (known to the Manager
-// and not yet reaped, i.e. ExitCode reports not-exited).
-func (p *PtyBackend) PaneAlive(target string) (bool, error) {
-	target = p.resolvePaneTarget(target)
-	sess, ok := p.mgr.Get(target)
-	if !ok {
-		return false, nil
-	}
-	_, exited := sess.ExitCode()
-	return !exited, nil
-}
-
 // PaneExitStatus reports the exit code once the process has been reaped.
 func (p *PtyBackend) PaneExitStatus(target string) (bool, int, error) {
 	target = p.resolvePaneTarget(target)

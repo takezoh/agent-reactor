@@ -1,7 +1,6 @@
 package state
 
 import (
-	"encoding/json"
 	"fmt"
 )
 
@@ -40,10 +39,6 @@ type PreviewProjectParams struct {
 	Project string `json:"project"`
 }
 
-type FocusPaneParams struct {
-	Pane string `json:"pane"`
-}
-
 func init() {
 	RegisterEvent[CreateSessionParams](EventCreateSession, reduceCreateSession)
 	RegisterEvent[PushDriverParams](EventPushDriver, reducePushDriver)
@@ -53,8 +48,6 @@ func init() {
 	RegisterEvent[PreviewSessionParams](EventPreviewSession, reducePreviewSession)
 	RegisterEvent[SwitchSessionParams](EventSwitchSession, reduceSwitchSession)
 	RegisterEvent[PreviewProjectParams](EventPreviewProject, reducePreviewProject)
-	RegisterEvent[FocusPaneParams](EventFocusPane, reduceFocusPane)
-	RegisterEvent[json.RawMessage](EventLaunchTool, reduceLaunchTool)
 }
 
 func reduceCreateSession(s State, connID ConnID, reqID string, p CreateSessionParams) (State, []Effect) {
@@ -146,6 +139,26 @@ func reducePushDriver(s State, connID ConnID, reqID string, p PushDriverParams) 
 		return s, []Effect{errResp(connID, reqID, ErrCodeInvalidArgument, err.Error())}
 	}
 	return newS, effs
+}
+
+// resolvePushDriverEffects walks rawEffs, processing any EffPushDriver entries
+// via pushDriverInternal. Non-push effects pass through untouched.
+func resolvePushDriverEffects(s State, rawEffs []Effect) (State, []Effect) {
+	var effs []Effect
+	for _, eff := range rawEffs {
+		pd, isPush := eff.(EffPushDriver)
+		if !isPush {
+			effs = append(effs, eff)
+			continue
+		}
+		newS, pushEffs, err := pushDriverInternal(s, pd.SessionID, "", pd.Command, LaunchOptions{}, nil, 0, "")
+		if err != nil {
+			continue
+		}
+		s = newS
+		effs = append(effs, pushEffs...)
+	}
+	return s, effs
 }
 
 // pushDriverInternal is the shared implementation for pushing a new driver frame
@@ -320,17 +333,10 @@ func reduceStopSession(s State, connID ConnID, reqID string, p StopSessionParams
 	removed := truncateFrames(sess, 0)
 	s.Sessions = cloneSessions(s.Sessions)
 	delete(s.Sessions, sid)
-	var deactivate []Effect
 	if s.ActiveSession == sid {
 		s.ActiveSession = ""
-		if s.ActiveOccupant == OccupantFrame {
-			s.ActiveOccupant = OccupantMain
-			deactivate = []Effect{EffDeactivateSession{}}
-		}
 	}
-	// place broadcast first — TUI updates before backend kill completes
 	effs := []Effect{EffBroadcastSessionsChanged{}}
-	effs = append(effs, deactivate...)
 	for _, frame := range removed {
 		effs = append(effs,
 			EffKillSessionWindow{FrameID: frame.ID},

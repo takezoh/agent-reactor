@@ -141,8 +141,8 @@ func New(overlayFn OverlayFunc) *Manager {
 
 // NewWithPrefix returns a Manager that uses `namePrefix` for container names
 // and label keys. An empty prefix falls back to DefaultNamePrefix. A daemon
-// running side-by-side with another arc daemon (e.g. scripts/run-dev.sh next
-// to the user's TUI daemon) MUST configure a distinct prefix here; otherwise
+// running side-by-side with another server daemon (e.g. scripts/run-dev.sh next
+// to the user's main daemon) MUST configure a distinct prefix here; otherwise
 // the docker container namespace collides across data dirs and mount-hash
 // drift detection silently rm's the peer's containers.
 func NewWithPrefix(overlayFn OverlayFunc, namePrefix string) *Manager {
@@ -394,7 +394,7 @@ func (m *Manager) reuseContainer(ctx context.Context, instanceKey string, ctr *C
 		if err != nil {
 			slog.Error("devcontainer: container start failed, manual recovery required",
 				"id", shortID(ctr.ID), "key", instanceKey,
-				"hint", "if Docker Desktop bind-mount cache is stale, run `docker rm -f "+ctr.ID+"` and restart arc",
+				"hint", "if Docker Desktop bind-mount cache is stale, run `docker rm -f "+ctr.ID+"` and restart the server",
 				"err", err)
 			return fmt.Errorf("devcontainer: %w", err)
 		}
@@ -554,9 +554,9 @@ func (m *Manager) ReleaseFrame(inst *sandbox.Instance[*ContainerState]) bool {
 // all sandbox resources are released, so containers (shared and project alike)
 // are removed (docker rm -f). Cold start then always provisions a fresh
 // container — image layer cache survives, but the running container, mounts,
-// and in-container daemons (sockbridge, etc.) are gone. Detach uses a
-// different code path (EffDetachClient) and never reaches this function, so
-// warm restart keeps the container intact.
+// and in-container daemons (sockbridge, etc.) are gone. ctx-cancel-driven
+// warm restart (no EffReleaseFrameSandboxes) never reaches this function, so
+// the container stays intact for adoption on the next daemon boot.
 func (m *Manager) DestroyInstance(ctx context.Context, inst *sandbox.Instance[*ContainerState]) error {
 	cs := inst.Internal
 

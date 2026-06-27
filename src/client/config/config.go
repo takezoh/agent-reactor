@@ -11,21 +11,20 @@ import (
 )
 
 type Config struct {
-	DataDir       string                        `toml:"data_dir"`
-	Theme         string                        `toml:"theme"`
-	Log           LogConfig                     `toml:"log"`
-	Pane          PaneConfig                    `toml:"tmux"`
-	Monitor       MonitorConfig                 `toml:"monitor"`
-	Session       SessionConfig                 `toml:"session"`
-	Terminal      TerminalConfig                `toml:"terminal"`
-	Projects      platformconfig.ProjectsConfig `toml:"projects"`
-	Driver        CommonDriverConfig            `toml:"driver"`
-	Drivers       map[string]map[string]any     `toml:"drivers"`
-	Features      FeaturesConfig                `toml:"features"`
-	Notifications NotificationsConfig           `toml:"notifications"`
-	Sandbox       platformconfig.SandboxConfig  `toml:"sandbox"`
-	Codex         CodexConfig                   `toml:"codex"`
-	Editor        EditorConfig                  `toml:"editor"`
+	DataDir  string                        `toml:"data_dir"`
+	Theme    string                        `toml:"theme"`
+	Log      LogConfig                     `toml:"log"`
+	Pane     PaneConfig                    `toml:"tmux"`
+	Monitor  MonitorConfig                 `toml:"monitor"`
+	Session  SessionConfig                 `toml:"session"`
+	Terminal TerminalConfig                `toml:"terminal"`
+	Projects platformconfig.ProjectsConfig `toml:"projects"`
+	Driver   CommonDriverConfig            `toml:"driver"`
+	Drivers  map[string]map[string]any     `toml:"drivers"`
+	Features FeaturesConfig                `toml:"features"`
+	Sandbox  platformconfig.SandboxConfig  `toml:"sandbox"`
+	Codex    CodexConfig                   `toml:"codex"`
+	Editor   EditorConfig                  `toml:"editor"`
 }
 
 // EditorConfig holds settings for opening projects in an editor.
@@ -109,9 +108,6 @@ func LoadFrom(path string) (*Config, error) {
 		}
 		return nil, err
 	}
-	if err := cfg.Notifications.Validate(); err != nil {
-		return nil, err
-	}
 	if err := cfg.Sandbox.Validate(); err != nil {
 		return nil, err
 	}
@@ -138,7 +134,11 @@ func DefaultConfig() *Config {
 		Theme: "default",
 		Log:   LogConfig{Level: "info"},
 		Pane: PaneConfig{
-			SessionName:       appid.SessionName,
+			// Literal "arc" preserved for back-compat with existing user
+			// settings.toml that pin the legacy backend session name; phase F-F
+			// dropped appid.SessionName because the TUI (which consumed it) is
+			// gone, but the TOML key is still parsed silently for now.
+			SessionName:       "arc",
 			PaneRatioVertical: 75,
 			// Prefix and PaneRatioHorizontal are deprecated (ADR 0004) — no
 			// default seeded so a freshly written config does not re-introduce

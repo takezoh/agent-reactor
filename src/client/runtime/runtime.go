@@ -15,7 +15,6 @@ import (
 	"net"
 	"path/filepath"
 	"reflect"
-	"sync/atomic"
 	"time"
 
 	"github.com/takezoh/agent-reactor/client/config"
@@ -43,13 +42,9 @@ func sameSessionMap(a, b map[state.SessionID]state.Session) bool {
 // Config carries the runtime's startup parameters. Backends are
 // injected (interfaces) so tests can swap fakes.
 type Config struct {
-	SessionName       string
-	RoostExe          string
-	DataDir           string
-	TickInterval      time.Duration
-	FastTickInterval  time.Duration // default 100ms; fast-detects active-frame pane death.
-	Workers           int
-	MainPaneHeightPct int
+	DataDir      string
+	TickInterval time.Duration
+	Workers      int
 
 	Backend  PaneBackend
 	Persist  PersistBackend
@@ -57,7 +52,6 @@ type Config struct {
 	ToolLog  ToolLogBackend
 	Watcher  FSWatcher
 	Pool     *worker.Pool
-	Notifier Notifier
 
 	// TerminalEvict is called with the pane target string whenever a session
 	// pane is unregistered. It should release the VT emulator held for that
@@ -99,13 +93,8 @@ type Runtime struct {
 
 	// sessionPanes maps each FrameID to its pane id ("%5", "%12", ...).
 	sessionPanes map[state.FrameID]string
-	// mainPaneSession is the SessionID whose frame is currently in pane 0.1,
-	// or "". Distinct from state.ActiveSession (logical focus): this tracks
-	// the physical occupant only.
-	mainPaneSession state.SessionID
-	activeFrameID   state.FrameID
-	eventCh         chan state.Event   // public events from any goroutine
-	internalCh      chan internalEvent // runtime-internal lifecycle (conn open/close)
+	eventCh      chan state.Event   // public events from any goroutine
+	internalCh   chan internalEvent // runtime-internal lifecycle (conn open/close)
 
 	workers *worker.Pool
 
@@ -118,11 +107,6 @@ type Runtime struct {
 	done chan struct{}
 
 	taps *tapManager
-
-	// fastProbeInFlight guards against spawning multiple concurrent
-	// PaneAlive probes from the fastTicker. Written from any goroutine,
-	// read from the event loop.
-	fastProbeInFlight atomic.Bool
 
 	// tickN is a monotonic counter incremented on each main tick, passed
 	// as EvTick.N so reducers and drivers can gate work to every N-th tick.
@@ -212,12 +196,6 @@ func applyConfigDefaults(cfg Config) Config {
 	if cfg.TickInterval <= 0 {
 		cfg.TickInterval = time.Second
 	}
-	if cfg.FastTickInterval <= 0 {
-		cfg.FastTickInterval = 100 * time.Millisecond
-	}
-	if cfg.MainPaneHeightPct <= 0 {
-		cfg.MainPaneHeightPct = 70
-	}
 	if cfg.Backend == nil {
 		cfg.Backend = noopBackend{}
 	}
@@ -232,9 +210,6 @@ func applyConfigDefaults(cfg Config) Config {
 	}
 	if cfg.ToolLog == nil {
 		cfg.ToolLog = noopToolLog{}
-	}
-	if cfg.Notifier == nil {
-		cfg.Notifier = noopNotifier{}
 	}
 	return cfg
 }
@@ -302,16 +277,7 @@ func (r *Runtime) registerSubsystemFactories() {
 func (r *Runtime) Done() <-chan struct{} { return r.done }
 
 // Launcher returns the resolved AgentLauncher (cfg.Launcher or DirectLauncher).
-// Used by the coordinator to opt-in to ColdStartAware capability outside the
-// runtime package.
 func (r *Runtime) Launcher() AgentLauncher { return launcher(r.cfg) }
-
-func (r *Runtime) ResetWarmState() error {
-	if r.warmFrames == nil {
-		return nil
-	}
-	return r.warmFrames.Reset()
-}
 
 // CleanupSubsystems removes untracked managed worktrees after cold start.
 // Tracked paths come from driver state rather than per-subsystem caches so the
@@ -374,7 +340,7 @@ func (r *Runtime) SetRelay(fr *FileRelay) {
 // EvPaneSpawned → EffRegisterPane → tapManager.start, but bootstrap
 // paths (warm restart, cold-start RecreateAll) populate sessionPanes
 // directly without emitting that effect, leaving restored frames
-// without a tap.  Call once from the coordinator (see cmd/arc/coordinator.go
+// without a tap.  Call once from the coordinator (see cmd/server/coordinator.go
 // runAndWait) immediately after Run has been started, so internalCh is
 // empty and the bootstrap event cannot be silently dropped by the
 // enqueueInternal non-blocking send.
@@ -399,7 +365,6 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 	defer r.cfg.EventLog.CloseAll()
 	defer r.cfg.ToolLog.CloseAll()
-	defer r.deactivateBeforeExit()
 	// Final persist flush. The dispatch loop already writes per-delta,
 	// but signal-driven shutdown (SIGINT/SIGTERM) cancels ctx and exits
 	// the loop without giving any reducer a chance to run a closing
@@ -417,8 +382,6 @@ func (r *Runtime) Run(ctx context.Context) error {
 
 	ticker := time.NewTicker(r.cfg.TickInterval)
 	defer ticker.Stop()
-	fastTicker := time.NewTicker(r.cfg.FastTickInterval)
-	defer fastTicker.Stop()
 
 	slog.Info("runtime: event loop started",
 		"tick", r.cfg.TickInterval,
@@ -443,9 +406,6 @@ func (r *Runtime) Run(ctx context.Context) error {
 			r.tickN++
 			r.dispatch(state.EvTick{Now: t, PaneTargets: r.snapshotPaneTargets(), N: r.tickN})
 
-		case <-fastTicker.C:
-			r.scheduleActiveFramePaneProbe()
-
 		case res := <-r.workers.Results():
 			r.dispatch(res)
 
@@ -456,41 +416,6 @@ func (r *Runtime) Run(ctx context.Context) error {
 			})
 		}
 	}
-}
-
-// scheduleActiveFramePaneProbe は active frame (pane 0.1 にスワップ中) の
-// 死亡を高速検出する。PaneAlive の backend 呼び出しをゴルーチンに委譲して
-// event loop をブロックしない。同時実行は atomic guard で 1 本に制限する。
-//
-// ターゲットは frame の pane_id を使う。remain-on-exit off で frame が exit
-// すると backend が pane を破棄し layout を詰めるため、positional "0.1" は
-// 別の生存 pane を指してしまう。pane_id ならプロセスと一緒に消えるので、
-// display-message が err を返したケースも dead 扱いにする。
-func (r *Runtime) scheduleActiveFramePaneProbe() {
-	if r.activeFrameID == "" {
-		return
-	}
-	target := r.sessionPanes[r.activeFrameID]
-	if target == "" {
-		return
-	}
-	if !r.fastProbeInFlight.CompareAndSwap(false, true) {
-		return
-	}
-	frameID := r.activeFrameID // snapshot owned by event loop goroutine
-	go func() {
-		defer r.fastProbeInFlight.Store(false)
-		alive, err := r.cfg.Backend.PaneAlive(target)
-		if err == nil && alive {
-			return
-		}
-		slog.Info("runtime: fast probe detected pane dead",
-			"frame", frameID, "target", target, "err", err)
-		r.Enqueue(state.EvPaneDied{
-			Pane:         "{sessionName}:0.1",
-			OwnerFrameID: frameID,
-		})
-	}()
 }
 
 // dispatch runs Reduce against the current state and executes every
@@ -532,8 +457,6 @@ func eventName(ev state.Event) string {
 		return "pane-vanished:" + string(e.FrameID)
 	case state.EvFrameCommandExited:
 		return "cmd-exit:" + string(e.FrameID)
-	case state.EvPaneDied:
-		return "pane-died:" + string(e.OwnerFrameID)
 	case state.EvTick:
 		return "tick"
 	case state.EvJobResult:

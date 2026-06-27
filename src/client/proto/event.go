@@ -15,22 +15,13 @@ const (
 	EvtNameLogLine           = "log-line"
 	EvtNameSessionFileLine   = "session-file-line"
 	EvtNameAgentNotification = "agent-notification"
-	EvtNamePeerMessage       = "peer-message"
-)
-
-// ActiveOccupant values for EvtSessionsChanged and RespSessions.
-const (
-	OccupantMain  = "main"
-	OccupantLog   = "log"
-	OccupantFrame = "frame"
 )
 
 // EvtSessionsChanged carries the current session table. Sent on
-// every state change that affects what the TUI should render.
+// every state change that affects what clients should render.
 type EvtSessionsChanged struct {
 	Sessions        []SessionInfo `json:"sessions"`
 	ActiveSessionID string        `json:"active_session_id,omitempty"`
-	ActiveOccupant  string        `json:"active_occupant,omitempty"` // "main" | "log" | "frame"
 	IsPreview       bool          `json:"is_preview,omitempty"`
 	Features        []string      `json:"features,omitempty"`
 }
@@ -88,15 +79,3 @@ type EvtAgentNotification struct {
 
 func (EvtAgentNotification) isEvent()          {}
 func (EvtAgentNotification) EventName() string { return EvtNameAgentNotification }
-
-// EvtPeerMessage is pushed to TUI subscribers when a peer message is
-// injected or queued.
-type EvtPeerMessage struct {
-	ToSessionID string `json:"to_session_id"`
-	FromFrameID string `json:"from_frame_id"`
-	Text        string `json:"text"`
-	SentAt      string `json:"sent_at"` // RFC3339
-}
-
-func (EvtPeerMessage) isEvent()          {}
-func (EvtPeerMessage) EventName() string { return EvtNamePeerMessage }

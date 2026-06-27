@@ -1,6 +1,7 @@
 # Plan: arc を「standalone server + remote client」に分割しきる
 
-> Status: **A1 完了 / C 全完了** (更新 2026-06-27) · Branch: `main`
+> Status: **完了** — A1 / C / §6 1-3 / arc TUI / arc binary 廃止 / server 統合 全完了 (更新 2026-06-27) · Branch: `main`
+> **arc binary 完全廃止 (Phase F)**: cmd/arc を cmd/server に統合し 1 binary 化。subcommand 構成は `server` (daemon+gateway) / `server event` / `server host-exec` / `server mcp-exec` / `server help`。peers 機能と OS desktop 通知は完全削除、agent setup は `scripts/setup-{claude,codex,gemini}.sh` (bash + jq) に移行。`appid.ClientBin = "server"` / `server.{sock,pid,log}`。`-data-dir` で複数 daemon 並走可能。process isolation contract は panic recovery (per-goroutine recover + ctx cancel) に置換。詳細は plans/arc-server-client-split.md §F。
 > 設計(仮設計・根拠): [remote-client-design.md](remote-client-design.md) ·
 > 決定: [ADR 0004](../docs/adr/0004-ptybackend-reuses-pure-core.md)
 > この文書は元設計の phased plan を、**実コードの現状**と突き合わせて
@@ -30,6 +31,33 @@
 > 言及は外部 tmux binary 互換性 integration test、外部 ライブラリ API
 > (`rasterm.IsTmuxScreen`)、ユーザー TOML config key (`[tmux]`、後方互換)
 > のみで、これらは意図的に保持。
+> **arc TUI 全削除 + 残作業 (§6 1/2/3) 解消 完了**(2026-06-27 後半):
+> ユーザー指示「arc TUI は全面的に削除する。ドキュメントからも完全削除」を受け、
+> Phase A (TUI コード削除 ~7,900 行: `client/tui/` 全削除 / `cmd/arc/tui_entry.go`
+> 削除 / `--tui` dispatch 削除 / `cli/activate_occupant.go` 削除 / `cli/statusline_click.go`
+> 削除 / depguard TUI 規則整理 / bubbletea+bubbles 依存撤去), Phase B (state machine
+> 整理: `OccupantKind`/`ActiveOccupant`/`reduce_activate_occupant`/`reduce_statusline_click`
+> 削除、`EvtSessionsChanged.ActiveOccupant`/`RespSessions.ActiveOccupant`/wire側
+> `helloFrame.activeOccupant`/`viewUpdateFrame.activeOccupant` 撤去、IPC method
+> `ActivateOccupant`/`ActivateLog`/`ActivateMain`/`StatusLineClick`/`FocusPane`/
+> `LaunchTool`/`Detach` 撤去), Phase C.1+C.2 (recovery hooks 再設計:
+> `RecoverSandboxFrames` を sessionPanes ゲートから外し ctx 引数化し、毎ブート
+> 全 frame に対して AdoptFrame を試行する形に。`RecoverWarmStartSessions`
+> と共に `coordinator.bootSession()` (旧 `coldStart`) の `PrewarmContainers` 前に
+> wiring。`ResetWarmState` 撤去、`BeginColdStart`/`EndColdStart` 無条件呼び撤去。
+> 結果: devcontainer container survival adoption / codex thread resume が
+> 標準動作), Phase C.3 (`RecoverActivePaneAtMain` + `ReconcileOrphans` の
+> TUI 部分 = `_main`/`_log` sentinel + 0.0/0.1 swap 概念は B で削除済み),
+> Phase C.4 (TUI dead helper 物理削除: `resident.go` の swap 系 9 関数 /
+> `interpret.go` の TUI effect case 9 種 / `effect.go` の TUI effect 型 9 種 /
+> `reduce_session_nav.go` の `reduceFocusPane`/`reduceLaunchTool` /
+> `reduce_lifecycle.go` の `reduceDetach`+`EffKillSession` /
+> `client/uiproc/` package 全削除 / runtime Config.{FastTickInterval,
+> MainPaneHeightPct} 撤去), Phase D (docs 全面整理: `docs/user/reactor-tui.md`
+> 削除、top-level/docs/agent/docs/technical/client/docs/technical/* の TUI
+> 言及除去、ADR と specs は historical record として未変更)。build/test/lint
+> 全 green、`grep -ri "[Tt]ui" src/` の残存は config TOML key と外部 lib API
+> のみ。
 
 ## 1. ゴール(remote-client-design.md より)
 
@@ -309,18 +337,20 @@ PtyBackend を runtime に挿す上で出ていた 6 件:
 - [x] **session ownership** → 決定1(自前 termvt.Manager、§3.1 / ADR 0004)
 - [x] **再起動越し reattach** → 決定2(B1 ではしない、§3.1 / ADR 0004)
 - [x] **B1 配線前提 6 件**(§B1 "B1-wiring の前提条件")— #1/#2/#3 解消、#4/#5/#6 は moot
-- [ ] web で複数ペイン同時表示(layout)をどの phase で入れるか(C 後の client-side layout 想定)
+- [ ] web で複数ペイン同時表示(layout)をどの phase で入れるか(別 plan 推奨。現状 web 側は session = root frame 1 ペインのみ表示で実用上問題なし)
 - [x] **A の最初の課題**: `termvt.Session.Subscribe` を読む `pty_tap` (PaneTap 実装)を新設し、`Config.Tap` に挿す → A0 として完了(2026-06-19、`client/runtime/pty_tap.go`)。driver run-state 検出が pty backend 上で復活
-- [ ] **B1b で coordinator から外した warm-recovery hooks**(documented divergence):
-  - `RecoverSandboxFrames` — 持続コンテナを再 Adopt する `AdoptFrame` 経路。
-    daemon 再起動でコンテナが孤児化しうる(devcontainer 利用時の実害)。plan A
-    で web 経由で recover 同等の機能を提供するか、coldStart にも呼べるよう
-    bootstrap.go を整理する。
-  - `RecoverWarmStartSessions` — driver の WarmStartRecoverer hook
-    (codex 等 durable driver の resume-from-checkpoint)。同様に daemon 再起動で
-    呼ばれない。
-  - `ReconcileOrphans` / `RecoverActivePaneAtMain` — tmux 特化なので削除でよいが、
-    pure-core 駆動の orphan reconcile は plan A で再設計が要る。
+- [x] **B1b で coordinator から外した warm-recovery hooks**(2026-06-27 完了):
+  - `RecoverSandboxFrames` — `coordinator.bootSession()` の `PrewarmContainers` 前に wiring。
+    sessionPanes ゲートを撤去し、毎ブート全 frame に対して `AdoptFrame` を試行する形に
+    `bootstrap.go` を書き換え。ctx 引数化済み。devcontainer 利用時に container survival
+    adoption が成立 → daemon 再起動でコンテナが孤児化しない。
+  - `RecoverWarmStartSessions` — 同 `bootSession()` に wiring。codex 等の durable driver
+    の `WarmStartRecoverer` が daemon ブート毎に呼ばれる。
+  - `ReconcileOrphans` / `RecoverActivePaneAtMain` — `RecoverActivePaneAtMain` は
+    TUI/tmux 0.0/0.1 swap 概念のため完全削除 (PtyBackend = 1 frame 1 pane で
+    main-pane-owner という概念が存在しない)。`ReconcileOrphans` は `_main`/`_log`
+    sentinel 削除のみで pure-core 駆動の reconciler に縮退 (PtyBackend mode では
+    sessionPanes が boot 時 empty のため実質 no-op、cold spawn path が代替)。
 
 ## 7. 次アクション
 
@@ -365,8 +395,13 @@ PtyBackend を runtime に挿す上で出ていた 6 件:
     event / effect / 関数 / test fake / コメント / ユーザー config の
     Go 識別子から完全に "tmux" を除去。意図的に残したのは外部 tmux binary
     互換性テスト、外部ライブラリ API、ユーザー TOML key のみ。
-12. **§6 未消化の積み残し**(C と独立、別 plan で着手):
-    - `RecoverSandboxFrames` 再設計(devcontainer 孤児化の実害)
-    - `RecoverWarmStartSessions` 再設計(codex durable driver の resume)
-    - `ReconcileOrphans` / `RecoverActivePaneAtMain` の pure-core 駆動版
-    - web で複数ペイン同時表示(layout)の phase 配置決定
+12. ~~**§6 未消化の積み残し 1/2/3 + arc TUI 全削除**~~ → 2026-06-27 完了。
+    Phase A: TUI コード削除 (~7,900 行) / Phase B: state machine から Occupant 概念撤去 /
+    Phase C.1+C.2: recovery hooks (RecoverSandboxFrames / RecoverWarmStartSessions) を
+    `coordinator.bootSession()` (旧 `coldStart`) に wiring / Phase C.3:
+    `RecoverActivePaneAtMain` 削除、`ReconcileOrphans` 縮退 / Phase C.4: TUI dead helper
+    物理削除 (resident.go swap / interpret.go TUI effect case / effect.go TUI effect 型 /
+    `reduce_session_nav.go` の `reduceFocusPane`+`reduceLaunchTool` / uiproc package 全削除) /
+    Phase D: docs 全面整理 (`docs/user/reactor-tui.md` 削除、TUI 言及を全 doc から除去、
+    ADR と specs は historical record として未変更)。build/test/lint 全 green。
+13. **残積 (別 plan 推奨)**: web で複数ペイン同時表示 (layout) の phase 配置決定。

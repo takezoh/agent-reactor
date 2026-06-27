@@ -28,7 +28,7 @@ func (p *panickingFactory) Ensure(_ context.Context, _ state.SessionID, _ string
 // spawned, and the daemon survives.
 //
 // Why this test exists: the user reported "POST /api/sessions returns 500
-// and the arc session that started this conversation terminates." Without
+// and the server session that started this conversation terminates." Without
 // the defer recover() in spawnPaneWindow, an upstream panic during
 // ensureSubsystem / BindFrame / wrapLaunchForSpawn / backend SpawnWindow would
 // unwind out of the goroutine and Go's runtime would kill the process.
@@ -44,8 +44,6 @@ func TestSpawnPaneWindow_recoversFromPanicAndEmitsSpawnFailed(t *testing.T) {
 		factories: map[state.LaunchSubsystem]rsubsystem.Factory{
 			state.LaunchSubsystemCLI: &panickingFactory{msg: "synthetic panic from test"},
 		},
-		sessionName:  "roost",
-		mainPaneSize: func() paneSize { return paneSize{} },
 		sendInternal: func(ev internalEvent) { internalCh <- ev },
 		sendEvent:    func(ev state.Event) { eventCh <- ev },
 	}

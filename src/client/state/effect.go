@@ -1,7 +1,5 @@
 package state
 
-import "github.com/takezoh/agent-reactor/client/uiproc"
-
 // Effect is the closed sum type of every side effect the reducer can
 // request. The runtime's effect interpreter (runtime.execute) is the
 // only place that turns these into actual I/O. Adding a new effect =
@@ -39,17 +37,6 @@ type EffKillSessionWindow struct {
 	FrameID FrameID
 }
 
-// EffActivateSession moves a session's agent pane into pane 0.0.
-// The runtime resolves the current pane target from its sessionPanes map.
-type EffActivateSession struct {
-	SessionID SessionID
-	Reason    string
-}
-
-// EffDeactivateSession moves the currently active session back to its
-// own window, leaving pane 0.0 showing the main TUI.
-type EffDeactivateSession struct{}
-
 // EffRegisterPane records the pane target for a session in the runtime
 // and saves it as a session-level env var. Tap controls whether a
 // byte tap (PaneTap) is started for this pane — only root frames need
@@ -66,16 +53,6 @@ type EffUnregisterPane struct {
 	FrameID FrameID
 }
 
-// EffSelectPane focuses a backend pane.
-type EffSelectPane struct {
-	Target string
-}
-
-// EffSyncStatusLine pushes a string into the status-left line.
-type EffSyncStatusLine struct {
-	Line string
-}
-
 // EffSetPaneEnv writes a session-level environment variable.
 // Empty Value is treated as unset.
 type EffSetPaneEnv struct {
@@ -88,52 +65,12 @@ type EffUnsetPaneEnv struct {
 	Key string
 }
 
-// EffCheckPaneAlive asks the runtime to query #{pane_dead} for the
-// named pane. If dead, runtime emits EvPaneDied.
-type EffCheckPaneAlive struct {
-	Pane string
-}
-
-// EffRespawnPane respawns a backend pane (used by health monitor).
-// Proc identifies which UI process to launch; the runtime calls
-// Proc.Command(roostExe) to build the shell command string.
-type EffRespawnPane struct {
-	Pane string
-	Proc uiproc.UIProcess
-}
-
-// EffDetachClient asks the backend to detach the current attached client.
-// Survives from the tmux era when arc could attach to a shared multiplexer
-// session; PtyBackend implements DetachClient as a no-op so the runtime
-// stays backend-agnostic and reducers can remain unaware of the swap.
-type EffDetachClient struct{}
-
 // EffReleaseFrameSandboxes asks the runtime to destroy all sandbox resources
 // (Docker containers, VMs, …) held by active frames. Emitted by reduceShutdown
-// only — reduceDetach must NOT emit it so containers survive for warm-restart
-// adoption. The runtime handles this with drainFrameCleanups (parallel, blocking).
+// only — daemon shutdown drains frame cleanups in parallel before the process
+// exits. ctx-cancel-driven shutdown (warm restart) must NOT emit it so
+// containers survive for adoption next boot.
 type EffReleaseFrameSandboxes struct{}
-
-// EffDisplayPopup launches a transient popup window for a named tool.
-// PtyBackend implements DisplayPopup as a no-op (no popup support without an
-// external multiplexer); reducers still emit it so a future client-side
-// overlay layer (see plan A follow-up) can consume the same path without
-// reducer surgery. Tool and Args are structured values — the runtime builds
-// the shell command string with proper escaping, avoiding injection.
-type EffDisplayPopup struct {
-	Width  string
-	Height string
-	Tool   string
-	Args   map[string]string
-}
-
-// EffKillSession asks the backend to destroy its own session and exit. On
-// tmux this collapsed the whole client; PtyBackend implements KillSession as
-// a no-op because the backend's lifetime is already bound to the daemon
-// process (ADR 0004, decision 2). reduceShutdown emits this regardless so
-// future backends with separable lifecycles can plug in without reducer
-// surgery.
-type EffKillSession struct{}
 
 // === IPC operations ===
 
@@ -282,20 +219,11 @@ type EffStartJob struct {
 
 func (EffSpawnPaneWindow) isEffect()          {}
 func (EffKillSessionWindow) isEffect()        {}
-func (EffActivateSession) isEffect()          {}
-func (EffDeactivateSession) isEffect()        {}
 func (EffRegisterPane) isEffect()             {}
 func (EffUnregisterPane) isEffect()           {}
-func (EffSelectPane) isEffect()               {}
-func (EffSyncStatusLine) isEffect()           {}
 func (EffSetPaneEnv) isEffect()               {}
 func (EffUnsetPaneEnv) isEffect()             {}
-func (EffCheckPaneAlive) isEffect()           {}
-func (EffRespawnPane) isEffect()              {}
-func (EffDetachClient) isEffect()             {}
 func (EffReleaseFrameSandboxes) isEffect()    {}
-func (EffDisplayPopup) isEffect()             {}
-func (EffKillSession) isEffect()              {}
 func (EffSendResponse) isEffect()             {}
 func (EffSendResponseSync) isEffect()         {}
 func (EffSendError) isEffect()                {}
@@ -311,23 +239,6 @@ func (EffReconcileWindows) isEffect()         {}
 func (EffStartJob) isEffect()                 {}
 func (EffRecordNotification) isEffect()       {}
 func (EffSendPaneKeys) isEffect()             {}
-
-// EffInjectPrompt asks the runtime to paste text into the backend pane belonging
-// to FrameID using bracketed paste (load-buffer + paste-buffer -d) followed by
-// Enter. The pane must be idle; callers are responsible for checking status.
-type EffInjectPrompt struct {
-	FrameID FrameID
-	Text    string
-}
-
-func (EffInjectPrompt) isEffect() {}
-
-// EffSwapHidden exchanges pane 0.1 with the hidden pane (__hidden__ window).
-// Used to switch pane 0.1 between the main TUI and the log TUI without
-// killing either process — both TUIs stay alive as persistent processes.
-type EffSwapHidden struct{}
-
-func (EffSwapHidden) isEffect() {}
 
 // === Surface streaming (PR-2 reducer-only; runtime wires in PR-3) ===
 

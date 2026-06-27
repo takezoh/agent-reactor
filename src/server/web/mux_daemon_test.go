@@ -27,7 +27,7 @@ import (
 
 // --- fake daemon helpers ---
 
-// fakeDaemon simulates the arc daemon side of a proto connection. The test
+// fakeDaemon simulates the server daemon side of a proto connection. The test
 // controls what it sends back via the sendResp / sendErr helpers.
 type fakeDaemon struct {
 	t      *testing.T

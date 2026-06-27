@@ -29,9 +29,7 @@ func newTestRelayAttached(t *testing.T) (*Runtime, *FileRelay) {
 		files:   map[string]*relayFile{},
 	}
 	r := New(Config{
-		SessionName: "reactor-test",
-		RoostExe:    "/usr/bin/roost",
-		Backend:     newFakeBackend(),
+		Backend: newFakeBackend(),
 	})
 	r.relay = fr
 	return r, fr
@@ -74,9 +72,7 @@ func TestSyncRelayWatchesRegistersNewSessionLogTabs(t *testing.T) {
 // safe to call when no FileRelay has been attached.
 func TestSyncRelayWatchesNoRelayIsNoop(t *testing.T) {
 	r := New(Config{
-		SessionName: "reactor-test",
-		RoostExe:    "/usr/bin/roost",
-		Backend:     newFakeBackend(),
+		Backend: newFakeBackend(),
 	})
 	// r.relay == nil; must not panic
 	r.syncRelayWatches()
@@ -87,9 +83,7 @@ func TestSyncRelayWatchesNoRelayIsNoop(t *testing.T) {
 func newTestRuntimeWithConns(t *testing.T, ids ...state.ConnID) (*Runtime, map[state.ConnID]chan []byte) {
 	t.Helper()
 	r := New(Config{
-		SessionName: "reactor-test",
-		RoostExe:    "/usr/bin/roost",
-		Backend:     newFakeBackend(),
+		Backend: newFakeBackend(),
 	})
 	outboxes := make(map[state.ConnID]chan []byte, len(ids))
 	for _, id := range ids {

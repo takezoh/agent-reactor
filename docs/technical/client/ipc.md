@@ -6,8 +6,8 @@ JSON messaging over Unix domain sockets. Two physical endpoints serve different 
 
 | Endpoint | Path | Auth | Clients |
 |---|---|---|---|
-| **Host** | `<dataDir>/arc.sock` | SO_PEERCRED UID check | TUI, CLI, palette popups |
-| **Container** | `<dataDir>/run/<project-hash>/arc.sock` | Bearer token (`ROOST_SOCKET_TOKEN`) | Sandboxed agent processes inside devcontainers |
+| **Host** | `<dataDir>/server.sock` | SO_PEERCRED UID check | co-resident HTTP/WS gateway, `server event` hook bridges, the `scripts/setup-{claude,codex,gemini}.sh` setup scripts (indirectly via the running backend) |
+| **Container** | `<dataDir>/run/<project-hash>/server.sock` | Bearer token (`ROOST_SOCKET_TOKEN`) | Sandboxed agent processes inside devcontainers |
 
 The host endpoint exposes the full command surface. The container endpoint accepts `hook-event` and `subsystem-event`; all other commands are structurally absent (no handler registered, not a filter). See [Sandbox Backends](../platform/sandbox.md#container-ipc-endpoint) for security properties.
 
@@ -18,9 +18,9 @@ flowchart TB
     subgraph daemon["Daemon process (runtime.Runtime)"]
         EL["Event loop<br/>select { eventCh | internalCh | ticker | workers.Results | watcher.Events }"]
         Reduce["state.Reduce(state, event)<br/>→ (state', []Effect)<br/>pure function: no goroutine, no I/O"]
-        Interp["Effect interpreter<br/>runtime.execute(eff)<br/>tmux / IPC / persist / worker / tap"]
+        Interp["Effect interpreter<br/>runtime.execute(eff)<br/>pane backend / IPC / persist / worker / tap"]
         Pool["Worker pool (4 goroutine)<br/>worker.Dispatch<br/>JobKind-based runner registry"]
-        Tap["tapManager<br/>1 reader goroutine / live frame<br/>pipe-pane → VT emulator → EvPaneOsc / EvPanePrompt"]
+        Tap["tapManager<br/>1 reader goroutine / live frame<br/>termvt pty subscription → VT emulator → EvPaneOsc / EvPanePrompt"]
 
         EL --> Reduce
         Reduce --> Interp
@@ -30,30 +30,29 @@ flowchart TB
         Tap -->|"EvPaneOsc<br/>EvPanePrompt"| EL
     end
 
-    subgraph clients["Clients (TUI / CLI / palette)"]
+    subgraph clients["Clients (browser gateway / CLI / hook bridges)"]
         Client["proto.Client<br/>Envelope send/receive / responses ch / events ch"]
     end
 
     Client <-->|"Host socket (SO_PEERCRED uid check)<br/>NDJSON (proto.Envelope)"| EL
 ```
 
-`runtime.Runtime` is the sole state owner. `state.State` is a pure value type that only round-trips as an argument and return value of `Reduce`. The effect interpreter performs tmux operations, IPC sends, persistence, and worker pool submits, feeding results back to the event loop as `Event`s.
+`runtime.Runtime` is the sole state owner. `state.State` is a pure value type that only round-trips as an argument and return value of `Reduce`. The effect interpreter performs pane-backend operations, IPC sends, persistence, and worker pool submits, feeding results back to the event loop as `Event`s.
 
 **Runtime composition**:
 - `state`: `state.State` — all domain state (Sessions map, Active, Subscribers, Jobs). Solely owned by the event loop goroutine
 - `eventCh`: channel where external goroutines (IPC reader, worker pool, fsnotify watcher, tap readers) submit Events
 - `workers`: `worker.Pool` — fixed-size (4) goroutine pool. `worker.Dispatch` dispatches via registered runner lookup using `JobInput.JobKind()`
-- `taps`: `*tapManager` — per-frame PaneTap reader goroutines. Started on `EffRegisterPane`, stopped on `EffUnregisterPane`. Each goroutine feeds the raw byte stream from `tmux pipe-pane` into a per-frame VT emulator (`driver/vt.Terminal`), which fires synchronous callbacks for OSC notifications, window titles, and OSC 133 prompt phases. Callbacks enqueue `EvPaneOsc` / `EvPanePrompt` into `eventCh`
+- `taps`: `*tapManager` — per-frame PaneTap reader goroutines. Started on `EffRegisterPane`, stopped on `EffUnregisterPane`. `PtyPaneTap` subscribes directly to the per-frame pty managed by `platform/termvt`; the raw byte stream feeds a per-frame VT emulator (`driver/vt.Terminal`), which fires synchronous callbacks for OSC notifications, window titles, and OSC 133 prompt phases. Callbacks enqueue `EvPaneOsc` / `EvPanePrompt` into `eventCh`
 - `conns`: `map[ConnID]*ipcConn` — connection management. Solely owned by the event loop goroutine
-- `cfg.Tmux` / `cfg.Persist` / `cfg.EventLog` / `cfg.Watcher`: backend interfaces (replaceable with fakes during testing)
+- `cfg.Backend` / `cfg.Persist` / `cfg.EventLog` / `cfg.Watcher`: backend interfaces (replaceable with fakes during testing). Production wires `PtyBackend` (over `platform/termvt`) into `cfg.Backend`
 
 ### Communication Patterns
 
 | Pattern | Direction | Characteristics | Example |
 |---------|-----------|-----------------|---------|
-| **Request-Response** | TUI → Server → TUI | Synchronous. Client blocks waiting on response ch | `switch-session`, `preview-session` |
-| **Event Broadcast** | Server → all clients | Asynchronous. Delivered to all subscribed clients | `sessions-changed`, `project-selected`, `pane-focused` |
-| **Tool Launch** | TUI → Server → tmux popup → Palette → Server | Indirect communication. Popup sends commands as an independent client | `new-session` |
+| **Request-Response** | Client → Daemon → Client | Synchronous. Client blocks waiting on response ch | `create-session`, `list-sessions`, `surface.read_text` |
+| **Event Broadcast** | Daemon → all subscribed clients | Asynchronous. Delivered to all subscribed clients | `sessions-changed`, `agent-notification`, `peer-message` |
 
 `SessionInfo` is a unified type that carries static metadata and dynamic state in a single message: the runtime's `broadcastSessionsChanged` retrieves status / title etc. from each Session's `Driver.View(sess.Driver)` and packs them into `proto.SessionInfo`. `reduceTick` emits `EffBroadcastSessionsChanged` on every tick, delivering to all subscribers.
 
@@ -91,7 +90,7 @@ Command / Response / ServerEvent are closed sum types. See [interfaces.md](inter
 
 #### Event Types (via `CmdEvent.Event`)
 
-Domain operations and hook-driven agent events are dispatched via `CmdEvent`. TUI/tool operations are registered via `RegisterEvent[T]` and dispatched to typed handlers. Hook-driven events (those with `SenderID` set) are routed as `EvDriverEvent` to the owning frame's driver. Structured backends such as Codex App Server use `CmdSubsystemEvent` and route through `EvSubsystem`.
+Domain operations and hook-driven agent events are dispatched via `CmdEvent`. Session-domain operations are registered via `RegisterEvent[T]` and dispatched to typed handlers. Hook-driven events (those with `SenderID` set) are routed as `EvDriverEvent` to the owning frame's driver. Structured backends such as Codex App Server use `CmdSubsystemEvent` and route through `EvSubsystem`.
 
 | Event Type | Payload | Function |
 |------------|---------|----------|
@@ -99,13 +98,7 @@ Domain operations and hook-driven agent events are dispatched via `CmdEvent`. TU
 | `push-driver` | session_id, project, command, options | Append a new driver frame on top of an existing session's active frame |
 | `stop-session` | session_id | Stop a session (terminates every frame in its stack) |
 | `list-sessions` | - | Retrieve session list |
-| `preview-session` | session_id | Preview in Pane 0.0 |
-| `preview-project` | project | Stash the active session and broadcast `project-selected` event |
-| `switch-session` | session_id | Switch to Pane 0.0 + focus |
-| `focus-pane` | pane | Focus pane. Broadcasts `pane-focused` event |
-| `launch-tool` | tool | Launch palette popup |
-| `shutdown` | - | Shutdown all |
-| `detach` | - | Detach |
+| `shutdown` | - | Shut down the daemon |
 | *(driver hooks)* | driver-specific | Hook events from hook-driven agents such as Claude and Gemini. `SenderID` is the frame id; the reducer locates the owning frame across all sessions and routes the hook to that frame's driver |
 | *(subsystem events)* | source, kind, payload | Structured execution events emitted by a subsystem. Codex App Server uses this path for thread lifecycle, tool execution, approvals, plan, diff, and assistant message updates |
 
@@ -116,12 +109,12 @@ flowchart LR
     sock[Unix socket receive] --> decode[json.Decode]
     decode --> check{msg.Type?}
     check -->|response| resp[responses ch] --> cmd[Received by the sending Cmd]
-    check -->|event| evt[events ch] --> listen["listenEvents() converts to tea.Msg"]
+    check -->|event| evt[events ch] --> listen["client-side event consumer"]
 ```
 
 ### Concurrency Model — Single Event Loop + Worker Pool
 
-The server side of the client is composed of a **single event loop + fixed-size worker pool**. All domain state (`state.State`) is solely owned by the event loop goroutine, and state transitions are expressed as the pure function `state.Reduce(state, event) → (state', []Effect)`. No `sync.Mutex` exists in the domain layer (except inside the worker pool).
+The daemon is composed of a **single event loop + fixed-size worker pool**. All domain state (`state.State`) is solely owned by the event loop goroutine, and state transitions are expressed as the pure function `state.Reduce(state, event) → (state', []Effect)`. No `sync.Mutex` exists in the domain layer (except inside the worker pool).
 
 #### Event Loop and State Ownership
 
@@ -156,18 +149,19 @@ flowchart LR
 
     Reduce -->|"[]Effect"| Interp
 
-    Interp -->|EffSpawnTmuxWindow| Tmux["tmux backend<br/>(go async spawn)"]:::async
-    Interp -->|EffKillSessionWindow<br/>EffActivateSession<br/>EffDeactivateSession<br/>EffSelectPane<br/>EffSyncStatusLine<br/>EffRegisterPane<br/>EffUnregisterPane| TmuxSync["tmux backend<br/>(inline sync)"]:::sync
-    Interp -->|EffSendResponse<br/>EffSendResponseSync<br/>EffBroadcastSessionsChanged| IPC["IPC conn writer"]:::sync
+    Interp -->|EffSpawnPaneWindow| PaneAsync["pane backend<br/>(go async spawn)"]:::async
+    Interp -->|EffKillSessionWindow<br/>EffRegisterPane<br/>EffUnregisterPane<br/>EffSetPaneEnv<br/>EffUnsetPaneEnv<br/>EffCheckPaneAlive<br/>EffReconcileWindows| PaneSync["pane backend<br/>(inline sync)<br/>PtyBackend over platform/termvt"]:::sync
+    Interp -->|EffSendResponse<br/>EffSendResponseSync<br/>EffSendError<br/>EffBroadcastSessionsChanged<br/>EffBroadcastEvent<br/>EffCloseConn| IPC["IPC conn writer"]:::sync
     Interp -->|EffPersistSnapshot| Persist["sessions.json writer"]:::sync
     Interp -->|EffStartJob| Pool["Worker pool<br/>(4 goroutine)"]:::async
-    Interp -->|EffWatchFile| Watcher["fsnotify watcher"]:::sync
-    Interp -->|EffEventLogAppend| EventLog["event log writer"]:::sync
+    Interp -->|EffWatchFile<br/>EffUnwatchFile| Watcher["fsnotify watcher"]:::sync
+    Interp -->|EffEventLogAppend<br/>EffToolLogAppend| EventLog["event / tool log writer"]:::sync
     Interp -->|EffRegisterPane| TapMgr["tapManager<br/>(1 goroutine / frame)"]:::async
-    Interp -->|EffSendTmuxKeys| TmuxSync
+    Interp -->|EffSendPaneKeys<br/>EffInjectPrompt| PaneSync
     Interp -->|EffRecordNotification| EventLog
+    Interp -->|EffReleaseFrameSandboxes| Sandbox["sandbox release"]:::sync
 
-    Tmux -->|EvTmuxPaneSpawned| EL["event loop (eventCh)"]
+    PaneAsync -->|EvPaneSpawned / EvSpawnFailed| EL["event loop (eventCh)"]
     Pool -->|EvJobResult| EL
     Watcher -->|EvFileChanged| EL
     TapMgr -->|"EvPaneOsc<br/>EvPanePrompt"| EL
@@ -177,7 +171,7 @@ Legend:
 - **Solid border** = executed synchronously on the event loop goroutine
 - **Dashed border** = executed asynchronously in a separate goroutine. Results are fed back to the event loop as Events
 
-**`EffSendResponse` vs `EffSendResponseSync`**: the former enqueues the wire frame on the connection's writer-goroutine outbox and returns immediately. The latter writes directly to the socket from the event loop goroutine, guaranteeing the response reaches the kernel buffer before the next effect in the same Reduce cycle runs. `reduceDetach` uses the sync form so the response lands before the following `EffDetachClient` tears the connection down.
+**`EffSendResponse` vs `EffSendResponseSync`**: the former enqueues the wire frame on the connection's writer-goroutine outbox and returns immediately. The latter writes directly to the socket from the event loop goroutine, guaranteeing the response reaches the kernel buffer before the next effect in the same Reduce cycle runs. The sync form is used when a subsequent effect in the same cycle will tear down the connection or shut down the daemon — e.g. the `shutdown` reply must land before the connection-closing effect drops the socket.
 
 #### Worker Pool (Off-Loop Execution of Slow I/O)
 
@@ -230,7 +224,7 @@ sequenceDiagram
     D1-->>Red: (driverState1', [EffStartJob{TranscriptParse}], view1)
     Red->>D2: Driver.Step(driverState2, DEvTick{Active: false})
     D2-->>Red: (driverState2', [EffStartJob{BranchDetect}], view2)
-    Red-->>EL: (state', [EffStartJob×N, EffBroadcastSessionsChanged,<br/>EffPersistSnapshot, EffSyncStatusLine])
+    Red-->>EL: (state', [EffStartJob×N, EffCheckPaneAlive,<br/>EffPersistSnapshot, EffBroadcastSessionsChanged])
     EL->>Interp: execute(effects...)
     Note over Interp: Interprets each Effect in order<br/>EffStartJob → worker pool submit<br/>EffBroadcast → IPC send<br/>EffPersist → write sessions.json
 ```
@@ -250,12 +244,12 @@ Hook-driven agents converge at `EvDriverEvent`; structured backends converge at 
 | Goroutine | Count | Role |
 |-----------|-------|------|
 | `Runtime.Run` (event loop) | 1 | State ownership + Reduce + Effect interpretation |
-| `acceptLoop` (host) | 1 | Accepts new connections on `arc.sock`; performs SO_PEERCRED uid check before admitting |
-| container endpoint accept | 1 per active project | Accepts connections on per-project `<run-hash>/arc.sock`; bearer token is validated per-message |
+| `acceptLoop` (host) | 1 | Accepts new connections on `server.sock`; performs SO_PEERCRED uid check before admitting |
+| container endpoint accept | 1 per active project | Accepts connections on per-project `<run-hash>/server.sock`; bearer token is validated per-message |
 | `ipcConn.readLoop` | M (1 / client) | IPC reader. Converts Commands to Events and submits to eventCh |
 | `ipcConn.writeLoop` | M (1 / client) | IPC writer. Drains outbox and writes to socket |
 | `worker.Pool.run` | 4 (fixed) | Worker pool goroutines |
-| `tapManager.readTap` | N (1 / live frame) | PaneTap reader. Feeds raw byte stream from `tmux pipe-pane` into a per-frame VT emulator, which fires callbacks that emit `EvPaneOsc` (window titles + OSC 9/99/777 notifications) and `EvPanePrompt` (OSC 133 phases) into eventCh |
+| `tapManager.readTap` | N (1 / live frame) | PaneTap reader. Feeds the raw byte stream from the per-frame pty via `platform/termvt` subscription into a per-frame VT emulator, which fires callbacks that emit `EvPaneOsc` (window titles + OSC 9/99/777 notifications) and `EvPanePrompt` (OSC 133 phases) into eventCh |
 
 IPC reader/writer scales with client count; tap readers scale with live frame count. Both are continuous sources that only emit events — they never read or write `state.State`.
 
@@ -263,7 +257,7 @@ IPC reader/writer scales with client count; tap readers scale with live frame co
 
 ```mermaid
 sequenceDiagram
-    participant Bridge as arc event <eventType><br/>(hook bridge)
+    participant Bridge as server event <eventType><br/>(hook bridge)
     participant Reader as IPC reader goroutine
     participant EL as Event loop
     participant Red as state.Reduce
@@ -305,15 +299,15 @@ sequenceDiagram
 `Cmd*`, `Resp*`, and `Evt*` types in `src/proto/` follow these invariants:
 
 - **Optional fields use `omitempty`; zero value means absent.** A zero value with distinct semantics belongs in a separate type.
-- **Names are client-agnostic.** No TUI- or GUI-specific terms in field or type names; both clients consume the same types.
+- **Names are client-agnostic.** No client-specific terms (browser / CLI / hook / orchestrator) in field or type names; every client consumes the same types.
 - **Every concrete type carries its marker methods** (`isCommand()` / `CommandName()`, `isEvent()` / `EventName()`, `isResponse()`).
-- **`state.View` is written by the driver only.** TUI and future GUI clients read state; neither branches on driver name (see Driver isolation in `ARCHITECTURE.md`).
+- **`state.View` is written by the driver only.** Browser and any future native clients read state; neither branches on driver name (see Driver isolation in `ARCHITECTURE.md`).
 
 Commands in the `surface.*` and `driver.*` namespaces use dotted names within the same `proto.Envelope` format — no protocol change is required to add new namespaces.
 
 ## Tool System
 
-High-level user operations are abstracted as `Tool`s. Executable from the same interface via both TUI and palette.
+High-level user operations are abstracted as `Tool`s. Each Tool wraps a typed IPC command sequence and is surfaced uniformly to every client: the browser via the gateway's REST API (`POST /api/sessions`, etc.) and host-side helpers via the same IPC.
 
 ```go
 // tools/tools.go
@@ -331,26 +325,22 @@ type Param struct {
 
 type ToolContext struct {
     Client *sessions.Client // typed IPC connection to daemon (sessions.Wrap(*proto.Client))
-    Config ToolConfig       // palette config (commands, projects)
+    Config ToolConfig       // tool config (commands, projects)
     Args   map[string]string
 }
 ```
 
 ### Tool to IPC Command Mapping
 
-A Tool's `Run` sends typed IPC commands via `ToolContext.Client` (`sessions.Client`, which wraps `proto.Client`). Each Tool corresponds to one IPC command. By returning a `ToolInvocation`, tool chaining within the same popup (e.g., create-project → new-session) is achieved.
+A Tool's `Run` sends typed IPC commands via `ToolContext.Client` (`sessions.Client`, which wraps `proto.Client`). Each Tool corresponds to one IPC command. By returning a `ToolInvocation`, tools can chain follow-up tools within the same invocation (e.g., `create-project` → `new-session`).
 
 | Tool | IPC Command | Parameters |
 |------|-------------|------------|
 | `new-session` | `create-session` | project, command |
 | `stop-session` | `stop-session` | session_id |
-| `detach` | `detach` | - |
-| `shutdown` | `shutdown` | - |
 
-Tools target high-level operations with side effects (create, stop, shutdown, etc.). Low-level navigation operations such as `switch-session`, `preview-session`, and `focus-pane` bypass Tools and are sent directly as IPC commands by the TUI.
+Tools target high-level operations with side effects (create, stop, etc.). Side-effect-free lookups such as session listing or surface reads bypass the Tool layer and are sent directly as IPC commands by the calling client.
 
-### Parameter Completion via Palette
+### Parameter Completion
 
-The palette is an independent process launched as a tmux popup. It does not block the TUI's event loop, and a crash does not affect the TUI.
-
-Completion flow: tool selection → dynamically generate choices via each `Param`'s `Options` callback → incremental filtering by user input → execute `Tool.Run` after all parameters are resolved. Results reach the TUI via broadcast.
+Tool parameter values are resolved by each `Param`'s `Options` callback. The completion flow is: tool selection → dynamically generate choices via `Options` → incremental filtering by user input → execute `Tool.Run` once every parameter is bound. Effects of the invocation reach every subscribed client via the `sessions-changed` broadcast.

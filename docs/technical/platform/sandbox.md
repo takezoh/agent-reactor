@@ -15,8 +15,8 @@ Reactor does not build images. The image name is declared by the user in `devcon
 | Layer | Sandbox role |
 |---|---|
 | `state/` | Holds `LaunchPlan.Project`. Backend-agnostic |
-| `runtime/` | `AgentLauncher` wraps `LaunchPlan` into `WrappedLaunch{Command, Argv, Env, Mounts, ContainerSockDir, Cleanup}`. `Wrap` populates both `Command` (shell-joined string for tmux pane launch) and `Argv` (structured argv for `agentlaunch.Spawn`). `SandboxDispatcher` resolves which launcher (direct / devcontainer) to use per project via `config.SandboxResolver` |
-| `sandbox/` | `Manager[I any]` interface + backend implementations. Owns container lifecycle only; does not import driver / lib / runtime / tui |
+| `runtime/` | `AgentLauncher` wraps `LaunchPlan` into `WrappedLaunch{Command, Argv, Env, Mounts, ContainerSockDir, Cleanup}`. `Wrap` populates both `Command` (shell-joined string for pty-pane launch) and `Argv` (structured argv for `agentlaunch.Spawn`). `SandboxDispatcher` resolves which launcher (direct / devcontainer) to use per project via `config.SandboxResolver` |
+| `sandbox/` | `Manager[I any]` interface + backend implementations. Owns container lifecycle only; does not import driver / lib / runtime |
 | `credproxy` library (`providers/<name>/`) | AWS SSO / gcloud / ssh-agent providers. Tool-specific env var names (`AWS_*`, `GOOGLE_*`, `SSH_AUTH_SOCK`) live exclusively here |
 | `hostexec/` | Host-exec broker — runs allowlisted host binaries on behalf of container processes via SCM_RIGHTS stdio forwarding |
 
@@ -29,7 +29,7 @@ Reactor does not build images. The image name is declared by the user in `devcon
 | Backend abstraction | `sandbox.Manager[I any]` + typed `Instance[I]` | Eliminates `any` and forced type-asserts. Backend-specific state (e.g. `*devcontainer.ContainerState`) is carried as the type parameter |
 | Instance scope | Per-container, keyed by isolation mode | Project isolation: one container per project (key = projectPath). Shared isolation: a single `__shared__` container hosts every project's frames. `AcquireFrame` / `ReleaseFrame` manage the per-instance ref-count; `DestroyInstance` is called when the count reaches zero. The image is shared across projects at build time |
 | Config resolution | User scope + project scope merged by `config.SandboxResolver` with mtime-based caching | Default direct mode; individual repos opt into devcontainer without daemon restart |
-| Lifecycle and effect | detach → `EffDetachClient` only (container survives); shutdown → `EffReleaseFrameSandboxes` then `EffKillSession` (`DestroyInstance` runs `docker rm` for both shared and project containers); SIGINT (ctx cancel) → same as detach | Container lifetime decisions are expressed as state-layer effects, ordered in the event loop rather than a defer stack. The destroy step removes `docker rm`'s side effect on shared containers too: in-container daemons (per-session `codex app-server`) only exist on a freshly-`postCreate`-d container, so reusing a stale one breaks cold start |
+| Lifecycle and effect | client disconnect → containers survive; explicit shutdown → `EffReleaseFrameSandboxes` (`DestroyInstance` runs `docker rm` for both shared and project containers); SIGINT (ctx cancel) → same as client disconnect | Container lifetime decisions are expressed as state-layer effects, ordered in the event loop rather than a defer stack. The destroy step removes `docker rm`'s side effect on shared containers too: in-container daemons (per-session `codex app-server`) only exist on a freshly-`postCreate`-d container, so reusing a stale one breaks cold start |
 | Cold-start fresh provisioning | `coordinator.coldStart` brackets `PrewarmContainers` / `RecreateAll` with `BeginColdStart` / `EndColdStart` on the `ColdStartAware` launcher. `Manager.EnsureInstance` then sees `opts.ColdStart=true` and `docker rm`s any surviving container before calling `createContainer` | Even when graceful shutdown is skipped (SIGKILL / crash), the next cold start guarantees `postCreate` runs on a fresh container |
 | Crash recovery | `PruneOrphans` at daemon startup enumerates containers labelled `reactor-managed=1` and kills any whose project is not in sessions.json | Covers SIGKILL / panic paths where defer and effects never run. sessions.json is the ground truth |
 | Image resolution | `LoadSpec` reads `image:` (top-level) then `build.name` from devcontainer.json | Reactor does not build images. The user builds externally and declares the image name in devcontainer.json |
@@ -37,7 +37,7 @@ Reactor does not build images. The image name is declared by the user in `devcon
 ## Frame Lifecycle Interaction
 
 **New frame**
-`AgentLauncher.WrapLaunch` → `EnsureInstance` (singleflight-serialized per project) → `AcquireFrame` → the resulting `WrappedLaunch` is embedded in `EffSpawnTmuxWindow`
+`AgentLauncher.WrapLaunch` → `EnsureInstance` (singleflight-serialized per project) → `AcquireFrame` → the resulting `WrappedLaunch` is embedded in `EffSpawnPaneWindow`
 
 **Warm start**
 `AdoptFrame` reclaims the still-running container and increments the ref-count for each restored frame; `RecoverSandboxFrames` replays per-frame bearer tokens from `<dataDir>/warm/`
@@ -62,7 +62,7 @@ The image must already exist locally (or be pullable by docker on first `docker 
 
 ### Container Identity
 
-Frames join via `docker exec` rather than spawning a new container per frame. TTY allocation is consumer-dependent: TUI pane launches use `-it`; the stream daemon (JSON-RPC over stdio pipe) uses `-i` only. Both consumers share the same `sandbox.Manager` instance but use separate `DevcontainerLauncher` instances configured for their respective TTY mode. The container scope is determined by the resolved isolation mode:
+Frames join via `docker exec` rather than spawning a new container per frame. TTY allocation is consumer-dependent: interactive pty-pane launches (attached to the browser frontend through the gateway) use `-it`; the stream daemon (JSON-RPC over stdio pipe) uses `-i` only. Both consumers share the same `sandbox.Manager` instance but use separate `DevcontainerLauncher` instances configured for their respective TTY mode. The container scope is determined by the resolved isolation mode:
 
 - **Project isolation** (default): one long-lived container per project. Container name `reactor-<sha256[:6] of project path>`; labels `reactor-managed=1`, `reactor-project=<abs-path>`
 - **Shared isolation**: a single container named `reactor-shared` hosts every project's frames. All bind-mounts for every reactor-managed project are added at create time so any frame inside can reach its workspace. Per-frame state (workspace, env, credentials) is supplied via `docker exec -e` / `-w` at launch time, never frozen onto the spec
@@ -99,7 +99,7 @@ Variable substitution in string values: `${localWorkspaceFolder}`, `${localWorks
 
 ## Container IPC Endpoint
 
-Each sandboxed project gets a dedicated Unix socket at `<dataDir>/run/<project-hash>/arc.sock` on the host. It is bind-mounted read-write into the container at `/opt/agent-reactor/run/arc.sock` (via the per-project run dir mount that already exists for credential helper files). The container agent reads `ROOST_SOCKET` (set to `/opt/agent-reactor/run/arc.sock`) to locate it.
+Each sandboxed project gets a dedicated Unix socket at `<dataDir>/run/<project-hash>/server.sock` on the host. It is bind-mounted read-write into the container at `/opt/agent-reactor/run/server.sock` (via the per-project run dir mount that already exists for credential helper files). The container agent reads `ROOST_SOCKET` (set to `/opt/agent-reactor/run/server.sock`) to locate it.
 
 **API surface**: `hook-event` and `subsystem-event` are implemented. Commands such as `event`, `surface.send_text`, `peer.send`, `shutdown`, and all others are structurally absent — no handler is registered, so they receive a protocol error without touching state.
 
@@ -111,7 +111,7 @@ Each sandboxed project gets a dedicated Unix socket at `<dataDir>/run/<project-h
 
 ## Container↔Host Path Translation
 
-Sandboxed agents emit hook payloads and subsystem payloads containing container-absolute paths (e.g. `/workspaces/proj/.../session.jsonl`), but the daemon, drivers, and TUI operate on host-absolute paths. `lib/pathmap` translates at the IPC boundary using the bind-mount table captured in `WrappedLaunch.Mounts`. State, runtime above the launcher, proto, and TUI never see container paths.
+Sandboxed agents emit hook payloads and subsystem payloads containing container-absolute paths (e.g. `/workspaces/proj/.../session.jsonl`), but the daemon, drivers, and IPC consumers operate on host-absolute paths. `lib/pathmap` translates at the IPC boundary using the bind-mount table captured in `WrappedLaunch.Mounts`. State, runtime above the launcher, and proto never see container paths.
 
 ## Host Mounts
 
@@ -126,7 +126,7 @@ Providers come from two sources: the external `credproxy` library's `providers/<
 1. Building a `container.Spec` (env vars to inject, files to materialize under the per-project run dir, optional bind-mounts).
 2. Optionally registering an HTTP route on the proxy server (AWS SSO uses this; others rely on bind-mounts only).
 
-Generic layers (`runtime/`, `sandbox/`, `state/`, `tui/`, `proto/`) never reference tool-specific env var names (`AWS_*`, `GOOGLE_*`, `SSH_AUTH_SOCK`). Those names appear only inside the corresponding provider package.
+Generic layers (`runtime/`, `sandbox/`, `state/`, `proto/`) never reference tool-specific env var names (`AWS_*`, `GOOGLE_*`, `SSH_AUTH_SOCK`). Those names appear only inside the corresponding provider package.
 
 ### AWS SSO, gcloud CLI, SSH Agent
 
@@ -145,7 +145,7 @@ The `hostexec` provider lets container processes invoke host binaries (e.g. `gh`
 **Mechanism:**
 
 1. The host starts a per-project Unix socket broker (`<dataDir>/run/<project-hash>/hostexec.sock`) bind-mounted at `/opt/agent-reactor/run/hostexec.sock` inside the container.
-2. Shell shim scripts are written to `<dataDir>/run/<project-hash>/hostexec-shims/<name>` and prepended to `PATH` inside the container. Each shim calls `arc host-exec <name> "$@"`.
+2. Shell shim scripts are written to `<dataDir>/run/<project-hash>/hostexec-shims/<name>` and prepended to `PATH` inside the container. Each shim calls `server host-exec <name> "$@"`.
 3. If `overlay` paths are configured, additional shims are written to `<dataDir>/run/<project-hash>/hostexec-overlay/<name>` and bind-mounted read-only at each path. Each entry is a project-relative path (resolved against the container-side workspace folder, `..` allowed) or an absolute path. This lets existing scripts that invoke binaries via relative paths (`./bin/gh`) or scripts in parent directories mounted via `extra_create_args` route through the same broker.
 4. The shim sends the request (binary name, args, cwd) plus the three stdio fds via SCM_RIGHTS over the socket.
 5. The broker policy-checks the command, then exec's the host binary with the transferred fds as its stdin/stdout/stderr. The exit code is returned to the shim.
@@ -173,8 +173,8 @@ The `mcpproxy` provider runs MCP server processes on the host and relays JSON-RP
 **Mechanism:**
 
 1. The host starts a per-project Unix socket broker bind-mounted at `/opt/agent-reactor/run/mcp.sock` inside the container.
-2. At container launch, the client generates a `.mcp.json` in the project workspace (read-only bind-mount) that overrides any project-local `.mcp.json` for configured aliases, routing them through `arc mcp-exec <alias>`.
-3. `arc mcp-exec <alias>` (the in-container shim) sends its three stdio fds via SCM_RIGHTS over the socket.
+2. At container launch, the client generates a `.mcp.json` in the project workspace (read-only bind-mount) that overrides any project-local `.mcp.json` for configured aliases, routing them through `server mcp-exec <alias>`.
+3. `server mcp-exec <alias>` (the in-container shim) sends its three stdio fds via SCM_RIGHTS over the socket.
 4. The broker starts the actual MCP server process on the host and relays JSON-RPC messages. `tools/call` requests are policy-checked before forwarding; `tools/list` responses are filtered to the allowed set.
 
 **Policy (deny-first, default-deny):** patterns match the tool name directly with `*` as wildcard. User-scope and project-scope server definitions are merged; project entries override user entries on the same alias.

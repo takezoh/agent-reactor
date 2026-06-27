@@ -15,7 +15,6 @@ flowchart TD
     end
     subgraph client["client/"]
         STATE["state/<br/>(pure core)"]
-        TUI["tui/"]
         PROTO["proto/"]
         RT["runtime/"]
         DRIVER["driver/"]
@@ -32,8 +31,7 @@ flowchart TD
     PLAT -. "✗" .-> ORCH
     CODEXC -. "✗ codexclient-isolation" .-> CLIENTBOX
 
-    STATE -. "✗ state-pure-core<br/>(no driver/lib/runtime/tui/proto)" .-> DRIVER
-    TUI -. "✗ tui-no-driver-lib" .-> DRIVER
+    STATE -. "✗ state-pure-core<br/>(no driver/lib/runtime/proto)" .-> DRIVER
     PROTO -. "✗ proto-isolation" .-> DRIVER
     RT -. "✗ runtime-no-driver (root only)" .-> DRIVER
 ```
@@ -42,19 +40,17 @@ flowchart TD
 |---|---|---|
 | `platform-no-client-or-orchestrator` | `platform/**` | `client/`, `orchestrator/` |
 | `client-no-orchestrator` | `client/**` | `orchestrator/` |
-| `state-pure-core` | `client/state/**` | `driver/`, `platform/lib`, `runtime/`, `tui/`, `proto/` |
-| `tui-no-driver-lib` | `client/tui/**` | `driver/`, `platform/lib` |
+| `state-pure-core` | `client/state/**` | `driver/`, `platform/lib`, `runtime/`, `proto/` |
 | `worker-no-driver-lib` | `client/runtime/worker/**` | `driver/`, `platform/lib` |
 | `sandbox-tool-agnostic` | `platform/sandbox/**` | `driver/`, `platform/lib`, `runtime/` |
-| `proto-isolation` | `client/proto/**` | `driver/`, `platform/lib`, `runtime/`, `tui/` |
+| `proto-isolation` | `client/proto/**` | `driver/`, `platform/lib`, `runtime/` |
 | `runtime-no-driver` | `client/runtime/*.go` (root only) | `driver/` |
-| `subsystem-isolation` | `client/runtime/subsystem/**` | `tui/` |
 | `codexclient-isolation` | `platform/agent/codexclient/**` | `client/`, `orchestrator/` |
 
 Key intents:
 
 - **Layer direction**: platform is the base and knows nothing above it; client does not know orchestrator (the converse is guaranteed by `platform-no-...`).
-- **`state/` purity**: the state machine has no I/O and no side effects — a pure functional core. It cannot import driver/runtime/tui at all.
+- **`state/` purity**: the state machine has no I/O and no side effects — a pure functional core. It cannot import driver/runtime at all.
 - **`runtime-no-driver`**: only the runtime **root** is forbidden from importing driver. Tool-specific backends move to `runtime/subsystem/<kind>/`. Exception: `client/driver/vt` is explicitly allowed in `exclusions.rules`.
 - **`codexclient` reusability**: a shared protocol transport, so it knows nothing of agent-reactor internals.
 
@@ -94,7 +90,7 @@ Exceptions are declared **by path pattern in `.golangci.yml`, not by an in-code 
 | runtime | `Flag` constant + injected `Set` | `~/.agent-reactor/settings.toml` `[features.enabled]` | both branches compiled | the user should opt in without rebuilding |
 | compile-time | top-level `const` bool guarded by a build tag | `go build -tags <tag>` (e.g. `make build-experimental`) | off-side removed by dead-code elimination | the code is unfinished / unsafe or must not enter release binaries |
 
-**Runtime — add:** declare a `Flag` constant and list it in `All()`; read it as `st.Features.On(features.Peers)` (`features.go:36`). Gating is allowed in `state/`, `runtime/`, `tui/` — **not** in `driver/`, where driver-specific gating uses `config.Drivers[name]` instead. Users opt in under `[features.enabled]`. `FromConfig` **silently ignores unknown keys** (`features.go:46`), so when a flag stabilises you delete the constant and inline the enabled branch with no config migration.
+**Runtime — add:** declare a `Flag` constant and list it in `All()`; read it as `st.Features.On(features.Peers)` (`features.go:36`). Gating is allowed in `state/` and `runtime/` — **not** in `driver/`, where driver-specific gating uses `config.Drivers[name]` instead. Users opt in under `[features.enabled]`. `FromConfig` **silently ignores unknown keys** (`features.go:46`), so when a flag stabilises you delete the constant and inline the enabled branch with no config migration.
 
 **Compile-time — add:** create a `//go:build <tag>` / `//go:build !<tag>` file pair exporting the same `const` bool, then gate code with `if features.MyFeat { ... }` — the off-side is removed because `MyFeat` is a `const`. For larger code, put the implementation behind the tag and provide a no-op stub on the `!tag` side so callers need no guarding. Add a Makefile target for first-class variants; CI builds both.
 
@@ -112,7 +108,7 @@ Exception: none — a multiplexed backend that cannot satisfy the invariant is a
 
 ## 7. Fan-out isolation (test-pinned)
 
-The tmux-free multiplexer `platform/termvt` is the same shape as §6 — one source (a pty) fanned out to many subscribers — and shares the cross-talk failure mode. Its **fan-out isolation** invariant: every event reaches exactly the live subscribers of its own session (all, in order, control-before-output), and a subscriber that cannot keep up is *severed*, never allowed to block or corrupt the others. Cross-talk here is one session's bytes surfacing in another's terminal, or a slow client wedging a healthy one.
+The PTY multiplexer `platform/termvt` is the same shape as §6 — one source (a pty) fanned out to many subscribers — and shares the cross-talk failure mode. Its **fan-out isolation** invariant: every event reaches exactly the live subscribers of its own session (all, in order, control-before-output), and a subscriber that cannot keep up is *severed*, never allowed to block or corrupt the others. Cross-talk here is one session's bytes surfacing in another's terminal, or a slow client wedging a healthy one.
 
 Like §6 this is a runtime property, not lint/compile-catchable, so it is **test-pinned**: the [fan-out isolation contract](platform/termvt-multiplexer-testing.md) (`TestFanoutDeliversToEverySubscriber`, `TestManagerSessionsDoNotCrossTalk`, `TestSlowSubscriberDoesNotStarveFast`, `TestControlPrecedesOutputInChunk`) runs against a real pty under `-race`, and `server/web`'s `FuzzInbound` pins the untrusted client→server frame decode (no panic, no non-positive resize). Rationale: [ADR 0003](../adr/0003-termvt-fanout-isolation.md). Unlike §6 there is no opt-in e2e tier — termvt has no in-process fake to validate (its only backend is a real pty).
 

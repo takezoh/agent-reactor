@@ -32,7 +32,7 @@ func writeWorkflow(t *testing.T, content string) string {
 
 // isolateHome points HOME at a temp dir so run() neither reads the developer's
 // real ~/.agent-reactor/settings.toml (which may select devcontainer mode and shell out
-// to docker) nor writes the real ~/.agent-reactor/arc.log. Both logger.Init and the
+// to docker) nor writes the real ~/.agent-reactor/server.log. Both logger.Init and the
 // sandbox config loader resolve paths via os.UserHomeDir().
 func isolateHome(t *testing.T) {
 	t.Helper()

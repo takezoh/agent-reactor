@@ -1,7 +1,6 @@
 package state
 
 import (
-	"encoding/json"
 	"fmt"
 )
 
@@ -46,8 +45,6 @@ func reducePaneSpawned(s State, e EvPaneSpawned) (State, []Effect) {
 	if frameIdx == 0 {
 		s, bootstrapEffs, _ = bootstrapDriverSessionStart(s, e.FrameID)
 	}
-	s, pre := ensureMainAtVisibleSlot(s)
-	s.ActiveOccupant = OccupantFrame
 	s.ActiveSession = e.SessionID
 
 	effs := []Effect{}
@@ -57,11 +54,7 @@ func reducePaneSpawned(s State, e EvPaneSpawned) (State, []Effect) {
 		PaneTarget: e.PaneTarget,
 		Tap:        frameIdx == 0 || sess.Frames[frameIdx].SubsystemID != "",
 	})
-	effs = append(effs, pre...)
 	effs = append(effs,
-		EffActivateSession{SessionID: e.SessionID, Reason: EventCreateSession},
-		EffSelectPane{Target: "{sessionName}:0.1"},
-		EffSyncStatusLine{Line: ""},
 		EffPersistSnapshot{},
 		EffBroadcastSessionsChanged{},
 	)
@@ -97,17 +90,11 @@ func reducePreviewSession(s State, connID ConnID, reqID string, p PreviewSession
 	if _, ok := s.Sessions[sid]; !ok {
 		return s, []Effect{errResp(connID, reqID, ErrCodeNotFound, "session not found")}
 	}
-	s, pre := ensureMainAtVisibleSlot(s)
-	s.ActiveOccupant = OccupantFrame
 	s.ActiveSession = sid
-
-	pre = append(pre,
-		EffActivateSession{SessionID: sid, Reason: EventPreviewSession},
-		EffSyncStatusLine{Line: ""},
+	return s, []Effect{
 		EffBroadcastSessionsChanged{IsPreview: true},
 		okResp(connID, reqID, ActiveSessionReply{ActiveSessionID: string(sid)}),
-	)
-	return s, pre
+	}
 }
 
 func reduceSwitchSession(s State, connID ConnID, reqID string, p SwitchSessionParams) (State, []Effect) {
@@ -115,18 +102,11 @@ func reduceSwitchSession(s State, connID ConnID, reqID string, p SwitchSessionPa
 	if _, ok := s.Sessions[sid]; !ok {
 		return s, []Effect{errResp(connID, reqID, ErrCodeNotFound, "session not found")}
 	}
-	s, pre := ensureMainAtVisibleSlot(s)
-	s.ActiveOccupant = OccupantFrame
 	s.ActiveSession = sid
-
-	pre = append(pre,
-		EffActivateSession{SessionID: sid, Reason: EventSwitchSession},
-		EffSelectPane{Target: "{sessionName}:0.1"},
-		EffSyncStatusLine{Line: ""},
+	return s, []Effect{
 		EffBroadcastSessionsChanged{},
 		okResp(connID, reqID, ActiveSessionReply{ActiveSessionID: string(sid)}),
-	)
-	return s, pre
+	}
 }
 
 type ActiveSessionReply struct {
@@ -134,18 +114,14 @@ type ActiveSessionReply struct {
 }
 
 func reducePreviewProject(s State, connID ConnID, reqID string, p PreviewProjectParams) (State, []Effect) {
-	var effs []Effect
-	if s.ActiveOccupant == OccupantFrame {
-		s.ActiveOccupant = OccupantMain
-		effs = append(effs, EffDeactivateSession{})
-	}
 	s.ActiveSession = ""
-	effs = append(effs, okResp(connID, reqID, nil))
-	effs = append(effs, EffBroadcastEvent{
-		Name:    "project-selected",
-		Payload: ProjectSelectedPayload(p),
-	})
-	return s, effs
+	return s, []Effect{
+		okResp(connID, reqID, nil),
+		EffBroadcastEvent{
+			Name:    "project-selected",
+			Payload: ProjectSelectedPayload(p),
+		},
+	}
 }
 
 type ProjectSelectedPayload struct {
@@ -159,42 +135,3 @@ func reduceListSessions(s State, connID ConnID, reqID string, _ struct{}) (State
 }
 
 type SessionsReply struct{}
-
-func reduceFocusPane(s State, connID ConnID, reqID string, p FocusPaneParams) (State, []Effect) {
-	if p.Pane == "" {
-		return s, []Effect{errResp(connID, reqID, ErrCodeInvalidArgument, "pane arg required")}
-	}
-	return s, []Effect{
-		EffSelectPane{Target: p.Pane},
-		EffBroadcastEvent{
-			Name:    "pane-focused",
-			Payload: PaneFocusedPayload(p),
-		},
-		okResp(connID, reqID, nil),
-	}
-}
-
-type PaneFocusedPayload struct {
-	Pane string
-}
-
-func reduceLaunchTool(s State, connID ConnID, reqID string, raw json.RawMessage) (State, []Effect) {
-	var m map[string]string
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &m)
-	}
-	tool := m["tool"]
-	if tool == "" {
-		return s, []Effect{errResp(connID, reqID, ErrCodeInvalidArgument, "tool arg required")}
-	}
-	delete(m, "tool")
-	return s, []Effect{
-		EffDisplayPopup{
-			Width:  "60%",
-			Height: "50%",
-			Tool:   tool,
-			Args:   m,
-		},
-		okResp(connID, reqID, nil),
-	}
-}

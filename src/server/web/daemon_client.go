@@ -27,7 +27,7 @@ const (
 type dialFunc func() (*proto.Client, error)
 
 // DaemonClient is a proto.Client wrapper that maintains a persistent
-// connection to the arc daemon over a Unix socket. A supervisor goroutine
+// connection to the server daemon over a Unix socket. A supervisor goroutine
 // reconnects on disconnect using full-jitter exponential backoff.
 //
 // Callers obtain event notifications via SubscribeEvents; the returned channel

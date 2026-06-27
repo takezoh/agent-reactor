@@ -33,8 +33,6 @@ func Reduce(s State, ev Event) (State, []Effect) {
 		return reducePaneWindowVanished(s, e)
 	case EvFrameCommandExited:
 		return reduceFrameCommandExited(s, e)
-	case EvPaneDied:
-		return reducePaneDied(s, e)
 
 	// tick
 	case EvTick:

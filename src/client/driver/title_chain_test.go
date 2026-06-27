@@ -10,8 +10,7 @@ import "testing"
 //
 // LastPrompt is never a Title candidate. UI layers dedup an exact-match
 // Subtitle against Title; the helper itself keeps Subtitle populated so
-// non-rendering consumers (peer-summary fallback, send-to-session palette)
-// keep their label source.
+// non-rendering consumers keep their label source.
 func TestCardTitleChain(t *testing.T) {
 	tests := []struct {
 		name                         string

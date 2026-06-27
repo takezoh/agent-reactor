@@ -172,7 +172,7 @@ The complete list is in `plans/.archive/symphony-orchestrator/05-conformance.md`
 |---|---|---|
 | §10 | Codex app-server only | stdio shim via `codex.command` supports multiple agents (`claude-app-server`) |
 | §10.5 `linear_graphql` | OPTIONAL extension | implemented in `orchestrator/lineargql/` via codex native `item/tool/call`; advertised through `thread/start` `dynamicTools` (`orchestrator/agent/dynamictools.go`) when the Linear client is configured (→ [issues/024](../../../issues/.archive/024-p8b-linear-graphql-tool.md)) |
-| §13.7 | HTTP server is OPTIONAL | **implemented as mandatory** — orchestrator has no TUI |
+| §13.7 | HTTP server is OPTIONAL | **implemented as mandatory** — orchestrator has no built-in interactive UI |
 | §3.3 | sandbox is impl-defined | devcontainer mode recommended as default |
 | §9.3 | workspace population is impl-defined | `after_create` hook strongly recommended to run `git worktree add` |
 | §15.5 | harness hardening is documentation-only | devcontainer + credproxy + mcpproxy are default |

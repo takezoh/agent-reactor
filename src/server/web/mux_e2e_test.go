@@ -1,8 +1,8 @@
-// End-to-end tests against a real arc daemon process. The unit tests under
+// End-to-end tests against a real server-daemon process. The unit tests under
 // mux_daemon_test.go drive the gateway against a net.Pipe fake daemon — that
 // covers the wire-level behaviour but cannot catch:
 //
-//   - regressions in the cmd/arc bootstrap (e.g. a startup panic that masks
+//   - regressions in the cmd/server bootstrap (e.g. a startup panic that masks
 //     itself as a 500 from /api/sessions),
 //   - wedge regressions in the daemon's runtime event loop (the original
 //     "internal channel full" feedback loop that wedged the production
@@ -10,11 +10,13 @@
 //   - cross-package wiring drift (proto codec changes that break the
 //     gateway↔daemon contract but pass each side's unit tests in isolation).
 //
-// This file spins the actual arc binary (built on demand by `go build`) under
-// a scratch data dir, then drives /api/sessions through the in-process gateway
-// handler against the daemon's socket. Test data dir cleanup happens via
-// t.TempDir(); the daemon is killed in t.Cleanup so a panicking test still
-// reaps its child process.
+// This file spins the actual server binary (built on demand by `go build`)
+// under a scratch data dir, then drives /api/sessions through an in-test
+// gateway handler against the daemon's socket. The spawned server also
+// brings up its co-resident gateway listener; we pin it to an ephemeral
+// loopback port so it never conflicts with any other test or the user's
+// daemon. Test data dir cleanup happens via t.TempDir(); the daemon is
+// killed in t.Cleanup so a panicking test still reaps its child process.
 //
 // These tests are skipped under `go test -short` because the build step is
 // ~5s; the unit-level coverage is unaffected.
@@ -35,51 +37,51 @@ import (
 	"time"
 )
 
-// arcBinaryCache memoises the on-demand-built arc binary path so multiple
-// e2e tests within the same `go test` invocation share one build.
+// serverBinaryCache memoises the on-demand-built server binary path so
+// multiple e2e tests within the same `go test` invocation share one build.
 var (
-	arcBinaryMu   sync.Mutex
-	arcBinaryPath string
-	arcBinaryErr  error
+	serverBinaryMu   sync.Mutex
+	serverBinaryPath string
+	serverBinaryErr  error
 )
 
-// buildArcOnce builds the arc binary under t.TempDir() (shared across tests
-// in the same package run) and returns its absolute path. Subsequent calls
-// reuse the cached path. Skips the test on platforms where the build cannot
-// succeed for environmental reasons (no go toolchain on PATH, etc.).
-func buildArcOnce(t *testing.T) string {
+// buildServerOnce builds the server binary under t.TempDir() (shared across
+// tests in the same package run) and returns its absolute path. Subsequent
+// calls reuse the cached path. Skips the test on platforms where the build
+// cannot succeed for environmental reasons (no go toolchain on PATH, etc.).
+func buildServerOnce(t *testing.T) string {
 	t.Helper()
-	arcBinaryMu.Lock()
-	defer arcBinaryMu.Unlock()
-	if arcBinaryPath != "" || arcBinaryErr != nil {
-		if arcBinaryErr != nil {
-			t.Skipf("arc binary unavailable: %v", arcBinaryErr)
+	serverBinaryMu.Lock()
+	defer serverBinaryMu.Unlock()
+	if serverBinaryPath != "" || serverBinaryErr != nil {
+		if serverBinaryErr != nil {
+			t.Skipf("server binary unavailable: %v", serverBinaryErr)
 		}
-		return arcBinaryPath
+		return serverBinaryPath
 	}
 
-	dir, err := os.MkdirTemp("", "arc-e2e-bin-")
+	dir, err := os.MkdirTemp("", "server-e2e-bin-")
 	if err != nil {
-		arcBinaryErr = err
+		serverBinaryErr = err
 		t.Skipf("mkdir tempdir: %v", err)
 	}
-	bin := filepath.Join(dir, "arc")
+	bin := filepath.Join(dir, "server")
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/arc")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/server")
 	// Run from the module root (this test file lives at src/server/web/);
-	// `go build ./cmd/arc` resolves under it.
+	// `go build ./cmd/server` resolves under it.
 	cmd.Dir = moduleRoot(t)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		arcBinaryErr = err
+		serverBinaryErr = err
 		_ = os.RemoveAll(dir)
-		t.Skipf("go build cmd/arc failed: %v\nstderr:\n%s", err, stderr.String())
+		t.Skipf("go build cmd/server failed: %v\nstderr:\n%s", err, stderr.String())
 	}
-	arcBinaryPath = bin
-	return arcBinaryPath
+	serverBinaryPath = bin
+	return serverBinaryPath
 }
 
 // moduleRoot returns the directory containing go.mod. The tests live three
@@ -103,24 +105,33 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// startArcDaemon launches the arc binary against a scratch data dir, waits
-// for the IPC socket to appear, and returns its absolute path. Killed at the
-// end of the test via t.Cleanup so a panicking test still reaps the child.
-func startArcDaemon(t *testing.T) string {
+// startServerDaemon launches the server binary against a scratch data dir,
+// waits for the IPC socket to appear, and returns its absolute path. The
+// server's co-resident HTTP/WS gateway is pinned to an ephemeral loopback
+// port (-no-auth -insecure -addr 127.0.0.1:0) so it never conflicts with
+// another listener; the test does not exercise it directly — instead it
+// drives its own in-test mux against the daemon socket. Killed at the end
+// of the test via t.Cleanup so a panicking test still reaps the child.
+func startServerDaemon(t *testing.T) string {
 	t.Helper()
-	bin := buildArcOnce(t)
+	bin := buildServerOnce(t)
 	dataDir := t.TempDir()
 
-	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "ROOST_DATA_DIR="+dataDir)
-	logFile, err := os.Create(filepath.Join(dataDir, "arc.log"))
+	cmd := exec.Command(bin,
+		"-data-dir", dataDir,
+		"-insecure",
+		"-no-auth",
+		"-addr", "127.0.0.1:0",
+	)
+	cmd.Env = os.Environ()
+	logFile, err := os.Create(filepath.Join(dataDir, "server.log"))
 	if err != nil {
 		t.Fatalf("create log: %v", err)
 	}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start arc: %v", err)
+		t.Fatalf("start server: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
@@ -128,7 +139,7 @@ func startArcDaemon(t *testing.T) string {
 		_ = logFile.Close()
 	})
 
-	sockPath := filepath.Join(dataDir, "arc.sock")
+	sockPath := filepath.Join(dataDir, "server.sock")
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if fi, err := os.Stat(sockPath); err == nil && fi.Mode()&os.ModeSocket != 0 {
@@ -138,19 +149,19 @@ func startArcDaemon(t *testing.T) string {
 	}
 
 	// Daemon never bound the socket — surface the log so a reader can debug.
-	tail, _ := os.ReadFile(filepath.Join(dataDir, "arc.log"))
+	tail, _ := os.ReadFile(filepath.Join(dataDir, "server.log"))
 	t.Fatalf("daemon did not bind %s within 5s. log tail:\n%s", sockPath, string(tail))
 	return ""
 }
 
 // withRealDaemonMux is the entry point for tests that need a fully-wired
 // (gateway → real daemon) stack. Returns the *http.ServeMux configured
-// against a DaemonClient connected to a freshly-spawned arc daemon under a
-// scratch data dir. All teardown (daemon process kill, socket cleanup) is
+// against a DaemonClient connected to a freshly-spawned server daemon under
+// a scratch data dir. All teardown (daemon process kill, socket cleanup) is
 // registered on t.Cleanup so a panicking test still releases resources.
 func withRealDaemonMux(t *testing.T) http.Handler {
 	t.Helper()
-	sock := startArcDaemon(t)
+	sock := startServerDaemon(t)
 	d := NewDaemonClient(sock)
 	t.Cleanup(d.Close)
 	if !waitHealth(d, true, 3*time.Second) {

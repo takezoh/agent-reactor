@@ -42,8 +42,6 @@ func commandToStateEvent(connID state.ConnID, reqID string, cmd proto.Command) s
 		}
 	case proto.CmdDriverList:
 		return state.EvCmdDriverList{ConnID: connID, ReqID: reqID}
-	case proto.CmdPeerSend, proto.CmdPeerList, proto.CmdPeerSetSummary, proto.CmdPeerDrainInbox:
-		return peerCommandToEvent(connID, reqID, c)
 	}
 	if ev := surfaceCommandToEvent(connID, reqID, cmd); ev != nil {
 		return ev
@@ -73,34 +71,6 @@ func surfaceCommandToEvent(connID state.ConnID, reqID string, cmd proto.Command)
 	return nil
 }
 
-// peerCommandToEvent translates peer.* commands into their state events.
-func peerCommandToEvent(connID state.ConnID, reqID string, cmd proto.Command) state.Event {
-	switch c := cmd.(type) {
-	case proto.CmdPeerSend:
-		return peerEvEvent(connID, reqID, state.EventPeerSend, state.PeerSendParams{
-			ToFrameID:   c.ToFrameID,
-			FromFrameID: c.FromFrameID,
-			Text:        c.Text,
-			ReplyTo:     c.ReplyTo,
-		})
-	case proto.CmdPeerList:
-		return peerEvEvent(connID, reqID, state.EventPeerList, state.PeerListParams{
-			Scope:       c.Scope,
-			FromFrameID: c.FromFrameID,
-		})
-	case proto.CmdPeerSetSummary:
-		return peerEvEvent(connID, reqID, state.EventPeerSetSummary, state.PeerSetSummaryParams{
-			Summary:     c.Summary,
-			FromFrameID: c.FromFrameID,
-		})
-	case proto.CmdPeerDrainInbox:
-		return peerEvEvent(connID, reqID, state.EventPeerDrainInbox, state.PeerDrainInboxParams{
-			FromFrameID: c.FromFrameID,
-		})
-	}
-	return nil
-}
-
 func decodeSubsystemPayload(raw json.RawMessage) state.SubsystemPayload {
 	if len(raw) == 0 {
 		return state.SubsystemPayload{}
@@ -110,11 +80,4 @@ func decodeSubsystemPayload(raw json.RawMessage) state.SubsystemPayload {
 		return state.SubsystemPayload{}
 	}
 	return payload
-}
-
-// peerEvEvent marshals a peer params struct and wraps it in state.EvEvent
-// for dispatch via state.eventHandlers.
-func peerEvEvent(connID state.ConnID, reqID, eventName string, params any) state.Event {
-	b, _ := json.Marshal(params)
-	return state.EvEvent{ConnID: connID, ReqID: reqID, Event: eventName, Payload: b}
 }

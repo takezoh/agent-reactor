@@ -235,7 +235,6 @@ func TestReadTap_SurvivesVTPanic(t *testing.T) {
 func TestStartRestoredTaps_StartsOnlyRootFrames(t *testing.T) {
 	tap := &fakePaneTap{}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Tap:          tap,
 	})
@@ -278,7 +277,6 @@ func TestStartRestoredTaps_StartsOnlyRootFrames(t *testing.T) {
 func TestStartRestoredTaps_NoTapsWhenNilManager(t *testing.T) {
 	tap := &fakePaneTap{}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
 		Tap:          tap,
 	})
@@ -295,7 +293,6 @@ func TestStartRestoredTaps_NoTapsWhenNilManager(t *testing.T) {
 func TestStartTapsForRestoredFrames_DispatchesViaEventLoop(t *testing.T) {
 	tap := &fakePaneTap{}
 	r := New(Config{
-		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Millisecond,
 		Tap:          tap,
 		Backend:      noopBackend{},

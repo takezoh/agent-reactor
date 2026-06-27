@@ -51,8 +51,8 @@ func TestPtyBackendSpawnEchoCaptureKill(t *testing.T) {
 	}
 
 	// Alive before kill.
-	if alive, err := b.PaneAlive(paneID); err != nil || !alive {
-		t.Fatalf("PaneAlive(%q) = %v, %v; want true", paneID, alive, err)
+	if dead, _, err := b.PaneExitStatus(paneID); err != nil || dead {
+		t.Fatalf("PaneExitStatus(%q) = dead=%v, err=%v; want dead=false, err=nil", paneID, dead, err)
 	}
 
 	// SendKeys appends Enter; cat echoes it back.
@@ -77,10 +77,14 @@ func TestPtyBackendSpawnEchoCaptureKill(t *testing.T) {
 		t.Fatalf("KillPaneWindow: %v", err)
 	}
 
-	// After kill the pane is no longer alive.
+	// After kill the pane is gone: either reported dead with no error
+	// or forgotten from the windows-map (ErrPaneMissing).
 	waitUntil(t, func() bool {
-		alive, err := b.PaneAlive(paneID)
-		return err == nil && !alive
+		dead, _, err := b.PaneExitStatus(paneID)
+		if err != nil {
+			return errors.Is(err, ErrPaneMissing)
+		}
+		return dead
 	})
 }
 
@@ -263,10 +267,9 @@ func TestPtyBackendSendKey(t *testing.T) {
 
 // TestPtyBackendUnknownPaneErrors pins the unknown-target contract: every
 // inspect/IO/lifecycle op that addresses a pane returns a non-nil error for an
-// unspawned target, while PaneAlive reports (false, nil). The errors that flow
-// out of the runtime-internal "unknown pane" path must wrap ErrPaneMissing so
-// callers like resident.isMissingPaneErr can distinguish vanished panes from
-// transient failures.
+// unspawned target. The errors that flow out of the runtime-internal "unknown
+// pane" path must wrap ErrPaneMissing so callers like resident.isMissingPaneErr
+// can distinguish vanished panes from transient failures.
 func TestPtyBackendUnknownPaneErrors(t *testing.T) {
 	b := NewPtyBackend(0)
 	const unknown = "%999"
@@ -316,10 +319,6 @@ func TestPtyBackendUnknownPaneErrors(t *testing.T) {
 	// "not found" rather than our wrapped sentinel. Just require it is non-nil.
 	if err := b.KillPaneWindow(unknown); err == nil {
 		t.Error("KillPaneWindow(unknown) error = nil, want non-nil")
-	}
-	// PaneAlive is the explicit exception: unknown target is reported dead, no error.
-	if alive, err := b.PaneAlive(unknown); alive || err != nil {
-		t.Errorf("PaneAlive(unknown) = %v, %v; want false, nil", alive, err)
 	}
 }
 
@@ -503,7 +502,7 @@ func TestPtyBackendSpawnRunsShellStrings(t *testing.T) {
 }
 
 // TestPtyBackendExitStatusLive verifies PaneExitStatus on a running process
-// reports (false, -1, nil), and PaneAlive flips to false once a clean exit is
+// reports (false, -1, nil), and flips to (true, 0, nil) once a clean exit is
 // reaped.
 func TestPtyBackendExitStatusLive(t *testing.T) {
 	b := NewPtyBackend(0)
@@ -521,15 +520,15 @@ func TestPtyBackendExitStatusLive(t *testing.T) {
 		t.Fatalf("PaneExitStatus(live) = %v, %d; want false, -1", dead, code)
 	}
 
-	// A separate pane that exits 0: PaneAlive must flip to false.
+	// A separate pane that exits 0: PaneExitStatus must flip to dead.
 	_, exitPane, err := b.SpawnWindow("w2", "bash -c 'exit 0'", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = b.KillPaneWindow(exitPane) }()
 	waitUntil(t, func() bool {
-		alive, err := b.PaneAlive(exitPane)
-		return err == nil && !alive
+		dead, _, err := b.PaneExitStatus(exitPane)
+		return err == nil && dead
 	})
 }
 
@@ -545,16 +544,16 @@ func TestPtyBackendRespawn(t *testing.T) {
 
 	// Wait for the original to die so we respawn over a reaped pane.
 	waitUntil(t, func() bool {
-		alive, err := b.PaneAlive(paneID)
-		return err == nil && !alive
+		dead, _, err := b.PaneExitStatus(paneID)
+		return err == nil && dead
 	})
 
 	// Respawn over the same target with a long-lived command: pane is alive again.
 	if err := b.RespawnPane(paneID, "cat"); err != nil {
 		t.Fatalf("RespawnPane: %v", err)
 	}
-	if alive, err := b.PaneAlive(paneID); err != nil || !alive {
-		t.Fatalf("PaneAlive after respawn = %v, %v; want true", alive, err)
+	if dead, _, err := b.PaneExitStatus(paneID); err != nil || dead {
+		t.Fatalf("PaneExitStatus after respawn = dead=%v, err=%v; want dead=false, err=nil", dead, err)
 	}
 	// Echo path still works on the respawned pane.
 	if err := b.SendKeys(paneID, "respawned-ok"); err != nil {
@@ -728,7 +727,7 @@ func TestPtyBackendConcurrent(t *testing.T) {
 			}
 			_ = b.SendKeys(paneID, "hello")
 			_, _ = b.CapturePane(paneID, 10)
-			_, _ = b.PaneAlive(paneID)
+			_, _, _ = b.PaneExitStatus(paneID)
 			_ = b.KillPaneWindow(paneID)
 		}()
 	}
