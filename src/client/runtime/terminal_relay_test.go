@@ -114,7 +114,7 @@ func collectEvents(t *testing.T, ch <-chan internalEvent, n int, timeout time.Du
 func newTestTerminalRelay(t *testing.T, b SurfaceBackend) (*TerminalRelay, <-chan internalEvent) {
 	t.Helper()
 	ch := make(chan internalEvent, 64)
-	send := func(ev internalEvent) { ch <- ev }
+	send := func(ev internalEvent) bool { ch <- ev; return true }
 	return NewTerminalRelay(b, send), ch
 }
 

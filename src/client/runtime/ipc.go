@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/takezoh/agent-reactor/client/proto"
 	rsubsystem "github.com/takezoh/agent-reactor/client/runtime/subsystem"
@@ -94,7 +95,7 @@ func (r *Runtime) acceptLoop() {
 			_ = conn.Close()
 			continue
 		}
-		r.enqueueInternal(connOpen{conn: conn})
+		_ = r.enqueueInternal(connOpen{conn: conn})
 	}
 }
 
@@ -220,6 +221,7 @@ func (r *Runtime) startRestoredTaps() {
 
 // enqueueInternal posts an internal event onto the runtime's
 // internal channel. Non-blocking; drops silently on a full channel.
+// Returns true when the event was accepted by the channel, false on drop.
 //
 // Drops are logged at Debug (not Warn) because the daemon's own log file is
 // streamed back to clients via FileRelay. Every Warn would be written to
@@ -229,39 +231,111 @@ func (r *Runtime) startRestoredTaps() {
 // loop that wedges the daemon (observed: 39MB of identical lines at 10/s).
 // Debug-level drop messages stay out of the default log stream and break the
 // cycle. Callers that genuinely cannot tolerate a drop (e.g. spawn completion)
-// use sendSpawnComplete, which blocks rather than dropping.
-func (r *Runtime) enqueueInternal(ev internalEvent) {
+// use sendSpawnComplete, which blocks rather than dropping. Callers that can
+// recover from a drop by retrying (e.g. FileRelay.sweep) check the return
+// value and roll back state to retry on the next tick.
+//
+// Every drop is also counted per-event-type via internalDrops so saturation
+// causes can be attributed via InternalDropStats.
+func (r *Runtime) enqueueInternal(ev internalEvent) bool {
 	select {
 	case r.internalCh <- ev:
+		return true
 	default:
-		slog.Debug("runtime: internal channel full, dropping",
-			"type", internalEventName(ev))
+		name := internalEventName(ev)
+		if r.internalDrops != nil {
+			r.internalDrops.inc(name)
+		}
+		slog.Debug("runtime: internal channel full, dropping", "type", name)
+		return false
 	}
 }
 
+// Internal event name constants. Shared by internalEventName (for log/metrics
+// labels) and newInternalDropCounter (for the pre-populated counter map).
+// Keeping them as const makes the catalogue greppable.
+const (
+	internalEventConnOpen          = "conn-open"
+	internalEventConnClose         = "conn-close"
+	internalEventBroadcastWire     = "broadcast-wire"
+	internalEventBroadcastSurface  = "broadcast-surface"
+	internalEventSurfaceClosed     = "surface-closed"
+	internalEventSetRelay          = "set-relay"
+	internalEventStartRestoredTaps = "start-restored-taps"
+	internalEventSpawnComplete     = "spawn-complete"
+	internalEventUnknown           = "unknown"
+)
+
 // internalEventName returns a short identifier for an internal event, used
-// only for diagnostic logs (Debug level).
+// for diagnostic logs (Debug level) and drop counter labels.
 func internalEventName(ev internalEvent) string {
 	switch ev.(type) {
 	case connOpen:
-		return "conn-open"
+		return internalEventConnOpen
 	case connClose:
-		return "conn-close"
+		return internalEventConnClose
 	case internalBroadcastWire:
-		return "broadcast-wire"
+		return internalEventBroadcastWire
 	case internalBroadcastSurface:
-		return "broadcast-surface"
+		return internalEventBroadcastSurface
 	case internalSurfaceClosed:
-		return "surface-closed"
+		return internalEventSurfaceClosed
 	case internalSetRelay:
-		return "set-relay"
+		return internalEventSetRelay
 	case internalStartRestoredTaps:
-		return "start-restored-taps"
+		return internalEventStartRestoredTaps
 	case internalSpawnComplete:
-		return "spawn-complete"
+		return internalEventSpawnComplete
 	default:
-		return "unknown"
+		return internalEventUnknown
 	}
+}
+
+// internalDropCounter tracks per-event-type silent drops from enqueueInternal.
+// Pre-populated at construction so the hot path uses an existing *atomic.Uint64
+// (no map writes, no locks). Unknown event types fall back to the "unknown"
+// bucket.
+type internalDropCounter struct {
+	byType map[string]*atomic.Uint64
+}
+
+func newInternalDropCounter() *internalDropCounter {
+	names := []string{
+		internalEventConnOpen,
+		internalEventConnClose,
+		internalEventBroadcastWire,
+		internalEventBroadcastSurface,
+		internalEventSurfaceClosed,
+		internalEventSetRelay,
+		internalEventStartRestoredTaps,
+		internalEventSpawnComplete,
+		internalEventUnknown,
+	}
+	m := make(map[string]*atomic.Uint64, len(names))
+	for _, n := range names {
+		m[n] = new(atomic.Uint64)
+	}
+	return &internalDropCounter{byType: m}
+}
+
+func (c *internalDropCounter) inc(name string) {
+	if v, ok := c.byType[name]; ok {
+		v.Add(1)
+		return
+	}
+	c.byType[internalEventUnknown].Add(1)
+}
+
+// snapshot returns the current per-event-type drop counts. Only non-zero
+// buckets are included so the caller can spot active producers quickly.
+func (c *internalDropCounter) snapshot() map[string]uint64 {
+	out := make(map[string]uint64, len(c.byType))
+	for k, v := range c.byType {
+		if n := v.Load(); n > 0 {
+			out[k] = n
+		}
+	}
+	return out
 }
 
 // sendSpawnComplete delivers a spawn-completion event to the loop. Unlike
@@ -292,7 +366,7 @@ func (r *Runtime) handleConnOpen(conn net.Conn) {
 // or error, it enqueues EvConnClosed and exits.
 func (r *Runtime) connReader(cc *ipcConn) {
 	defer func() {
-		r.enqueueInternal(connClose{id: cc.id})
+		_ = r.enqueueInternal(connClose{id: cc.id})
 	}()
 	dec := json.NewDecoder(cc.conn)
 	for {

@@ -30,7 +30,10 @@ type FileRelay struct {
 	// send posts an internal event onto the runtime event loop. FileRelay
 	// holds only this bound function (not *Runtime) so its background sweep
 	// goroutine cannot touch loop-owned state (conns / Subscribers) directly.
-	send func(internalEvent)
+	// Returns true on accept, false on a saturated internalCh. FileRelay uses
+	// the return value to roll back dirty/offset state so the next sweep tick
+	// re-reads and re-broadcasts the same content (no permanent log line loss).
+	send func(internalEvent) bool
 
 	stop chan struct{}
 	wg   sync.WaitGroup
@@ -184,26 +187,40 @@ func (fr *FileRelay) sweepLoop() {
 
 func (fr *FileRelay) sweep() {
 	fr.mu.Lock()
-	// Snapshot dirty files under lock, then release for I/O.
-	var dirty []*relayFile
+	// Snapshot dirty files under lock, then release for I/O. Capture the
+	// pre-read offset alongside each file so a broadcast drop can roll it back.
+	type pending struct {
+		f         *relayFile
+		oldOffset int64
+	}
+	var dirty []pending
 	for _, f := range fr.files {
 		if f.dirty {
 			f.dirty = false
-			dirty = append(dirty, f)
+			dirty = append(dirty, pending{f: f, oldOffset: f.offset})
 		}
 	}
 	fr.mu.Unlock()
 
-	for _, f := range dirty {
-		content, newOffset := readFrom(f.path, f.offset)
+	for _, p := range dirty {
+		content, newOffset := readFrom(p.f.path, p.oldOffset)
 		if content == "" {
 			continue
 		}
 		fr.mu.Lock()
-		f.offset = newOffset
+		p.f.offset = newOffset
 		fr.mu.Unlock()
 
-		fr.broadcast(f, content)
+		if !fr.broadcast(p.f, content) {
+			// internalCh saturation dropped our broadcast. Roll back so the
+			// next sweep tick re-reads and re-broadcasts the same content.
+			// dirty=true means watchLoop's subsequent Write events keep us
+			// armed even between retries.
+			fr.mu.Lock()
+			p.f.offset = p.oldOffset
+			p.f.dirty = true
+			fr.mu.Unlock()
+		}
 	}
 }
 
@@ -234,7 +251,12 @@ func readFrom(path string, offset int64) (string, int64) {
 	return string(data), offset + int64(len(data))
 }
 
-func (fr *FileRelay) broadcast(f *relayFile, content string) {
+// broadcast posts the read content to the runtime event loop. Returns true
+// when the event was accepted, false on a saturated internalCh — the sweep
+// caller uses this signal to roll back dirty/offset so the next tick retries.
+// Encode errors are treated as "delivered" (no retry possible): the line is
+// lost but the offset advance is correct because the bytes were consumed.
+func (fr *FileRelay) broadcast(f *relayFile, content string) bool {
 	var event proto.ServerEvent
 	if f.frameID == "" {
 		event = proto.EvtLogLine{Path: f.path, Line: content}
@@ -247,7 +269,7 @@ func (fr *FileRelay) broadcast(f *relayFile, content string) {
 	}
 	wire, err := proto.EncodeEvent(event)
 	if err != nil {
-		return
+		return true
 	}
-	fr.send(internalBroadcastWire{wire: wire, eventName: event.EventName()})
+	return fr.send(internalBroadcastWire{wire: wire, eventName: event.EventName()})
 }

@@ -127,10 +127,15 @@ func TestBroadcastEnqueuesInternalEvent(t *testing.T) {
 	var got []internalEvent
 	fr := &FileRelay{
 		files: map[string]*relayFile{},
-		send:  func(ev internalEvent) { got = append(got, ev) },
+		send: func(ev internalEvent) bool {
+			got = append(got, ev)
+			return true
+		},
 	}
 
-	fr.broadcast(&relayFile{path: "/tmp/app.log", kind: "log"}, "hello\n")
+	if !fr.broadcast(&relayFile{path: "/tmp/app.log", kind: "log"}, "hello\n") {
+		t.Fatal("broadcast returned false despite send accepting the event")
+	}
 
 	if len(got) != 1 {
 		t.Fatalf("expected 1 internal event, got %d", len(got))
@@ -206,7 +211,7 @@ func TestBroadcastRaceWithConnChurn(t *testing.T) {
 				return
 			default:
 				c1, c2 := net.Pipe()
-				r.enqueueInternal(connOpen{conn: c1})
+				_ = r.enqueueInternal(connOpen{conn: c1})
 				_ = c1.Close()
 				_ = c2.Close()
 				time.Sleep(time.Millisecond)
@@ -224,5 +229,80 @@ func TestBroadcastRaceWithConnChurn(t *testing.T) {
 	case <-r.Done():
 	case <-time.After(2 * time.Second):
 		t.Fatal("runtime did not stop within timeout")
+	}
+}
+
+// TestSweepRollsBackOnDrop asserts that when broadcast returns false (drop),
+// sweep restores dirty=true and offset so the next tick re-reads and re-sends
+// the same content. This is the 031 contract: no log line is permanently lost
+// when internalCh is saturated.
+func TestSweepRollsBackOnDrop(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.log")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := newTestFileRelay(t)
+	fr.files[path] = &relayFile{path: path, kind: "log", dirty: true, offset: 0}
+
+	var calls int
+	fr.send = func(internalEvent) bool {
+		calls++
+		return false // always drop
+	}
+
+	fr.sweep()
+
+	if calls != 1 {
+		t.Fatalf("expected 1 send call on first sweep, got %d", calls)
+	}
+	f := fr.files[path]
+	if !f.dirty {
+		t.Error("expected dirty=true after dropped broadcast (next sweep must retry)")
+	}
+	if f.offset != 0 {
+		t.Errorf("expected offset rolled back to 0, got %d", f.offset)
+	}
+
+	// Second sweep: send accepts. Offset advances, dirty clears.
+	fr.send = func(internalEvent) bool {
+		calls++
+		return true
+	}
+	fr.sweep()
+
+	if calls != 2 {
+		t.Fatalf("expected 2 total send calls after retry, got %d", calls)
+	}
+	if f.dirty {
+		t.Error("expected dirty=false after successful broadcast")
+	}
+	if f.offset != int64(len("hello\n")) {
+		t.Errorf("expected offset=%d after successful read, got %d", len("hello\n"), f.offset)
+	}
+}
+
+// TestSweepAdvancesOnDeliver asserts the happy path: broadcast accepts, sweep
+// keeps offset advanced and dirty cleared.
+func TestSweepAdvancesOnDeliver(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "y.log")
+	if err := os.WriteFile(path, []byte("line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := newTestFileRelay(t)
+	fr.files[path] = &relayFile{path: path, kind: "log", dirty: true, offset: 0}
+	fr.send = func(internalEvent) bool { return true }
+
+	fr.sweep()
+
+	f := fr.files[path]
+	if f.dirty {
+		t.Error("expected dirty=false after successful broadcast")
+	}
+	if f.offset != int64(len("line\n")) {
+		t.Errorf("expected offset=%d, got %d", len("line\n"), f.offset)
 	}
 }

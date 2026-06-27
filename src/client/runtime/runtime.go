@@ -164,12 +164,28 @@ type Runtime struct {
 	// terminalRelay fans pane output from TerminalRelay to subscribed ConnIDs.
 	// Nil when cfg.Backend does not implement SurfaceBackend.
 	terminalRelay *TerminalRelay
+
+	// internalDrops counts per-event-type drops from enqueueInternal so a future
+	// saturation incident can be attributed to a specific producer. Snapshot via
+	// InternalDropStats.
+	internalDrops *internalDropCounter
 }
 
 // PruneProcessGroups reaps host process groups left marked by an earlier daemon
 // boot that died without a graceful Stop (SIGKILL/panic). Call once at startup
 // before spawning. No-op without a data dir or on non-Linux platforms.
 func (r *Runtime) PruneProcessGroups() { r.pgidTracker.Prune() }
+
+// InternalDropStats returns the running counts of silently-dropped internal
+// events keyed by short event-type label (matches internalEventName). Only
+// non-zero buckets are returned; callers can treat absence as "0 drops". Safe
+// to call from any goroutine.
+func (r *Runtime) InternalDropStats() map[string]uint64 {
+	if r.internalDrops == nil {
+		return map[string]uint64{}
+	}
+	return r.internalDrops.snapshot()
+}
 
 // SetBaseContext stores the long-lived daemon context. It must be called
 // before cold-start spawning so subsystems created during RecreateAll inherit
@@ -233,6 +249,7 @@ func New(cfg Config) *Runtime {
 		subsystems:         map[state.SubsystemID]rsubsystem.Subsystem{},
 		frameSubsystems:    map[state.FrameID]rsubsystem.Subsystem{},
 		frameSubsystemIDs:  map[state.FrameID]state.SubsystemID{},
+		internalDrops:      newInternalDropCounter(),
 	}
 	if cfg.Pool != nil {
 		r.workers = cfg.Pool
@@ -345,7 +362,7 @@ func (r *Runtime) SetRelay(fr *FileRelay) {
 // empty and the bootstrap event cannot be silently dropped by the
 // enqueueInternal non-blocking send.
 func (r *Runtime) StartTapsForRestoredFrames() {
-	r.enqueueInternal(internalStartRestoredTaps{})
+	_ = r.enqueueInternal(internalStartRestoredTaps{})
 }
 
 // Run is the event loop. It blocks until ctx is cancelled.

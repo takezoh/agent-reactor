@@ -45,8 +45,10 @@ type TerminalRelay struct {
 	backend SurfaceBackend
 	// send posts an internal event onto the runtime event loop. TerminalRelay
 	// holds only this bound function (not *Runtime) so its fan-out goroutines
-	// cannot touch loop-owned state directly.
-	send    func(internalEvent)
+	// cannot touch loop-owned state directly. Returns true on accept, false on
+	// drop — TerminalRelay ignores the return because realtime surface chunks
+	// are best-effort by design.
+	send    func(internalEvent) bool
 	startTS time.Time // base for TimeSec computation
 
 	mu   sync.Mutex
@@ -55,7 +57,7 @@ type TerminalRelay struct {
 
 // NewTerminalRelay creates a TerminalRelay that forwards surface events via send.
 // send is typically rt.enqueueInternal, bound at construction time.
-func NewTerminalRelay(b SurfaceBackend, send func(internalEvent)) *TerminalRelay {
+func NewTerminalRelay(b SurfaceBackend, send func(internalEvent) bool) *TerminalRelay {
 	return &TerminalRelay{
 		backend: b,
 		send:    send,
@@ -168,7 +170,7 @@ func (tr *TerminalRelay) fanOut(key surfaceKey, sub *surfaceSub, ch <-chan termv
 					delete(tr.subs, key)
 				}
 				tr.mu.Unlock()
-				tr.send(internalSurfaceClosed{
+				_ = tr.send(internalSurfaceClosed{
 					ConnID:    key.connID,
 					SessionID: key.sessionID,
 				})
@@ -189,7 +191,7 @@ func (tr *TerminalRelay) fanOut(key surfaceKey, sub *surfaceSub, ch <-chan termv
 			seq := sub.seq
 			sub.seq++
 
-			tr.send(internalBroadcastSurface{
+			_ = tr.send(internalBroadcastSurface{
 				ConnID:    key.connID,
 				SessionID: key.sessionID,
 				Data:      data,
