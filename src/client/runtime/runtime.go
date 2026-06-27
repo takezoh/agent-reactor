@@ -1,6 +1,6 @@
 // Package runtime is the imperative shell for the pure state package.
 // It owns the single event loop goroutine, the worker pool, the IPC
-// server, the fsnotify watcher, and the tmux backend. Every state
+// server, the fsnotify watcher, and the pane backend. Every state
 // mutation goes through state.Reduce; every side effect is dispatched
 // through the Effect interpreter in interpret.go.
 //
@@ -74,13 +74,13 @@ type Config struct {
 	// Injected into state.State once at construction; never mutated.
 	Features features.Set
 
-	// Launcher wraps agent launch plans before they reach tmux, enabling
+	// Launcher wraps agent launch plans before they reach the backend, enabling
 	// sandbox implementations. nil falls back to DirectLauncher (no-op).
 	Launcher AgentLauncher
 
 	// StreamDispatcher applies sandbox/container wrapping for codex app-server
 	// launches (stdio, non-TTY). Separate from Launcher which uses TTY=true for
-	// interactive tmux panes. nil falls back to direct (no-op) dispatch.
+	// interactive backend panes. nil falls back to direct (no-op) dispatch.
 	StreamDispatcher agentlaunch.Dispatcher
 
 	// StreamReadTimeout overrides the codex app-server JSON-RPC read timeout.
@@ -97,7 +97,7 @@ type Runtime struct {
 
 	state state.State
 
-	// sessionPanes maps each FrameID to its tmux pane id ("%5", "%12", ...).
+	// sessionPanes maps each FrameID to its pane id ("%5", "%12", ...).
 	sessionPanes map[state.FrameID]string
 	// mainPaneSession is the SessionID whose frame is currently in pane 0.1,
 	// or "". Distinct from state.ActiveSession (logical focus): this tracks
@@ -371,7 +371,7 @@ func (r *Runtime) SetRelay(fr *FileRelay) {
 
 // StartTapsForRestoredFrames attaches a pane tap to each frame that was
 // restored from the snapshot.  Normal sessions route through
-// EvTmuxPaneSpawned → EffRegisterPane → tapManager.start, but bootstrap
+// EvPaneSpawned → EffRegisterPane → tapManager.start, but bootstrap
 // paths (warm restart, cold-start RecreateAll) populate sessionPanes
 // directly without emitting that effect, leaving restored frames
 // without a tap.  Call once from the coordinator (see cmd/arc/coordinator.go
@@ -459,11 +459,11 @@ func (r *Runtime) Run(ctx context.Context) error {
 }
 
 // scheduleActiveFramePaneProbe は active frame (pane 0.1 にスワップ中) の
-// 死亡を高速検出する。PaneAlive の tmux shell-out をゴルーチンに委譲して
+// 死亡を高速検出する。PaneAlive の backend 呼び出しをゴルーチンに委譲して
 // event loop をブロックしない。同時実行は atomic guard で 1 本に制限する。
 //
 // ターゲットは frame の pane_id を使う。remain-on-exit off で frame が exit
-// すると tmux が pane を破棄し layout を詰めるため、positional "0.1" は
+// すると backend が pane を破棄し layout を詰めるため、positional "0.1" は
 // 別の生存 pane を指してしまう。pane_id ならプロセスと一緒に消えるので、
 // display-message が err を返したケースも dead 扱いにする。
 func (r *Runtime) scheduleActiveFramePaneProbe() {
@@ -495,7 +495,7 @@ func (r *Runtime) scheduleActiveFramePaneProbe() {
 
 // dispatch runs Reduce against the current state and executes every
 // resulting effect. Effects may enqueue more events into r.eventCh
-// (e.g. tmux spawn → EvTmuxWindowSpawned), which are picked up on
+// (e.g. pane spawn → EvPaneSpawned), which are picked up on
 // subsequent loop iterations.
 //
 // After Reduce returns, dispatch reconciles persistence with the
@@ -524,12 +524,12 @@ func eventName(ev state.Event) string {
 		return "drvev:" + e.Event
 	case state.EvSubsystem:
 		return "subsys:" + string(e.FrameID)
-	case state.EvTmuxPaneSpawned:
-		return "tmux-spawned:" + string(e.FrameID)
-	case state.EvTmuxSpawnFailed:
-		return "tmux-spawn-failed:" + string(e.FrameID)
-	case state.EvTmuxWindowVanished:
-		return "tmux-vanished:" + string(e.FrameID)
+	case state.EvPaneSpawned:
+		return "pane-spawned:" + string(e.FrameID)
+	case state.EvSpawnFailed:
+		return "spawn-failed:" + string(e.FrameID)
+	case state.EvPaneWindowVanished:
+		return "pane-vanished:" + string(e.FrameID)
 	case state.EvFrameCommandExited:
 		return "cmd-exit:" + string(e.FrameID)
 	case state.EvPaneDied:

@@ -38,7 +38,7 @@ func (l *DevcontainerLauncher) BeginColdStart() { l.coldStart.Store(true) }
 func (l *DevcontainerLauncher) EndColdStart() { l.coldStart.Store(false) }
 
 // NewDevcontainerLauncher creates a Dispatcher that runs agents inside devcontainers.
-// tty selects `docker exec -it` (true, for interactive tmux panes) vs `-i`
+// tty selects `docker exec -it` (true, for interactive backend panes) vs `-i`
 // (false, for headless consumers that pipe JSON-RPC stdio like the orchestrator).
 func NewDevcontainerLauncher(
 	mgr sandbox.Manager[*sandboxdc.ContainerState],
@@ -109,7 +109,7 @@ func (l *DevcontainerLauncher) Wrap(ctx context.Context, frameID string, plan La
 	// shell lexer: it cannot reverse the '\'' single-quote escaping nor evaluate the
 	// substitution, and silently splits the agent command off into stray tokens that
 	// `sh -c` then ignores (the app-server never launches). Run cmd through `sh -c`
-	// so the same shell parsing the interactive (tmux) consumer relies on applies.
+	// so the same shell parsing the interactive (backend pane) consumer relies on applies.
 	return WrappedLaunch{
 		Command:          cmd,
 		Argv:             []string{"sh", "-c", cmd},

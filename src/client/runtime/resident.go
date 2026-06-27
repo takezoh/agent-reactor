@@ -66,7 +66,7 @@ func (r *Runtime) swapSessionIntoMain(sessID state.SessionID) bool {
 		"srcPane", paneID, "dstTarget", r.mainPaneTarget())
 	if err := r.cfg.Backend.SwapPane(paneID, r.mainPaneTarget()); err != nil {
 		if isMissingPaneErr(err) {
-			r.Enqueue(state.EvTmuxWindowVanished{FrameID: frame.ID})
+			r.Enqueue(state.EvPaneWindowVanished{FrameID: frame.ID})
 		}
 		slog.Warn("runtime: swap-pane session failed", "session", sessID, "pane", paneID, "err", err)
 		return false

@@ -33,7 +33,7 @@ type Tool struct {
 // ToolInvocation tells the palette to immediately start another tool
 // in the same popup process after the current Run returns. Used for
 // in-popup tool chains (e.g. create-project → new-session) since
-// tmux disallows nested display-popups.
+// the backend disallows nested display-popups.
 type ToolInvocation struct {
 	Name string
 	Args map[string]string

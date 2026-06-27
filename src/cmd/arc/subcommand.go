@@ -74,10 +74,10 @@ func runTUI(args []string) error {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintf(w, "%s - AI agent session manager on tmux\n", appid.ClientBin)
+	fmt.Fprintf(w, "%s - AI agent session manager\n", appid.ClientBin)
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintf(w, "  %s          Start or attach to the %s tmux session\n", appid.ClientBin, appid.ClientBin)
+	fmt.Fprintf(w, "  %s          Start or attach to the %s daemon session\n", appid.ClientBin, appid.ClientBin)
 	for _, pair := range cli.RegisteredHelp() {
 		fmt.Fprintf(w, "  %s %-8s %s\n", appid.ClientBin, pair[0], pair[1])
 	}

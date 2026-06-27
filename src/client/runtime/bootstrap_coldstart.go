@@ -48,8 +48,8 @@ func (r *Runtime) PrewarmContainers(ctx context.Context) {
 	_ = eg.Wait()
 }
 
-// RecreateAll spawns fresh tmux windows for every session in r.state.
-// Used during cold-start (the tmux session was just created and
+// RecreateAll spawns fresh pane windows for every session in r.state.
+// Used during cold-start (the pane backend session was just created and
 // contains no client windows yet). Populates r.sessionPanes.
 // Spawn failures are logged but do not remove the session: a transient
 // error is not evidence that the user intended to delete the session.
@@ -106,7 +106,7 @@ func coldStartRecoverable(drv state.Driver, s state.DriverState) bool {
 	return ok && s != nil && rec.RecoverableOnColdStart(s)
 }
 
-// spawnFrameWindow prepares and spawns a single frame's tmux window during cold start.
+// spawnFrameWindow prepares and spawns a single frame's pane window during cold start.
 // It runs PrepareLaunch → WrapLaunch → SpawnWindow, registers the cleanup callback,
 // and records the pane ID in session env.
 func (r *Runtime) spawnFrameWindow(id state.SessionID, sandbox state.SandboxOverride, frame state.SessionFrame, size paneSize) error {
@@ -185,9 +185,9 @@ func (r *Runtime) spawnFrameWindow(id state.SessionID, sandbox state.SandboxOver
 // spawnWrapped calls SpawnWindow for a WrappedLaunch and resizes the resulting window.
 func (r *Runtime) spawnWrapped(frameID state.FrameID, project string, wrapped WrappedLaunch, size paneSize) (string, error) {
 	name := windowName(project, string(frameID))
-	tmuxCmd := buildSpawnCommand(wrapped.Command, nil)
-	slog.Info("runtime: spawning window", "frame", frameID, "cmd", tmuxCmd, "mode", "coldstart")
-	target, paneID, err := r.cfg.Backend.SpawnWindow(name, tmuxCmd, wrapped.StartDir, wrapped.Env)
+	spawnCmd := buildSpawnCommand(wrapped.Command, nil)
+	slog.Info("runtime: spawning window", "frame", frameID, "cmd", spawnCmd, "mode", "coldstart")
+	target, paneID, err := r.cfg.Backend.SpawnWindow(name, spawnCmd, wrapped.StartDir, wrapped.Env)
 	if err != nil {
 		return "", err
 	}

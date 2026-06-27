@@ -170,7 +170,7 @@ func TestWireEncodeServerEvent_SessionsChanged_ViewUpdate(t *testing.T) {
 // TestWireEncodeServerEvent_SessionsChanged_DropsActiveID guards the bug
 // where a non-empty daemon-side ActiveSessionID leaked into every web
 // client's view-update frame and clobbered their locally-tracked
-// selection. Each new session spawn (reduceTmuxPaneSpawned) and many
+// selection. Each new session spawn (reducePaneSpawned) and many
 // other reducers mutate state.ActiveSession, and EffBroadcastSessionsChanged
 // fan-outs reach every connected browser — so even with a single web user
 // open, a background session creation or driver frame push would yank

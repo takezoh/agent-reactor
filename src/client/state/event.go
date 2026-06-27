@@ -162,7 +162,7 @@ type EvConnClosed struct {
 
 // EvTick is the periodic tick fired by runtime's ticker. Drivers run
 // their Step{DEvTick} on every tick. PaneTargets maps each FrameID
-// to its tmux pane id (e.g. "%5"), pre-filled by the runtime so reducers
+// to its pane id (e.g. "%5"), pre-filled by the runtime so reducers
 // can forward it to drivers without touching the runtime directly.
 // N is a monotonic counter used for effect bucketing (gate expensive
 // effects to every N-th tick rather than every tick).
@@ -186,7 +186,7 @@ type EvJobResult struct {
 	Err    error
 }
 
-// EvPaneDied is fired when the runtime detects via tmux display-message
+// EvPaneDied is fired when the runtime detects via the backend liveness probe
 // that a pane is dead. For control panes (0.1 / 0.2) the reducer
 // respawns them. For pane 0.0 (active agent), the reducer evicts the
 // owning session. OwnerSessionID is set by the runtime when it detects
@@ -196,11 +196,11 @@ type EvPaneDied struct {
 	OwnerFrameID FrameID // set for pane 0.0 dead detection
 }
 
-// EvTmuxWindowVanished is fired by ReconcileWindows when the tmux
+// EvPaneWindowVanished is fired by ReconcileWindows when the pane backend's
 // window backing a frame has truly disappeared (the user closed the
-// window via tmux's own kill-window, for instance). The frame is
+// window via the backend's own kill-window, for instance). The frame is
 // always evicted because there is nothing left to inspect.
-type EvTmuxWindowVanished struct {
+type EvPaneWindowVanished struct {
 	FrameID FrameID
 }
 
@@ -221,15 +221,15 @@ type EvFrameCommandExited struct {
 	ExitCode int
 }
 
-// EvTmuxPaneSpawned is the async result of a tmux new-window call
-// initiated by EffSpawnTmuxWindow. PaneTarget is the pane id the runtime
+// EvPaneSpawned is the async result of a backend new-window call
+// initiated by EffSpawnPaneWindow. PaneTarget is the pane id the runtime
 // uses to route activate/capture effects. SubsystemID is the opaque
 // identifier the subsystem factory chose for this frame's backend; the
 // reducer writes it onto the frame for future routing. WorktreeStartDir
 // is non-empty when the subsystem created a managed worktree during
 // BindFrame; the reducer routes DEvWorktreeResolved to the frame's driver
 // so the path is persisted for cold-start reconstruction.
-type EvTmuxPaneSpawned struct {
+type EvPaneSpawned struct {
 	SessionID        SessionID
 	FrameID          FrameID
 	SubsystemID      SubsystemID
@@ -240,10 +240,10 @@ type EvTmuxPaneSpawned struct {
 	ReplyReqID       string
 }
 
-// EvTmuxSpawnFailed is the async failure of a tmux new-window call.
+// EvSpawnFailed is the async failure of a backend new-window call.
 // The reducer evicts the half-created session and replies to the
 // original caller with an error.
-type EvTmuxSpawnFailed struct {
+type EvSpawnFailed struct {
 	SessionID  SessionID
 	FrameID    FrameID
 	Err        string
@@ -303,9 +303,9 @@ func (EvTick) isEvent()                  {}
 func (EvFileChanged) isEvent()           {}
 func (EvJobResult) isEvent()             {}
 func (EvPaneDied) isEvent()              {}
-func (EvTmuxWindowVanished) isEvent()    {}
+func (EvPaneWindowVanished) isEvent()    {}
 func (EvFrameCommandExited) isEvent()    {}
-func (EvTmuxPaneSpawned) isEvent()       {}
-func (EvTmuxSpawnFailed) isEvent()       {}
+func (EvPaneSpawned) isEvent()           {}
+func (EvSpawnFailed) isEvent()           {}
 func (EvPaneOsc) isEvent()               {}
 func (EvPanePrompt) isEvent()            {}

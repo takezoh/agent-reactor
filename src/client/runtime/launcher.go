@@ -31,7 +31,7 @@ type WrappedLaunch struct {
 	Mounts pathmap.Mounts
 }
 
-// AgentLauncher wraps a state.LaunchPlan before it reaches tmux, allowing
+// AgentLauncher wraps a state.LaunchPlan before it reaches the pane backend, allowing
 // sandbox implementations to prepend wrapper commands or spin up isolated
 // environments. The runtime calls WrapLaunch once per spawn;
 // DirectLauncher is used when no Launcher is configured.
@@ -43,7 +43,7 @@ type AgentLauncher interface {
 	WrapLaunch(frameID state.FrameID, plan state.LaunchPlan, env map[string]string) (WrappedLaunch, error)
 
 	// AdoptFrame is called during warm start to re-register a pre-existing frame
-	// with the sandbox backend (the agent process is already running in tmux).
+	// with the sandbox backend (the agent process is already running in a pane).
 	// Returns the Cleanup callback and the bind-mount map for the frame (may be
 	// nil for non-sandbox backends). Must not start or restart the sandbox.
 	AdoptFrame(ctx context.Context, frameID state.FrameID, projectPath string) (func() error, pathmap.Mounts, error)

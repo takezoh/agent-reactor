@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Fan-out isolation contract for the tmux-free multiplexer. Where the stream
+// Fan-out isolation contract for the self-contained multiplexer. Where the stream
 // subsystem's safety-critical property is routing isolation (an event reaches
 // only the frame that owns its thread — see docs/adr/0001), termvt's analogue is
 // FAN-OUT ISOLATION:

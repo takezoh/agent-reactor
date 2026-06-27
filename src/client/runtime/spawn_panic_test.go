@@ -20,26 +20,26 @@ func (p *panickingFactory) Ensure(_ context.Context, _ state.SessionID, _ string
 	panic(p.msg)
 }
 
-// TestSpawnTmuxWindow_recoversFromPanicAndEmitsSpawnFailed verifies that a
+// TestSpawnPaneWindow_recoversFromPanicAndEmitsSpawnFailed verifies that a
 // panic inside the spawn pipeline does NOT propagate out of the spawn
 // goroutine (which would crash the daemon and kill every session inside —
 // including the agent session that issued the POST /api/sessions). Instead,
-// the panic is converted to EvTmuxSpawnFailed scoped to the one frame being
+// the panic is converted to EvSpawnFailed scoped to the one frame being
 // spawned, and the daemon survives.
 //
 // Why this test exists: the user reported "POST /api/sessions returns 500
 // and the arc session that started this conversation terminates." Without
-// the defer recover() in spawnTmuxWindow, an upstream panic during
-// ensureSubsystem / BindFrame / wrapLaunchForSpawn / tmux SpawnWindow would
+// the defer recover() in spawnPaneWindow, an upstream panic during
+// ensureSubsystem / BindFrame / wrapLaunchForSpawn / backend SpawnWindow would
 // unwind out of the goroutine and Go's runtime would kill the process.
 // With it, the daemon stays up.
-func TestSpawnTmuxWindow_recoversFromPanicAndEmitsSpawnFailed(t *testing.T) {
-	tmux := newFakeTmux()
+func TestSpawnPaneWindow_recoversFromPanicAndEmitsSpawnFailed(t *testing.T) {
+	backend := newFakeBackend()
 	internalCh := make(chan internalEvent, 1)
 	eventCh := make(chan state.Event, 1)
 
 	deps := spawnDeps{
-		backend:  tmux,
+		backend:  backend,
 		launcher: DirectLauncher{},
 		factories: map[state.LaunchSubsystem]rsubsystem.Factory{
 			state.LaunchSubsystemCLI: &panickingFactory{msg: "synthetic panic from test"},
@@ -50,20 +50,20 @@ func TestSpawnTmuxWindow_recoversFromPanicAndEmitsSpawnFailed(t *testing.T) {
 		sendEvent:    func(ev state.Event) { eventCh <- ev },
 	}
 
-	// This call MUST NOT panic. Without defer recover() in spawnTmuxWindow
+	// This call MUST NOT panic. Without defer recover() in spawnPaneWindow
 	// it would propagate the panic out of the goroutine; in a goroutine
 	// that would crash the process, but synchronously here `testing` would
 	// fail the test with the panic surface. Either way, panic = test fail.
-	spawnTmuxWindow(deps, state.EffSpawnTmuxWindow{
+	spawnPaneWindow(deps, state.EffSpawnPaneWindow{
 		SessionID: "s-survives", FrameID: "f-survives",
 		Project: "/p", Command: "minimal-test",
 	})
 
 	select {
 	case ev := <-eventCh:
-		failed, ok := ev.(state.EvTmuxSpawnFailed)
+		failed, ok := ev.(state.EvSpawnFailed)
 		if !ok {
-			t.Fatalf("expected EvTmuxSpawnFailed, got %T", ev)
+			t.Fatalf("expected EvSpawnFailed, got %T", ev)
 		}
 		if !strings.Contains(failed.Err, "spawn panicked") {
 			t.Errorf("Err should mention 'spawn panicked' so operators can grep for it; got %q", failed.Err)
@@ -75,7 +75,7 @@ func TestSpawnTmuxWindow_recoversFromPanicAndEmitsSpawnFailed(t *testing.T) {
 			t.Errorf("FrameID = %q, want f-survives (scoped to the spawning frame)", failed.FrameID)
 		}
 	default:
-		t.Fatal("no EvTmuxSpawnFailed emitted — the panic was swallowed silently and the reply will never be sent")
+		t.Fatal("no EvSpawnFailed emitted — the panic was swallowed silently and the reply will never be sent")
 	}
 
 	// No internalSpawnComplete on the failure path.

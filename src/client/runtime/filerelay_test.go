@@ -162,7 +162,7 @@ func TestBroadcastRaceWithConnChurn(t *testing.T) {
 	r := New(Config{
 		SessionName: "reactor-test",
 		RoostExe:    "/usr/bin/roost",
-		Backend:     newFakeTmux(),
+		Backend:     newFakeBackend(),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = r.Run(ctx) }()

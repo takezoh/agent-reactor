@@ -328,7 +328,7 @@ func reduceStopSession(s State, connID ConnID, reqID string, p StopSessionParams
 			deactivate = []Effect{EffDeactivateSession{}}
 		}
 	}
-	// place broadcast first — TUI updates before tmux kill completes
+	// place broadcast first — TUI updates before backend kill completes
 	effs := []Effect{EffBroadcastSessionsChanged{}}
 	effs = append(effs, deactivate...)
 	for _, frame := range removed {

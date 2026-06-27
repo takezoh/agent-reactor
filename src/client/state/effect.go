@@ -10,13 +10,13 @@ type Effect interface {
 	isEffect()
 }
 
-// === tmux operations (synchronous, fast — interpret inline) ===
+// === pane backend operations (synchronous, fast — interpret inline) ===
 
-// EffSpawnTmuxWindow asks the runtime to create a new tmux window for
+// EffSpawnPaneWindow asks the runtime to create a new pane window for
 // the given session. The runtime executes this and feeds back
-// EvTmuxPaneSpawned / EvTmuxSpawnFailed, forwarding the Reply*
+// EvPaneSpawned / EvSpawnFailed, forwarding the Reply*
 // fields so the reducer can complete the create-session round trip.
-type EffSpawnTmuxWindow struct {
+type EffSpawnPaneWindow struct {
 	SessionID  SessionID
 	FrameID    FrameID
 	Mode       LaunchMode
@@ -33,7 +33,7 @@ type EffSpawnTmuxWindow struct {
 	ReplyReqID string
 }
 
-// EffKillSessionWindow destroys the tmux window containing the given session pane.
+// EffKillSessionWindow destroys the pane window containing the given session pane.
 // The runtime looks up the pane target from its sessionPanes map.
 type EffKillSessionWindow struct {
 	FrameID FrameID
@@ -51,7 +51,7 @@ type EffActivateSession struct {
 type EffDeactivateSession struct{}
 
 // EffRegisterPane records the pane target for a session in the runtime
-// and saves it as a tmux session-level env var. Tap controls whether a
+// and saves it as a session-level env var. Tap controls whether a
 // byte tap (PaneTap) is started for this pane — only root frames need
 // taps since driver state for non-root frames is not displayed in the UI.
 type EffRegisterPane struct {
@@ -61,30 +61,30 @@ type EffRegisterPane struct {
 }
 
 // EffUnregisterPane removes a session from the runtime's pane map and
-// deletes the corresponding tmux session-level env var.
+// deletes the corresponding session-level env var.
 type EffUnregisterPane struct {
 	FrameID FrameID
 }
 
-// EffSelectPane focuses a tmux pane.
+// EffSelectPane focuses a backend pane.
 type EffSelectPane struct {
 	Target string
 }
 
-// EffSyncStatusLine pushes a string into tmux status-left.
+// EffSyncStatusLine pushes a string into the status-left line.
 type EffSyncStatusLine struct {
 	Line string
 }
 
-// EffSetTmuxEnv writes a tmux session-level environment variable.
+// EffSetPaneEnv writes a session-level environment variable.
 // Empty Value is treated as unset.
-type EffSetTmuxEnv struct {
+type EffSetPaneEnv struct {
 	Key   string
 	Value string
 }
 
-// EffUnsetTmuxEnv removes a tmux session-level env var.
-type EffUnsetTmuxEnv struct {
+// EffUnsetPaneEnv removes a session-level env var.
+type EffUnsetPaneEnv struct {
 	Key string
 }
 
@@ -94,7 +94,7 @@ type EffCheckPaneAlive struct {
 	Pane string
 }
 
-// EffRespawnPane respawns a tmux pane (used by health monitor).
+// EffRespawnPane respawns a backend pane (used by health monitor).
 // Proc identifies which UI process to launch; the runtime calls
 // Proc.Command(roostExe) to build the shell command string.
 type EffRespawnPane struct {
@@ -102,7 +102,7 @@ type EffRespawnPane struct {
 	Proc uiproc.UIProcess
 }
 
-// EffDetachClient asks tmux to detach the current client.
+// EffDetachClient asks the backend to detach the current client (legacy).
 type EffDetachClient struct{}
 
 // EffReleaseFrameSandboxes asks the runtime to destroy all sandbox resources
@@ -111,7 +111,7 @@ type EffDetachClient struct{}
 // adoption. The runtime handles this with drainFrameCleanups (parallel, blocking).
 type EffReleaseFrameSandboxes struct{}
 
-// EffDisplayPopup launches a tmux display-popup for a named tool.
+// EffDisplayPopup launches a popup window for a named tool (legacy).
 // Tool and Args are structured values — the runtime builds the
 // shell command string with proper escaping, avoiding injection.
 type EffDisplayPopup struct {
@@ -121,7 +121,7 @@ type EffDisplayPopup struct {
 	Args   map[string]string
 }
 
-// EffKillSession destroys the client tmux session.
+// EffKillSession destroys the client backend session (legacy).
 type EffKillSession struct{}
 
 // === IPC operations ===
@@ -173,10 +173,10 @@ type EffCloseConn struct {
 	ConnID ConnID
 }
 
-// EffSendTmuxKeys asks the runtime to run `tmux send-keys` against the pane
+// EffSendPaneKeys asks the runtime to send key input against the pane
 // belonging to SessionID. WithEnter=true appends an Enter keypress (send_text
 // semantics); WithEnter=false sends Key as a literal key name (send_key semantics).
-type EffSendTmuxKeys struct {
+type EffSendPaneKeys struct {
 	ConnID    ConnID
 	ReqID     string
 	SessionID SessionID
@@ -224,8 +224,8 @@ type EffToolLogAppend struct {
 
 // === Reconciliation ===
 
-// EffReconcileWindows asks the runtime to compare the live tmux
-// window list against state.Sessions and emit EvTmuxWindowVanished
+// EffReconcileWindows asks the runtime to compare the live backend
+// window list against state.Sessions and emit EvPaneWindowVanished
 // for any session whose window has disappeared.
 type EffReconcileWindows struct{}
 
@@ -269,7 +269,7 @@ type EffStartJob struct {
 
 // === isEffect markers ===
 
-func (EffSpawnTmuxWindow) isEffect()          {}
+func (EffSpawnPaneWindow) isEffect()          {}
 func (EffKillSessionWindow) isEffect()        {}
 func (EffActivateSession) isEffect()          {}
 func (EffDeactivateSession) isEffect()        {}
@@ -277,8 +277,8 @@ func (EffRegisterPane) isEffect()             {}
 func (EffUnregisterPane) isEffect()           {}
 func (EffSelectPane) isEffect()               {}
 func (EffSyncStatusLine) isEffect()           {}
-func (EffSetTmuxEnv) isEffect()               {}
-func (EffUnsetTmuxEnv) isEffect()             {}
+func (EffSetPaneEnv) isEffect()               {}
+func (EffUnsetPaneEnv) isEffect()             {}
 func (EffCheckPaneAlive) isEffect()           {}
 func (EffRespawnPane) isEffect()              {}
 func (EffDetachClient) isEffect()             {}
@@ -299,9 +299,9 @@ func (EffToolLogAppend) isEffect()            {}
 func (EffReconcileWindows) isEffect()         {}
 func (EffStartJob) isEffect()                 {}
 func (EffRecordNotification) isEffect()       {}
-func (EffSendTmuxKeys) isEffect()             {}
+func (EffSendPaneKeys) isEffect()             {}
 
-// EffInjectPrompt asks the runtime to paste text into the tmux pane belonging
+// EffInjectPrompt asks the runtime to paste text into the backend pane belonging
 // to FrameID using bracketed paste (load-buffer + paste-buffer -d) followed by
 // Enter. The pane must be idle; callers are responsible for checking status.
 type EffInjectPrompt struct {

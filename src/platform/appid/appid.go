@@ -7,7 +7,7 @@
 //   - Name ("agent-reactor") — the project name, used for directories
 //     (~/.agent-reactor, .agent-reactor/, /opt/agent-reactor, ~/.local/lib/agent-reactor).
 //   - ClientBin ("arc", Agent Reactor Client) — the client TUI command, used
-//     for the runtime files it owns (arc.sock/.pid/.log) and its tmux session.
+//     for the runtime files it owns (arc.sock/.pid/.log) and its backend session.
 //
 // Note: the IPC/runtime env-var contract (ROOST_* names) and the persisted
 // JSON key roost_session_id are intentionally NOT defined here — they are a
@@ -31,7 +31,7 @@ const (
 	// LibDirName is the libexec directory name under ~/.local/lib/.
 	LibDirName = Name
 
-	// SessionName is the default tmux session name for the client.
+	// SessionName is the default backend session name for the client.
 	SessionName = ClientBin
 
 	// PeersServer is the peers MCP server name registered into agent configs.

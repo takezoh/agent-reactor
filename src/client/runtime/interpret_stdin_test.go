@@ -32,7 +32,7 @@ func TestSnapshotSessionsStripsInitialInput(t *testing.T) {
 	r := New(Config{
 		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
-		Backend:      newFakeTmux(),
+		Backend:      newFakeBackend(),
 		Persist:      noopPersist{},
 	})
 	sid := state.SessionID("s-stdin")

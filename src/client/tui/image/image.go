@@ -53,8 +53,8 @@ func (c Capability) String() string {
 //	sixel   → CapSixel
 //	auto    → autodetect (default behaviour when unset)
 //
-// Inside tmux (without passthrough configured), autodetect always returns
-// CapNone to avoid garbled output.
+// Inside an outer tmux/screen wrapper (without passthrough configured),
+// autodetect always returns CapNone to avoid garbled output.
 func Detect() Capability {
 	switch os.Getenv("ROOST_IMAGES") {
 	case "off":

@@ -26,10 +26,10 @@ type RegisterOptions struct {
 // that import multiple sub-packages don't double-register.
 //
 // The "shell" driver is intentionally NOT registered here because its
-// display name must reflect the shell tmux will actually spawn
-// (tmux default-shell option). The coordinator registers it directly
+// display name must reflect the shell the pane backend will actually spawn
+// (resolved via the user's login shell). The coordinator registers it directly
 // with NewGenericDriver("shell", <resolved-name>, threshold) after
-// tmux is up.
+// the backend is up.
 //
 // Unknown commands fall through to the registered fallback factory,
 // which builds a fresh GenericDriver using the command's first token

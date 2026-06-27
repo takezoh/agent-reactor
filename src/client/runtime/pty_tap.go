@@ -9,7 +9,7 @@ import (
 )
 
 // PtyPaneTap implements PaneTap on top of a PtyBackend's termvt.Manager. It is
-// the replacement for TmuxPipePaneTap on the pty backend path (plan A 5a/5b):
+// the replacement for the legacy pipe-pane tap on the pty backend path (plan A 5a/5b):
 // each Start resolves the pane id to a live Session via mgr.Get and subscribes,
 // then forwards termvt.EventOutput chunks as the raw byte stream the existing
 // tap_manager (and its 1x1 vt.Terminal) consumes.

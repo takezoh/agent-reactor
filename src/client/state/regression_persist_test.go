@@ -70,7 +70,7 @@ func newExitSession(id SessionID) Session {
 }
 
 // Intentional exit codes (clean exit + standard termination signals)
-// must evict the frame from state and tear down the dead tmux window
+// must evict the frame from state and tear down the dead backend window
 // via EffKillSessionWindow. Many TUI agents return a non-zero code on
 // /quit or Ctrl-C, so eviction must not be limited to ExitCode == 0
 // or those user-driven terminations linger as Stopped entries that
@@ -158,7 +158,7 @@ func TestReduceFrameCommandExited_IdempotentAfterStopped(t *testing.T) {
 // fires SessionEnd → status=stopped before the pty actually closes.
 // When the pane subsequently exits cleanly (code 0/129/130/137/143),
 // the reducer must still evict the frame. Otherwise the session
-// sticks in the list forever (the tmux-free web server has no fast
+// sticks in the list forever (the arc web server has no fast
 // EvPaneDied path and relies entirely on reconcileWindows →
 // EvFrameCommandExited for eviction).
 func TestReduceFrameCommandExited_IntentionalExitEvictsEvenWhenDriverStopped(t *testing.T) {

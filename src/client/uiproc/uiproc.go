@@ -11,7 +11,7 @@ import (
 )
 
 // UIProcess identifies a client UI subprocess and its launch parameters.
-// ExtraArgs are pre-shell-quoted because every spawn path (tmux
+// ExtraArgs are pre-shell-quoted because every spawn path (backend
 // send-keys, respawn-pane, display-popup) feeds the string to a shell.
 type UIProcess struct {
 	Name       string   // "header" | "main" | "log" | "sessions" | "palette"

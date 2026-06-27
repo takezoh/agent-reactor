@@ -6,8 +6,8 @@ import (
 	"github.com/takezoh/agent-reactor/client/state"
 )
 
-// handleStatusLineClick fires when the user clicks a named region in the tmux
-// status bar. Range carries the tmux mouse_status_range value registered via
+// handleStatusLineClick fires when the user clicks a named region in the
+// status bar. Range carries the backend mouse_status_range value registered via
 // #[range=user|<name>] in planStatusLine. A "plan" range with a known plan
 // file emits EffPushDriver to open the file in the configured pager.
 func (d ClaudeDriver) handleStatusLineClick(cs ClaudeState, e state.DEvStatusLineClick) (ClaudeState, []state.Effect) {

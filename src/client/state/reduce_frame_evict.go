@@ -11,8 +11,8 @@ package state
 // siblings are unaffected.
 //
 // killWindow controls whether EffKillSessionWindow is emitted per removed
-// frame. Pass true when the tmux window still exists (e.g. EvPaneDied);
-// pass false when the window has already vanished (e.g. EvTmuxWindowVanished).
+// frame. Pass true when the backend window still exists (e.g. EvPaneDied);
+// pass false when the window has already vanished (e.g. EvPaneWindowVanished).
 //
 // Effect ordering: deactivate → reactivate → cleanup → persist → broadcast.
 // Reactivate precedes cleanup so that EffActivateSession swaps the parent

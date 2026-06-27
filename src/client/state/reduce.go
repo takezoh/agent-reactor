@@ -24,13 +24,13 @@ func Reduce(s State, ev Event) (State, []Effect) {
 	case EvSubsystem:
 		return reduceSubsystem(s, e)
 
-	// tmux feedback
-	case EvTmuxPaneSpawned:
-		return reduceTmuxPaneSpawned(s, e)
-	case EvTmuxSpawnFailed:
-		return reduceTmuxSpawnFailed(s, e)
-	case EvTmuxWindowVanished:
-		return reduceTmuxWindowVanished(s, e)
+	// pane backend feedback
+	case EvPaneSpawned:
+		return reducePaneSpawned(s, e)
+	case EvSpawnFailed:
+		return reduceSpawnFailed(s, e)
+	case EvPaneWindowVanished:
+		return reducePaneWindowVanished(s, e)
 	case EvFrameCommandExited:
 		return reduceFrameCommandExited(s, e)
 	case EvPaneDied:

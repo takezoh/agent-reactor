@@ -29,12 +29,12 @@ import (
 //     token, registers no frame token / mounts / endpoint.
 //   - container → wrapLaunchForSpawn generates a bearer token, the launcher
 //     hands it to the Manager's BuildLaunchCommand (it rides the docker-exec
-//     command, not the tmux spawn env), and the runtime registers token +
+//     command, not the backend spawn env), and the runtime registers token +
 //     mounts + endpoint. per-project vs shared differ in the run-dir key
 //     (projectPath hash vs SharedContainerKey hash).
 //   - the command-execution ORDER is subsystem.Ensure → subsystem.BindFrame →
 //     mgr.EnsureInstance → mgr.AcquireFrame → mgr.BuildLaunchCommand →
-//     tmux.SpawnWindow.
+//     backend.SpawnWindow.
 //
 // The subsystem backends are faked (recSubsysFactory) so no real codex
 // app-server starts here; the codex command/socket rewrite is covered at the
@@ -180,22 +180,22 @@ func (f *recSubsysFactory) Ensure(_ context.Context, sid state.SessionID, _ stri
 	return &recSubsystem{id: id, kind: f.kind, rec: f.rec}, id, nil
 }
 
-// recordingTmux wraps fakeTmuxBackend, appending "tmux.SpawnWindow" to the
+// recordingBackend wraps fakeBackend, appending "backend.SpawnWindow" to the
 // shared order trace before delegating. All other methods are promoted.
-type recordingTmux struct {
-	*fakeTmuxBackend
+type recordingBackend struct {
+	*fakeBackend
 	rec *orderRecorder
 }
 
-func (t *recordingTmux) SpawnWindow(name, command, startDir string, env map[string]string) (string, string, error) {
-	t.rec.add("tmux.SpawnWindow")
-	return t.fakeTmuxBackend.SpawnWindow(name, command, startDir, env)
+func (t *recordingBackend) SpawnWindow(name, command, startDir string, env map[string]string) (string, string, error) {
+	t.rec.add("backend.SpawnWindow")
+	return t.fakeBackend.SpawnWindow(name, command, startDir, env)
 }
 
 // launchHarness wires a Runtime through the real launcher stack for one env.
 type launchHarness struct {
 	r        *Runtime
-	tmux     *fakeTmuxBackend
+	backend  *fakeBackend
 	mgr      *fakeSandboxManager
 	rec      *orderRecorder
 	kinds    *kindCounter
@@ -240,10 +240,10 @@ func buildLaunchHarness(t *testing.T, env envKind, persistWarm bool) *launchHarn
 			mgr, resolver.Resolve, resolver.ResolveProjectScope, nil, dataDir, true)
 	}
 
-	base := newFakeTmux()
+	base := newFakeBackend()
 	cfg := Config{
 		SessionName: "reactor-test",
-		Backend:     &recordingTmux{fakeTmuxBackend: base, rec: rec},
+		Backend:     &recordingBackend{fakeBackend: base, rec: rec},
 		Launcher:    NewDispatcherAdapter(disp),
 		Persist:     &recordingPersist{},
 	}
@@ -257,17 +257,17 @@ func buildLaunchHarness(t *testing.T, env envKind, persistWarm bool) *launchHarn
 		state.LaunchSubsystemCLI:    &recSubsysFactory{kind: state.LaunchSubsystemCLI, rec: rec, kinds: kinds},
 		state.LaunchSubsystemStream: &recSubsysFactory{kind: state.LaunchSubsystemStream, rec: rec, kinds: kinds},
 	}
-	return &launchHarness{r: r, tmux: base, mgr: mgr, rec: rec, kinds: kinds, dataDir: dataDir, sockPath: sockPath}
+	return &launchHarness{r: r, backend: base, mgr: mgr, rec: rec, kinds: kinds, dataDir: dataDir, sockPath: sockPath}
 }
 
 func (h *launchHarness) spawnEnv(t *testing.T) map[string]string {
 	t.Helper()
-	h.tmux.mu.Lock()
-	defer h.tmux.mu.Unlock()
-	if len(h.tmux.spawnEnvs) != 1 {
-		t.Fatalf("SpawnWindow env captures = %d, want 1", len(h.tmux.spawnEnvs))
+	h.backend.mu.Lock()
+	defer h.backend.mu.Unlock()
+	if len(h.backend.spawnEnvs) != 1 {
+		t.Fatalf("SpawnWindow env captures = %d, want 1", len(h.backend.spawnEnvs))
 	}
-	return h.tmux.spawnEnvs[0]
+	return h.backend.spawnEnvs[0]
 }
 
 func (h *launchHarness) runDir(project string) string {
@@ -328,7 +328,7 @@ func TestFrameLaunch_ColdStart_PerProject(t *testing.T) {
 	}
 
 	// The bearer token rides the docker-exec command (Manager env), not the
-	// tmux spawn env. It must reach BuildLaunchCommand and be registered.
+	// backend spawn env. It must reach BuildLaunchCommand and be registered.
 	buildEnv := h.mgr.buildEnv()
 	tok := buildEnv["ROOST_SOCKET_TOKEN"]
 	if tok == "" {
@@ -397,9 +397,9 @@ func TestFrameLaunch_ColdStart_RecoverableCodexSpawnsResume(t *testing.T) {
 		t.Fatalf("recreateSessionFrames: %v", err)
 	}
 
-	h.tmux.mu.Lock()
-	calls := h.tmux.spawnCalls
-	h.tmux.mu.Unlock()
+	h.backend.mu.Lock()
+	calls := h.backend.spawnCalls
+	h.backend.mu.Unlock()
 	if calls != 1 {
 		t.Fatalf("SpawnWindow calls = %d, want 1 (codex resumed, stopped generic skipped)", calls)
 	}
@@ -430,7 +430,7 @@ func TestFrameLaunch_ColdStart_CommandOrder(t *testing.T) {
 		"mgr.EnsureInstance",
 		"mgr.AcquireFrame",
 		"mgr.BuildLaunchCommand",
-		"tmux.SpawnWindow",
+		"backend.SpawnWindow",
 	}
 	got := h.rec.snapshot()
 	if len(got) != len(want) {
@@ -456,9 +456,9 @@ func TestFrameLaunch_ColdStart_SubsystemKindSelection(t *testing.T) {
 	}
 }
 
-// === new session (spawnTmuxWindow goroutine + handleSpawnComplete loop) ===
+// === new session (spawnPaneWindow goroutine + handleSpawnComplete loop) ===
 
-func (h *launchHarness) newSessionSpawn(t *testing.T, e state.EffSpawnTmuxWindow) internalSpawnComplete {
+func (h *launchHarness) newSessionSpawn(t *testing.T, e state.EffSpawnPaneWindow) internalSpawnComplete {
 	t.Helper()
 	internalCh := make(chan internalEvent, 1)
 	eventCh := make(chan state.Event, 1)
@@ -471,7 +471,7 @@ func (h *launchHarness) newSessionSpawn(t *testing.T, e state.EffSpawnTmuxWindow
 		sendInternal: func(ev internalEvent) { internalCh <- ev },
 		sendEvent:    func(ev state.Event) { eventCh <- ev },
 	}
-	spawnTmuxWindow(deps, e)
+	spawnPaneWindow(deps, e)
 	select {
 	case ev := <-internalCh:
 		sc, ok := ev.(internalSpawnComplete)
@@ -490,7 +490,7 @@ func TestFrameLaunch_NewSession_Host(t *testing.T) {
 	registerMinimalDriver(t)
 	h := newLaunchHarness(t, envHost)
 
-	sc := h.newSessionSpawn(t, state.EffSpawnTmuxWindow{
+	sc := h.newSessionSpawn(t, state.EffSpawnPaneWindow{
 		SessionID: "s1", FrameID: "f1", Project: "/proj/host", Command: "minimal-test",
 		Env: map[string]string{"ROOST_SESSION_ID": "s1", "ROOST_FRAME_ID": "f1"},
 	})
@@ -515,7 +515,7 @@ func TestFrameLaunch_NewSession_PerProject(t *testing.T) {
 	h := newLaunchHarness(t, envProject)
 
 	const project = "/proj/box"
-	sc := h.newSessionSpawn(t, state.EffSpawnTmuxWindow{
+	sc := h.newSessionSpawn(t, state.EffSpawnPaneWindow{
 		SessionID: "s1", FrameID: "f1", Project: project, Command: "minimal-test",
 		Env: map[string]string{"ROOST_SESSION_ID": "s1", "ROOST_FRAME_ID": "f1"},
 	})

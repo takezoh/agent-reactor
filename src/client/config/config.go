@@ -14,7 +14,7 @@ type Config struct {
 	DataDir       string                        `toml:"data_dir"`
 	Theme         string                        `toml:"theme"`
 	Log           LogConfig                     `toml:"log"`
-	Tmux          TmuxConfig                    `toml:"tmux"`
+	Pane          PaneConfig                    `toml:"tmux"`
 	Monitor       MonitorConfig                 `toml:"monitor"`
 	Session       SessionConfig                 `toml:"session"`
 	Terminal      TerminalConfig                `toml:"terminal"`
@@ -61,7 +61,9 @@ type LogConfig struct {
 	Level string `toml:"level"`
 }
 
-type TmuxConfig struct {
+// PaneConfig holds the pane backend's session-level layout settings.
+// The TOML key remains "tmux" for back-compat with ~/.agent-reactor/config.toml.
+type PaneConfig struct {
 	SessionName         string `toml:"session_name"`
 	Prefix              string `toml:"prefix"`
 	PaneRatioHorizontal int    `toml:"pane_ratio_horizontal"`
@@ -126,7 +128,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Theme: "default",
 		Log:   LogConfig{Level: "info"},
-		Tmux: TmuxConfig{
+		Pane: PaneConfig{
 			SessionName:         appid.SessionName,
 			Prefix:              "C-b",
 			PaneRatioHorizontal: 75,

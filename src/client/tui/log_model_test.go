@@ -273,7 +273,7 @@ func TestHandleLogEvent_PaneFocusedNonMainPaneIgnored(t *testing.T) {
 }
 
 // Regression: when the server socket closes (e.g. coordinator detached),
-// the LogModel must terminate so the tmux pane process exits instead of
+// the LogModel must terminate so the backend pane process exits instead of
 // lingering as a zombie. main_model and sessions model already do this.
 func TestHandleLogDisconnect_ReturnsQuit(t *testing.T) {
 	m := NewLogModel("/var/log/arc.log", nil)

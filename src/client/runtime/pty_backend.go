@@ -11,17 +11,17 @@ import (
 )
 
 // PtyBackend implements the PaneBackend role interfaces over platform/termvt,
-// driving pty-backed sessions without tmux (ADR 0004). The data plane
+// driving pty-backed sessions directly (ADR 0004). The data plane
 // (lifecycle, IO, inspection, liveness) is implemented for real; the
 // presentation plane (WindowLayout layout ops, BackendControl) is stubbed
 // because a pty multiplexer has no server-side equivalent — layout
-// composition moves client-side in the tmux-removal phase.
+// composition moves client-side in the backend-replacement phase.
 //
 // Targets are synthetic pane ids ("%1", "%2", …) that PtyBackend allocates and
 // uses as the termvt.Manager session id, so the live session is always resolved
 // via mgr.Get(target) — the Manager is the single owner of the id→Session map.
 // The unchanged runtime/reducer/driver address panes by these ids exactly as
-// they addressed tmux pane ids.
+// they addressed pane ids (e.g. "%1", "%2").
 //
 // Targets passed in from the runtime are normalised by resolvePaneTarget before
 // the Manager is consulted: a "sessionName:windowIndex" form (e.g. "arc:1",
@@ -31,8 +31,8 @@ type PtyBackend struct {
 	mgr *termvt.Manager
 
 	mu      sync.Mutex
-	buffers map[string]string // named tmux-style paste buffers
-	env     map[string]string // session-level env (tmux session env stand-in)
+	buffers map[string]string // named paste buffers
+	env     map[string]string // session-level env
 	windows map[string]string // windowIndex -> paneID (filled by SpawnWindow)
 	paneSeq int               // last allocated pane number
 	winSeq  int               // last allocated window index
@@ -218,7 +218,7 @@ func (p *PtyBackend) PasteBuffer(name, target string) error {
 }
 
 // PipePane is a no-op: output taps are served by PtyPaneTap (see pty_tap.go),
-// which subscribes directly to the termvt.Session and bypasses the legacy tmux
+// which subscribes directly to the termvt.Session and bypasses the legacy
 // pipe-pane bridge. Tap teardown is driven by tap_manager.stop, which cancels
 // its own per-frame tapCtx (propagating to the forwarder via the context
 // chain) and then calls PtyPaneTap.Stop to cancel the inner sub-ctx; whichever
@@ -321,7 +321,7 @@ func (p *PtyBackend) ResizeWindow(target string, width, height int) error {
 }
 
 // The following WindowLayout ops have no pty equivalent — layout composition
-// moves client-side in the tmux-removal phase (ADR 0004).
+// moves client-side in the backend-replacement phase (ADR 0004).
 func (p *PtyBackend) SwapPane(srcPane, dstPane string) error    { return nil }
 func (p *PtyBackend) BreakPane(srcPane, dstWindow string) error { return nil }
 func (p *PtyBackend) BreakPaneToNewWindow(srcPane, name string) (string, error) {
@@ -483,10 +483,10 @@ func shellArgv(command string) []string {
 	return []string{"/bin/sh", "-c", command}
 }
 
-// newPaneID formats a synthetic tmux-style pane id ("%1", "%2", …).
+// newPaneID formats a synthetic pane id ("%1", "%2", …).
 func newPaneID(n int) string { return "%" + strconv.Itoa(n) }
 
-// newWindowIndex formats a synthetic tmux-style window index ("1", "2", …).
+// newWindowIndex formats a synthetic window index ("1", "2", …).
 func newWindowIndex(n int) string { return strconv.Itoa(n) }
 
 // envSlice converts a KEY→VALUE map into the KEY=VALUE slice termvt.Spec wants.
@@ -505,7 +505,7 @@ func envSlice(env map[string]string) []string {
 // keyBytes maps the named keys the runtime sends to their byte sequence.
 // Control chords ("C-c") and meta chords ("M-x") are decoded generically;
 // remaining unknown keys pass through literally.
-// TODO(B1): extend coverage to the full tmux key-name table as drivers need it.
+// TODO(B1): extend coverage to the full key-name table as drivers need it.
 func keyBytes(key string) string {
 	switch key {
 	case "Escape":

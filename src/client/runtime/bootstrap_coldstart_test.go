@@ -226,12 +226,12 @@ func registerMinimalDriver(t *testing.T) {
 
 func TestRecreateAll_SpawnFailureLeavesSessionInState(t *testing.T) {
 	registerMinimalDriver(t)
-	tmux := newFakeTmux()
-	tmux.spawnErr = errors.New("injected spawn failure")
+	backend := newFakeBackend()
+	backend.spawnErr = errors.New("injected spawn failure")
 	persist := &recordingPersist{}
 	r := New(Config{
 		SessionName: "reactor-test",
-		Backend:     tmux,
+		Backend:     backend,
 		Launcher:    &trackingLauncher{calls: make(map[string]int)},
 		Persist:     persist,
 	})
@@ -316,11 +316,11 @@ func TestSkipColdStartSpawn(t *testing.T) {
 // and every spawn failing, both must still be attempted.
 func TestRecreateAll_ContinuesPastFailingFrame(t *testing.T) {
 	registerMinimalDriver(t)
-	tmux := newFakeTmux()
-	tmux.spawnErr = errors.New("injected spawn failure")
+	backend := newFakeBackend()
+	backend.spawnErr = errors.New("injected spawn failure")
 	r := New(Config{
 		SessionName: "reactor-test",
-		Backend:     tmux,
+		Backend:     backend,
 		Launcher:    &trackingLauncher{calls: make(map[string]int)},
 		Persist:     &recordingPersist{},
 	})
@@ -337,9 +337,9 @@ func TestRecreateAll_ContinuesPastFailingFrame(t *testing.T) {
 	if err := r.RecreateAll(); err != nil {
 		t.Fatalf("RecreateAll: %v", err)
 	}
-	tmux.mu.Lock()
-	calls := tmux.spawnCalls
-	tmux.mu.Unlock()
+	backend.mu.Lock()
+	calls := backend.spawnCalls
+	backend.mu.Unlock()
 	if calls != 2 {
 		t.Errorf("SpawnWindow calls = %d, want 2 (a failed frame must not abort its siblings)", calls)
 	}
@@ -367,7 +367,7 @@ func TestSpawnFrameWindow_SandboxOptionOnColdStart(t *testing.T) {
 			l := &trackingLauncher{calls: make(map[string]int)}
 			r := New(Config{
 				SessionName: "reactor-test",
-				Backend:     newFakeTmux(),
+				Backend:     newFakeBackend(),
 				Launcher:    l,
 			})
 			r.SetSandboxedProjectResolver(func(string) bool { return true })

@@ -58,7 +58,7 @@ func controlFrame(kind string, code int, data string) []byte {
 //
 // ActiveSessionID is deliberately NOT mirrored on view-update frames (cf.
 // ADR 0023 which described an early 1:1 mirror). The daemon's ActiveSession
-// is mutated whenever a frame is spawned or pushed (reduceTmuxPaneSpawned
+// is mutated whenever a frame is spawned or pushed (reducePaneSpawned
 // and friends) and is broadcast to every connected web client; passing it
 // through here would clobber each browser's locally-tracked selection
 // every time another session in the same daemon emits an event — a

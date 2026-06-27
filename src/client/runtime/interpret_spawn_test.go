@@ -9,7 +9,7 @@ import (
 
 func TestBuildSpawnCommand(t *testing.T) {
 	// The bare shell command explicitly execs the user's passwd login shell
-	// instead of returning "" (which would defer to tmux's default-shell).
+	// instead of returning "" (which would defer to a multiplexer default-shell).
 	got := buildSpawnCommand("shell", nil)
 	if got == "" {
 		t.Fatal("shell spawn must not be empty")

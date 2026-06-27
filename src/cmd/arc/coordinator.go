@@ -37,7 +37,7 @@ func runCoordinator() error {
 	if err := cfg.Sandbox.Validate(); err != nil {
 		return err
 	}
-	sessionName := cfg.Tmux.SessionName
+	sessionName := cfg.Pane.SessionName
 	slog.Info("starting coordinator", "session", sessionName)
 
 	dataDir := cfg.ResolveDataDir()
@@ -106,8 +106,7 @@ func registerDefaultDrivers(cfg *config.Config, dataDir string, idleThreshold ti
 // the socket path it will listen on, the resolved client binary path, and any error.
 //
 // Backend is hard-wired to PtyBackend (ADR 0004 / B1b). The runtime drives a
-// private termvt.Manager directly; tmux is no longer involved in coordinator
-// startup. Config.Tap is a PtyPaneTap (plan A 5a/5b) that wraps the same
+// private termvt.Manager directly. Config.Tap is a PtyPaneTap (plan A 5a/5b) that wraps the same
 // Manager's Session.Subscribe stream, so the existing tap_manager + vt.Terminal
 // pipeline parses OSC 0/9/133 back into EvPaneOsc/EvPanePrompt — restoring
 // driver run-state detection on top of the pty backend.
@@ -132,12 +131,12 @@ func buildRuntime(ctx context.Context, cfg *config.Config, loginShell string, da
 	}
 	exePath := resolveExe()
 	rt := runtime.New(runtime.Config{
-		SessionName:       cfg.Tmux.SessionName,
+		SessionName:       cfg.Pane.SessionName,
 		RoostExe:          exePath,
 		DataDir:           dataDir,
 		TickInterval:      pollInterval,
 		FastTickInterval:  fastPollInterval,
-		MainPaneHeightPct: cfg.Tmux.PaneRatioVertical,
+		MainPaneHeightPct: cfg.Pane.PaneRatioVertical,
 		Backend:           ptyBackend,
 		Persist:           runtime.NewFilePersist(dataDir),
 		EventLog:          runtime.NewFileEventLog(dataDir),
@@ -163,7 +162,7 @@ func buildRuntime(ctx context.Context, cfg *config.Config, loginShell string, da
 }
 
 // startSession registers the shell driver and runs the cold-start bootstrap.
-// Warm restart is gone with the tmux backend: PtyBackend's termvt sessions die
+// Warm restart is gone with the legacy backend: PtyBackend's termvt sessions die
 // with the daemon, so cross-restart pane recovery is not in scope (ADR 0004,
 // decision 2). LoadSessionPanes / LoadSnapshot still run and walk persisted
 // state to recreate frames from scratch.
@@ -261,8 +260,8 @@ func installSignalHandlers(cancel context.CancelFunc) func() {
 }
 
 // runAndWait starts the event loop and IPC server, then blocks until the
-// runtime exits (cancel from signal handler / runtime error). With the tmux
-// backend gone there is no `tmux attach-session` step — the daemon is
+// runtime exits (cancel from signal handler / runtime error). The legacy
+// `attach-session` step is gone — the daemon is
 // headless and clients drive it through the IPC socket. Plan A wires the web
 // display surface onto runtime via pure-core reuse; until then the daemon is
 // reachable but visually opaque.
@@ -297,7 +296,7 @@ func runAndWait(ctx context.Context, cancel context.CancelFunc, rt *runtime.Runt
 	return nil
 }
 
-// newAgentLauncher returns the AgentLauncher (TTY, for tmux panes) and
+// newAgentLauncher returns the AgentLauncher (TTY, for backend panes) and
 // StreamDispatcher (non-TTY, for codex app-server stdio) for the configured
 // sandbox mode. Both dispatchers share the same devcontainer manager so
 // container provisioning is consistent. namePrefix is propagated to the
@@ -350,7 +349,7 @@ func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, reso
 			func(project string) *platformconfig.SandboxConfig { return resolver.ResolveProjectScope(project) },
 			runner,
 			dataDir,
-			true, // TUI runs agents in interactive tmux panes: allocate a TTY
+			true, // TUI runs agents in interactive backend panes: allocate a TTY
 		)
 		sd.Devcontainer = agentlaunch.NewDevcontainerLauncher(mgr,
 			func(project string) platformconfig.SandboxConfig { return resolver.Resolve(project) },
@@ -366,7 +365,7 @@ func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, reso
 
 // shellDisplayName picks the display name (basename) for the shell driver from
 // the user's passwd login-shell path — the same shell the client launches for
-// `shell` sessions. It does not consult tmux's default-shell option or $SHELL.
+// `shell` sessions. It does not consult a multiplexer default-shell option or $SHELL.
 func shellDisplayName(shell string) string {
 	if name := filepath.Base(shell); name != "" && name != "." && name != "/" {
 		return name

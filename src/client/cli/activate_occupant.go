@@ -15,7 +15,7 @@ func init() {
 }
 
 // runActivateOccupant implements `arc activate-occupant <kind>`.
-// kind must be "main" or "log". Called by the prefix+l tmux keybinding.
+// kind must be "main" or "log". Called by the prefix+l keybinding.
 func runActivateOccupant(args []string) error {
 	if len(args) == 0 {
 		fmt.Fprintf(os.Stderr, "usage: %s activate-occupant <main|log>\n", appid.ClientBin)

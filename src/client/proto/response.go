@@ -22,7 +22,7 @@ type RespOK struct{}
 func (RespOK) isResponse() {}
 
 // RespCreateSession is the response to create-session. The runtime
-// fills it in after the tmux spawn callback completes.
+// fills it in after the pane spawn callback completes.
 type RespCreateSession struct {
 	SessionID string `json:"session_id"`
 }

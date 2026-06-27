@@ -15,11 +15,11 @@ import (
 // stores the spawn goroutine's results into the loop-owned maps for a
 // non-container frame, and registers no container token.
 func TestHandleSpawnComplete_storesHandlesNonContainer(t *testing.T) {
-	r := New(Config{Backend: newFakeTmux()})
+	r := New(Config{Backend: newFakeBackend()})
 	sub := &fakeSubsystem{id: "sub-1", kind: state.LaunchSubsystemCLI}
 
 	r.handleSpawnComplete(internalSpawnComplete{
-		effect:      state.EffSpawnTmuxWindow{SessionID: "s1", FrameID: "f1", Project: "/p"},
+		effect:      state.EffSpawnPaneWindow{SessionID: "s1", FrameID: "f1", Project: "/p"},
 		subsystemID: "sub-1",
 		sub:         sub,
 		paneID:      "%1",
@@ -44,14 +44,14 @@ func TestHandleSpawnComplete_storesHandlesNonContainer(t *testing.T) {
 // and starts the endpoint.
 func TestHandleSpawnComplete_registersContainerFrame(t *testing.T) {
 	dir := t.TempDir()
-	r := New(Config{Backend: newFakeTmux()})
+	r := New(Config{Backend: newFakeBackend()})
 	t.Cleanup(r.shutdownContainerEndpoints)
 
 	sub := &fakeSubsystem{id: "sub-1", kind: state.LaunchSubsystemCLI}
 	ms := pathmap.Mounts{{Host: "/h/work", Container: "/work"}}
 
 	r.handleSpawnComplete(internalSpawnComplete{
-		effect:           state.EffSpawnTmuxWindow{SessionID: "s1", FrameID: "f1", Project: "/p"},
+		effect:           state.EffSpawnPaneWindow{SessionID: "s1", FrameID: "f1", Project: "/p"},
 		subsystemID:      "sub-1",
 		sub:              sub,
 		token:            "tok-1",
@@ -75,16 +75,16 @@ func TestHandleSpawnComplete_registersContainerFrame(t *testing.T) {
 
 // fakeFactory and fakeSubsystem live in subsystem_dispatch_test.go.
 
-// TestSpawnTmuxWindow_emitsInternalSpawnComplete verifies the free spawn
+// TestSpawnPaneWindow_emitsInternalSpawnComplete verifies the free spawn
 // function performs I/O and reports back via internalSpawnComplete without
 // touching any *Runtime state (it holds only a spawnDeps).
-func TestSpawnTmuxWindow_emitsInternalSpawnComplete(t *testing.T) {
+func TestSpawnPaneWindow_emitsInternalSpawnComplete(t *testing.T) {
 	sub := &fakeSubsystem{id: "sub-x", kind: state.LaunchSubsystemCLI}
 	internalCh := make(chan internalEvent, 1)
 	eventCh := make(chan state.Event, 1)
 
 	deps := spawnDeps{
-		backend:  newFakeTmux(),
+		backend:  newFakeBackend(),
 		launcher: DirectLauncher{},
 		factories: map[state.LaunchSubsystem]rsubsystem.Factory{
 			state.LaunchSubsystemCLI: &fakeFactory{sub: sub},
@@ -95,7 +95,7 @@ func TestSpawnTmuxWindow_emitsInternalSpawnComplete(t *testing.T) {
 		sendEvent:    func(ev state.Event) { eventCh <- ev },
 	}
 
-	spawnTmuxWindow(deps, state.EffSpawnTmuxWindow{
+	spawnPaneWindow(deps, state.EffSpawnPaneWindow{
 		SessionID: "s1", FrameID: "f1", Project: "/p", Command: "minimal-test",
 	})
 
@@ -125,18 +125,18 @@ func TestSpawnTmuxWindow_emitsInternalSpawnComplete(t *testing.T) {
 	}
 }
 
-// TestSpawnTmuxWindow_emitsSpawnFailedOnError verifies a tmux SpawnWindow
-// failure is reported via EvTmuxSpawnFailed and no internalSpawnComplete.
-func TestSpawnTmuxWindow_emitsSpawnFailedOnError(t *testing.T) {
+// TestSpawnPaneWindow_emitsSpawnFailedOnError verifies a backend SpawnWindow
+// failure is reported via EvSpawnFailed and no internalSpawnComplete.
+func TestSpawnPaneWindow_emitsSpawnFailedOnError(t *testing.T) {
 	sub := &fakeSubsystem{id: "sub-x", kind: state.LaunchSubsystemCLI}
-	tmux := newFakeTmux()
-	tmux.spawnErr = errors.New("tmux boom")
+	backend := newFakeBackend()
+	backend.spawnErr = errors.New("backend boom")
 
 	internalCh := make(chan internalEvent, 1)
 	eventCh := make(chan state.Event, 1)
 
 	deps := spawnDeps{
-		backend:  tmux,
+		backend:  backend,
 		launcher: DirectLauncher{},
 		factories: map[state.LaunchSubsystem]rsubsystem.Factory{
 			state.LaunchSubsystemCLI: &fakeFactory{sub: sub},
@@ -147,17 +147,17 @@ func TestSpawnTmuxWindow_emitsSpawnFailedOnError(t *testing.T) {
 		sendEvent:    func(ev state.Event) { eventCh <- ev },
 	}
 
-	spawnTmuxWindow(deps, state.EffSpawnTmuxWindow{
+	spawnPaneWindow(deps, state.EffSpawnPaneWindow{
 		SessionID: "s1", FrameID: "f1", Project: "/p", Command: "minimal-test",
 	})
 
 	select {
 	case ev := <-eventCh:
-		if _, ok := ev.(state.EvTmuxSpawnFailed); !ok {
-			t.Fatalf("expected EvTmuxSpawnFailed, got %T", ev)
+		if _, ok := ev.(state.EvSpawnFailed); !ok {
+			t.Fatalf("expected EvSpawnFailed, got %T", ev)
 		}
 	default:
-		t.Fatal("no EvTmuxSpawnFailed emitted")
+		t.Fatal("no EvSpawnFailed emitted")
 	}
 
 	select {
@@ -167,17 +167,17 @@ func TestSpawnTmuxWindow_emitsSpawnFailedOnError(t *testing.T) {
 	}
 }
 
-// TestSpawnTmuxWindow_cleanupOnSpawnError verifies that when the sandbox was
-// acquired (WrapLaunch returned a Cleanup) but tmux SpawnWindow then fails, the
+// TestSpawnPaneWindow_cleanupOnSpawnError verifies that when the sandbox was
+// acquired (WrapLaunch returned a Cleanup) but backend SpawnWindow then fails, the
 // spawn goroutine releases the sandbox — otherwise the container ref leaks
-// because no EvTmuxPaneSpawned / kill path ever reaches this frame.
-func TestSpawnTmuxWindow_cleanupOnSpawnError(t *testing.T) {
+// because no EvPaneSpawned / kill path ever reaches this frame.
+func TestSpawnPaneWindow_cleanupOnSpawnError(t *testing.T) {
 	var cleaned atomic.Bool
-	tmux := newFakeTmux()
-	tmux.spawnErr = errors.New("tmux boom")
+	backend := newFakeBackend()
+	backend.spawnErr = errors.New("backend boom")
 
 	deps := spawnDeps{
-		backend:  tmux,
+		backend:  backend,
 		launcher: &testLauncher{cleanup: func() error { cleaned.Store(true); return nil }},
 		factories: map[state.LaunchSubsystem]rsubsystem.Factory{
 			state.LaunchSubsystemCLI: &fakeFactory{sub: &fakeSubsystem{id: "s", kind: state.LaunchSubsystemCLI}},
@@ -188,7 +188,7 @@ func TestSpawnTmuxWindow_cleanupOnSpawnError(t *testing.T) {
 		sendEvent:    func(state.Event) {},
 	}
 
-	spawnTmuxWindow(deps, state.EffSpawnTmuxWindow{
+	spawnPaneWindow(deps, state.EffSpawnPaneWindow{
 		SessionID: "s1", FrameID: "f1", Project: "/p", Command: "minimal-test",
 	})
 
@@ -202,7 +202,7 @@ func TestSpawnTmuxWindow_cleanupOnSpawnError(t *testing.T) {
 // daemon has shut down (r.done closed), the send returns instead of blocking
 // forever.
 func TestSendSpawnComplete_unblocksOnShutdown(t *testing.T) {
-	r := New(Config{Backend: newFakeTmux()})
+	r := New(Config{Backend: newFakeBackend()})
 	// Fill the internal channel to capacity so the next send would block.
 	for {
 		select {
@@ -217,7 +217,7 @@ func TestSendSpawnComplete_unblocksOnShutdown(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		r.sendSpawnComplete(internalSpawnComplete{effect: state.EffSpawnTmuxWindow{FrameID: "f1"}})
+		r.sendSpawnComplete(internalSpawnComplete{effect: state.EffSpawnPaneWindow{FrameID: "f1"}})
 		close(done)
 	}()
 

@@ -252,9 +252,9 @@ func TestCreateSessionAllocatesAndSpawns(t *testing.T) {
 	if sess.Project != "/foo" || sess.Command != "stub" {
 		t.Errorf("session = %+v", sess)
 	}
-	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	spawn, ok := findEff[EffSpawnPaneWindow](effs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow")
+		t.Fatal("expected EffSpawnPaneWindow")
 	}
 	if spawn.SessionID != sess.ID || spawn.Project != "/foo" || spawn.Command != "stub" {
 		t.Errorf("spawn = %+v", spawn)
@@ -288,7 +288,7 @@ func TestCreateSessionLeavesSubsystemIDEmptyUntilBind(t *testing.T) {
 		}
 		frame := sess.Frames[0]
 		if frame.SubsystemID != "" {
-			t.Fatalf("SubsystemID = %q, want empty (factory fills in via EvTmuxPaneSpawned)", frame.SubsystemID)
+			t.Fatalf("SubsystemID = %q, want empty (factory fills in via EvPaneSpawned)", frame.SubsystemID)
 		}
 		if frame.TargetID != TargetID(frame.ID) {
 			t.Fatalf("TargetID = %q, want %q", frame.TargetID, frame.ID)
@@ -302,8 +302,8 @@ func TestCreateSessionDefaultCommand(t *testing.T) {
 		ConnID: 1, ReqID: "r", Event: "create-session",
 		Payload: mustPayload(map[string]string{"project": "/foo"}),
 	})
-	if _, ok := findEff[EffSpawnTmuxWindow](effs); !ok {
-		t.Error("expected EffSpawnTmuxWindow with default command")
+	if _, ok := findEff[EffSpawnPaneWindow](effs); !ok {
+		t.Error("expected EffSpawnPaneWindow with default command")
 	}
 }
 
@@ -313,7 +313,7 @@ func TestCreateSessionUnknownCommandFallsBackToFallback(t *testing.T) {
 		ConnID: 1, ReqID: "r", Event: "create-session",
 		Payload: mustPayload(map[string]string{"project": "/foo", "command": "nonexistent"}),
 	})
-	if _, ok := findEff[EffSpawnTmuxWindow](effs); !ok {
+	if _, ok := findEff[EffSpawnPaneWindow](effs); !ok {
 		t.Error("expected fallback driver to allow spawn")
 	}
 }
@@ -328,9 +328,9 @@ func TestCreateSessionPlannerSpawnsImmediately(t *testing.T) {
 	if len(next.Sessions) != 1 {
 		t.Fatalf("session count = %d, want 1 (spawn is immediate)", len(next.Sessions))
 	}
-	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	spawn, ok := findEff[EffSpawnPaneWindow](effs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow")
+		t.Fatal("expected EffSpawnPaneWindow")
 	}
 	if spawn.Mode != LaunchModeCreate {
 		t.Fatalf("spawn mode = %v", spawn.Mode)
@@ -340,15 +340,15 @@ func TestCreateSessionPlannerSpawnsImmediately(t *testing.T) {
 	}
 }
 
-// === reduceTmuxPaneSpawned ===
+// === reducePaneSpawned ===
 
-func TestTmuxSpawnedRegistersWindowAndActivates(t *testing.T) {
+func TestPaneSpawnedRegistersWindowAndActivates(t *testing.T) {
 	s := New()
 	s.Now = time.Now()
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id)
 
-	next, effs := Reduce(s, EvTmuxPaneSpawned{
+	next, effs := Reduce(s, EvPaneSpawned{
 		SessionID:  id,
 		FrameID:    FrameID(id),
 		PaneTarget: "%1",
@@ -375,11 +375,11 @@ func TestTmuxSpawnedRegistersWindowAndActivates(t *testing.T) {
 	}
 }
 
-func TestTmuxSpawnedRootFrameSetsTapTrue(t *testing.T) {
+func TestPaneSpawnedRootFrameSetsTapTrue(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id) // Frames[0] is the root
-	_, effs := Reduce(s, EvTmuxPaneSpawned{
+	_, effs := Reduce(s, EvPaneSpawned{
 		SessionID: id, FrameID: FrameID(id), PaneTarget: "%1",
 	})
 	reg, ok := findEff[EffRegisterPane](effs)
@@ -391,7 +391,7 @@ func TestTmuxSpawnedRootFrameSetsTapTrue(t *testing.T) {
 	}
 }
 
-func TestTmuxSpawnedChildFrameSetsTapFalse(t *testing.T) {
+func TestPaneSpawnedChildFrameSetsTapFalse(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	childID := FrameID("child-frame")
@@ -401,7 +401,7 @@ func TestTmuxSpawnedChildFrameSetsTapFalse(t *testing.T) {
 		ID: childID, Project: "/foo", Command: "stub", Driver: stubDriverState{},
 	})
 	s.Sessions[id] = sess
-	_, effs := Reduce(s, EvTmuxPaneSpawned{
+	_, effs := Reduce(s, EvPaneSpawned{
 		SessionID: id, FrameID: childID, PaneTarget: "%2",
 	})
 	reg, ok := findEff[EffRegisterPane](effs)
@@ -413,7 +413,7 @@ func TestTmuxSpawnedChildFrameSetsTapFalse(t *testing.T) {
 	}
 }
 
-func TestTmuxSpawnedRootBootstrapRunsBeforeRegister(t *testing.T) {
+func TestPaneSpawnedRootBootstrapRunsBeforeRegister(t *testing.T) {
 	s := New()
 	id := SessionID("boot")
 	s.Sessions[id] = Session{
@@ -429,7 +429,7 @@ func TestTmuxSpawnedRootBootstrapRunsBeforeRegister(t *testing.T) {
 		}},
 	}
 
-	next, effs := Reduce(s, EvTmuxPaneSpawned{
+	next, effs := Reduce(s, EvPaneSpawned{
 		SessionID:  id,
 		FrameID:    FrameID(id),
 		PaneTarget: "%1",
@@ -442,7 +442,7 @@ func TestTmuxSpawnedRootBootstrapRunsBeforeRegister(t *testing.T) {
 	assertEffectOrder[EffEventLogAppend, EffRegisterPane](t, effs)
 }
 
-func TestTmuxSpawnedChildFrameSkipsBootstrap(t *testing.T) {
+func TestPaneSpawnedChildFrameSkipsBootstrap(t *testing.T) {
 	s := New()
 	id := SessionID("boot")
 	childID := FrameID("boot-child")
@@ -457,7 +457,7 @@ func TestTmuxSpawnedChildFrameSkipsBootstrap(t *testing.T) {
 		},
 	}
 
-	next, effs := Reduce(s, EvTmuxPaneSpawned{
+	next, effs := Reduce(s, EvPaneSpawned{
 		SessionID:  id,
 		FrameID:    childID,
 		PaneTarget: "%2",
@@ -473,9 +473,9 @@ func TestTmuxSpawnedChildFrameSkipsBootstrap(t *testing.T) {
 	}
 }
 
-func TestTmuxSpawnedUnknownSessionDropsSilently(t *testing.T) {
+func TestPaneSpawnedUnknownSessionDropsSilently(t *testing.T) {
 	s := New()
-	_, effs := Reduce(s, EvTmuxPaneSpawned{
+	_, effs := Reduce(s, EvPaneSpawned{
 		SessionID: "ghost", FrameID: "ghost", PaneTarget: "%1", ReplyConn: 1, ReplyReqID: "r",
 	})
 	if len(effs) != 0 {
@@ -483,11 +483,11 @@ func TestTmuxSpawnedUnknownSessionDropsSilently(t *testing.T) {
 	}
 }
 
-func TestTmuxSpawnFailedEvictsAndReplies(t *testing.T) {
+func TestSpawnFailedEvictsAndReplies(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id)
-	next, effs := Reduce(s, EvTmuxSpawnFailed{
+	next, effs := Reduce(s, EvSpawnFailed{
 		SessionID: id, FrameID: FrameID(id), Err: "boom", ReplyConn: 1, ReplyReqID: "r",
 	})
 	if _, ok := next.Sessions[id]; ok {
@@ -498,11 +498,11 @@ func TestTmuxSpawnFailedEvictsAndReplies(t *testing.T) {
 	}
 }
 
-func TestTmuxSpawnFailedEvictsSession(t *testing.T) {
+func TestSpawnFailedEvictsSession(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id)
-	next, _ := Reduce(s, EvTmuxSpawnFailed{
+	next, _ := Reduce(s, EvSpawnFailed{
 		SessionID: id, FrameID: FrameID(id), Err: "boom", ReplyConn: 1, ReplyReqID: "r",
 	})
 	if _, ok := next.Sessions[id]; ok {
@@ -549,10 +549,10 @@ func TestStopSessionThenVanishIsNoop(t *testing.T) {
 		t.Fatal("session must be evicted by stop-session")
 	}
 
-	// EvTmuxWindowVanished should be a no-op since session is gone
-	_, effs := Reduce(s, EvTmuxWindowVanished{FrameID: frame.ID})
+	// EvPaneWindowVanished should be a no-op since session is gone
+	_, effs := Reduce(s, EvPaneWindowVanished{FrameID: frame.ID})
 	if _, ok := findEff[EffBroadcastSessionsChanged](effs); ok {
-		t.Error("EvTmuxWindowVanished after eviction should be no-op, not broadcast again")
+		t.Error("EvPaneWindowVanished after eviction should be no-op, not broadcast again")
 	}
 }
 
@@ -840,14 +840,14 @@ func TestDetach(t *testing.T) {
 	}
 }
 
-// === reduceTmuxWindowVanished ===
+// === reducePaneWindowVanished ===
 
-func TestTmuxWindowVanishedEvicts(t *testing.T) {
+func TestPaneWindowVanishedEvicts(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id)
 	s.ActiveSession = id
-	next, effs := Reduce(s, EvTmuxWindowVanished{FrameID: FrameID(id)})
+	next, effs := Reduce(s, EvPaneWindowVanished{FrameID: FrameID(id)})
 	if _, ok := next.Sessions[id]; ok {
 		t.Error("session should be evicted")
 	}
@@ -1213,9 +1213,9 @@ func TestPushDriverAppendsFrame(t *testing.T) {
 		t.Error("new frame should have a different FrameID from the root frame")
 	}
 
-	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	spawn, ok := findEff[EffSpawnPaneWindow](effs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow")
+		t.Fatal("expected EffSpawnPaneWindow")
 	}
 	if spawn.SessionID != id {
 		t.Errorf("spawn.SessionID = %q, want %q", spawn.SessionID, id)
@@ -1273,9 +1273,9 @@ func TestPushDriverInheritsRootStartDir(t *testing.T) {
 		Payload: mustPayload(map[string]string{"session_id": string(sid), "command": "sdstub"}),
 	})
 	mustOK(t, effs)
-	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	spawn, ok := findEff[EffSpawnPaneWindow](effs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow")
+		t.Fatal("expected EffSpawnPaneWindow")
 	}
 	if spawn.StartDir != "/root/dir" {
 		t.Errorf("spawn.StartDir = %q, want /root/dir", spawn.StartDir)
@@ -1392,9 +1392,9 @@ func TestPushDriverInputPropagatesAsStdin(t *testing.T) {
 	})
 	mustOK(t, effs)
 
-	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	spawn, ok := findEff[EffSpawnPaneWindow](effs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow")
+		t.Fatal("expected EffSpawnPaneWindow")
 	}
 	if string(spawn.Stdin) != string(input) {
 		t.Errorf("spawn.Stdin = %q, want %q", spawn.Stdin, input)
@@ -1428,9 +1428,9 @@ func TestPushDriverNilInputProducesNilStdin(t *testing.T) {
 	})
 	mustOK(t, effs)
 
-	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	spawn, ok := findEff[EffSpawnPaneWindow](effs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow")
+		t.Fatal("expected EffSpawnPaneWindow")
 	}
 	if spawn.Stdin != nil {
 		t.Errorf("spawn.Stdin = %q, want nil", spawn.Stdin)
@@ -1475,15 +1475,15 @@ func TestPreviewSessionSwapsHiddenWhenLog(t *testing.T) {
 	mustOK(t, effs)
 }
 
-// TestTmuxPaneSpawnedSwapsHiddenWhenLog verifies that a pane spawn while
+// TestPaneSpawnedSwapsHiddenWhenLog verifies that a pane spawn while
 // log is visible emits EffSwapHidden before EffActivateSession.
-func TestTmuxPaneSpawnedSwapsHiddenWhenLog(t *testing.T) {
+func TestPaneSpawnedSwapsHiddenWhenLog(t *testing.T) {
 	s := New()
 	s.ActiveOccupant = OccupantLog
 	s.Sessions["s1"] = stubSession("s1")
 	frameID := s.Sessions["s1"].Frames[0].ID
 
-	next, effs := Reduce(s, EvTmuxPaneSpawned{
+	next, effs := Reduce(s, EvPaneSpawned{
 		SessionID:  "s1",
 		FrameID:    frameID,
 		PaneTarget: "roost:0.1",
@@ -1526,9 +1526,9 @@ func TestCreateSession_SandboxOverrideHost(t *testing.T) {
 		Payload: json.RawMessage(payload),
 	})
 	mustOK(t, effs)
-	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	spawn, ok := findEff[EffSpawnPaneWindow](effs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow")
+		t.Fatal("expected EffSpawnPaneWindow")
 	}
 	if spawn.Sandbox != SandboxOverrideHost {
 		t.Errorf("spawn.Sandbox = %v, want SandboxOverrideHost", spawn.Sandbox)
@@ -1543,7 +1543,7 @@ func TestCreateSession_SandboxOverrideHost(t *testing.T) {
 }
 
 // TestPushDriver_InheritsSandboxFromSession verifies that a pushed frame inherits
-// the session-level Sandbox and propagates it through EffSpawnTmuxWindow.Sandbox.
+// the session-level Sandbox and propagates it through EffSpawnPaneWindow.Sandbox.
 func TestPushDriver_InheritsSandboxFromSession(t *testing.T) {
 	s := New()
 	s.SandboxedProject = func(string) bool { return true }
@@ -1582,9 +1582,9 @@ func TestPushDriver_InheritsSandboxFromSession(t *testing.T) {
 		Payload: json.RawMessage(pushPayload),
 	})
 	mustOK(t, pushEffs)
-	spawn, ok := findEff[EffSpawnTmuxWindow](pushEffs)
+	spawn, ok := findEff[EffSpawnPaneWindow](pushEffs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow from push-driver")
+		t.Fatal("expected EffSpawnPaneWindow from push-driver")
 	}
 	if spawn.Sandbox != SandboxOverrideHost {
 		t.Errorf("pushed frame spawn.Sandbox = %v, want SandboxOverrideHost", spawn.Sandbox)
@@ -1708,9 +1708,9 @@ func TestForkSessionCreatesNewSession(t *testing.T) {
 	if len(newSess.Frames) != 1 {
 		t.Fatalf("fork session frames = %d, want 1", len(newSess.Frames))
 	}
-	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	spawn, ok := findEff[EffSpawnPaneWindow](effs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow")
+		t.Fatal("expected EffSpawnPaneWindow")
 	}
 	if spawn.SessionID != newSess.ID {
 		t.Errorf("spawn.SessionID = %q, want %q", spawn.SessionID, newSess.ID)
@@ -1751,9 +1751,9 @@ func TestForkSessionInheritsStartDir(t *testing.T) {
 	})
 	mustOK(t, effs)
 
-	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	spawn, ok := findEff[EffSpawnPaneWindow](effs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow")
+		t.Fatal("expected EffSpawnPaneWindow")
 	}
 	if spawn.StartDir != "/repo/worktrees/feature" {
 		t.Errorf("spawn.StartDir = %q, want /repo/worktrees/feature", spawn.StartDir)
@@ -1851,9 +1851,9 @@ func TestPushDriver_AutoSandboxSession(t *testing.T) {
 		Payload: json.RawMessage(pushPayload),
 	})
 	mustOK(t, pushEffs)
-	spawn, ok := findEff[EffSpawnTmuxWindow](pushEffs)
+	spawn, ok := findEff[EffSpawnPaneWindow](pushEffs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow from push-driver")
+		t.Fatal("expected EffSpawnPaneWindow from push-driver")
 	}
 	if spawn.Sandbox != SandboxOverrideAuto {
 		t.Errorf("pushed frame spawn.Sandbox = %v, want SandboxOverrideAuto", spawn.Sandbox)
@@ -1891,9 +1891,9 @@ func TestPushDriverNonRootNoImplicitWorktree(t *testing.T) {
 		Payload: mustPayload(map[string]string{"session_id": string(sid), "command": "sdstub"}),
 	})
 	mustOK(t, effs)
-	spawn, ok := findEff[EffSpawnTmuxWindow](effs)
+	spawn, ok := findEff[EffSpawnPaneWindow](effs)
 	if !ok {
-		t.Fatal("expected EffSpawnTmuxWindow")
+		t.Fatal("expected EffSpawnPaneWindow")
 	}
 	if spawn.StartDir != "/repo" {
 		t.Errorf("StartDir = %q, want /repo (inherited from root)", spawn.StartDir)

@@ -112,10 +112,10 @@ func reducePaneDied(s State, e EvPaneDied) (State, []Effect) {
 	return s, effs
 }
 
-// reduceTmuxWindowVanished evicts a session whose tmux window has
+// reducePaneWindowVanished evicts a session whose backend window has
 // disappeared (agent process exited) and broadcasts the new list.
 // If the vanished session was active, deactivation restores the main TUI.
-func reduceTmuxWindowVanished(s State, e EvTmuxWindowVanished) (State, []Effect) {
+func reducePaneWindowVanished(s State, e EvPaneWindowVanished) (State, []Effect) {
 	s, effs, ok := evictFrame(s, e.FrameID, false)
 	if !ok {
 		return s, nil
@@ -149,7 +149,7 @@ func isIntentionalExit(code int) bool {
 
 // reduceFrameCommandExited routes a command-exit signal based on its
 // exit code. Codes recognised by isIntentionalExit (clean exit or
-// standard termination signal) trigger full eviction — the dead tmux
+// standard termination signal) trigger full eviction — the dead backend
 // pane is also closed via EffKillSessionWindow. Other codes are
 // treated as crashes: the frame is kept in state with driver
 // status=Stopped so the user can still find it in the session list,
@@ -162,7 +162,7 @@ func isIntentionalExit(code int) bool {
 // If the idempotency guard below ran first, a hook-driven Stopped state
 // would suppress eviction every subsequent tick and the session would
 // stick around forever as "Stopped" — the bug reproduced when the
-// tmux-free web server detected dead panes only via reconcileWindows.
+// the legacy web server detected dead panes only via reconcileWindows.
 //
 // The remaining idempotency check protects the crash path:
 // reconcileWindows may re-detect the same dead pane on subsequent

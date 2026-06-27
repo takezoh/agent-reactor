@@ -65,7 +65,7 @@ func TestHandleServerEventDoesNotFollowWorkspaceOnPreview(t *testing.T) {
 
 // TestHandleServerEventPreviewUpdatesLocalStateWithoutFocusing verifies that a
 // preview broadcast updates m.active and m.cursor (so dedup and anchoring work)
-// but does not reach the focusCmd branch (which would move tmux focus to main pane).
+// but does not reach the focusCmd branch (which would move backend focus to main pane).
 // The absence of focusCmd is enforced by the !e.IsPreview guard at
 // sidebar_events.go; state updates below confirm the guard does not also skip them.
 func TestHandleServerEventPreviewUpdatesLocalStateWithoutFocusing(t *testing.T) {

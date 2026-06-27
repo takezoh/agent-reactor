@@ -160,7 +160,7 @@ func (DEvSubsystem) isDriverEvent() {}
 
 // DEvTick is the periodic tick. Active reflects whether this session is
 // currently shown in pane 0.0 — drivers use it to gate expensive work
-// that only matters when the user is looking. PaneTarget is the tmux
+// that only matters when the user is looking. PaneTarget is the backend
 // pane id (e.g. "%5").
 // N and Seq are used for bucketing: drivers gate periodic work to ticks
 // where (N+Seq)%interval==0, so sessions are spread across different
@@ -221,9 +221,9 @@ type DEvPanePrompt struct {
 
 func (DEvPanePrompt) isDriverEvent() {}
 
-// DEvStatusLineClick is fired when the user clicks the tmux status bar
+// DEvStatusLineClick is fired when the user clicks the status bar
 // (bound to MouseDown1Status in the root key table). Range is the
-// tmux #{mouse_status_range} value — the name registered via
+// backend mouse-status-range value — the name registered via
 // #[range=user|<name>] in the driver's StatusLine format string.
 // An empty Range means the click landed outside any named region.
 type DEvStatusLineClick struct {
@@ -263,7 +263,7 @@ type ViewProvider interface {
 	// View is a pure getter for the current TUI payload. Same View
 	// that Step returns, but callable without an event — used by the
 	// runtime when serializing SessionInfo for broadcasts and when
-	// flushing the active session's status line to tmux.
+	// flushing the active session's status line to the backend.
 	View(s DriverState) View
 }
 
@@ -380,7 +380,7 @@ type Driver interface {
 }
 
 // CreateLaunch is the fully resolved process launch information for a
-// newly created session: command string plus tmux start directory.
+// newly created session: command string plus spawn start directory.
 type CreateLaunch struct {
 	Command  string
 	StartDir string
@@ -389,7 +389,7 @@ type CreateLaunch struct {
 
 // CreateSessionPlanner is an optional driver extension for commands
 // that need to transform or prepare their start environment during
-// create-session before tmux spawn happens. The subsystem resolves any
+// create-session before pane spawn happens. The subsystem resolves any
 // deferred setup (e.g. worktree creation) during BindFrame; drivers
 // only strip tool-specific flags and set LaunchOptions.
 type CreateSessionPlanner interface {
@@ -418,10 +418,10 @@ type WarmStartRecoverer interface {
 }
 
 // ColdStartRecoverer is an optional driver extension for drivers whose
-// durable conversational state survives the loss of the tmux pane and the
+// durable conversational state survives the loss of the backend pane and the
 // backend process — e.g. codex, whose thread lives in a host-mounted session
 // store and can be resumed against a fresh app-server. Cold start discards
-// the old tmux server (and may recreate the sandbox), so by default a stopped
+// the old backend (and may recreate the sandbox), so by default a stopped
 // frame is unrecoverable and dropped: its state lived only in the dead pane.
 // A driver that returns true for a stopped state opts back in, so the runtime
 // keeps the frame and relaunches it (resuming the durable session) instead.

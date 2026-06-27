@@ -13,19 +13,19 @@ import (
 
 // execute is the side-effect interpreter. Each Effect type has a
 // dedicated case that performs the I/O on the appropriate backend.
-// Effects that produce events back into the loop (tmux spawn, pane
+// Effects that produce events back into the loop (pane spawn, pane
 // alive, etc.) call r.Enqueue, which is non-blocking and goroutine-
 // safe so the case can fire from inside the event loop without
 // risking deadlock on the channel.
 func (r *Runtime) execute(eff state.Effect) {
 	switch e := eff.(type) {
-	case state.EffSpawnTmuxWindow, state.EffKillSessionWindow, state.EffActivateSession,
+	case state.EffSpawnPaneWindow, state.EffKillSessionWindow, state.EffActivateSession,
 		state.EffDeactivateSession, state.EffRegisterPane, state.EffUnregisterPane,
-		state.EffSelectPane, state.EffSyncStatusLine, state.EffSetTmuxEnv,
-		state.EffUnsetTmuxEnv, state.EffCheckPaneAlive, state.EffRespawnPane,
+		state.EffSelectPane, state.EffSyncStatusLine, state.EffSetPaneEnv,
+		state.EffUnsetPaneEnv, state.EffCheckPaneAlive, state.EffRespawnPane,
 		state.EffSwapHidden, state.EffDetachClient, state.EffDisplayPopup,
 		state.EffKillSession, state.EffReconcileWindows:
-		r.executeTmuxEffect(e)
+		r.executePaneEffect(e)
 
 	case state.EffSendResponse, state.EffSendResponseSync, state.EffSendError,
 		state.EffBroadcastSessionsChanged, state.EffBroadcastEvent, state.EffCloseConn:
@@ -34,8 +34,8 @@ func (r *Runtime) execute(eff state.Effect) {
 	case state.EffWatchFile, state.EffUnwatchFile:
 		r.executeFSEffect(e)
 
-	case state.EffSendTmuxKeys:
-		r.executeSendTmuxKeys(e)
+	case state.EffSendPaneKeys:
+		r.executeSendPaneKeys(e)
 
 	case state.EffInjectPrompt:
 		r.executeInjectPrompt(e)
@@ -50,7 +50,7 @@ func (r *Runtime) execute(eff state.Effect) {
 	}
 }
 
-// executeMiscEffect handles effects that don't fit the tmux/IPC/FS categories.
+// executeMiscEffect handles effects that don't fit the pane/IPC/FS categories.
 func (r *Runtime) executeMiscEffect(eff state.Effect) {
 	switch e := eff.(type) {
 	case state.EffPersistSnapshot:
@@ -100,7 +100,7 @@ func (r *Runtime) executeRecordNotification(e state.EffRecordNotification) {
 	r.cfg.Notifier.DispatchOSC(e.Title, e.Body, source)
 }
 
-func (r *Runtime) executeSendTmuxKeys(e state.EffSendTmuxKeys) {
+func (r *Runtime) executeSendPaneKeys(e state.EffSendPaneKeys) {
 	pane := r.sessionPaneForSession(e.SessionID)
 	if pane == "" {
 		r.executeIPCEffect(state.EffSendError{
@@ -196,10 +196,10 @@ func (r *Runtime) executeSurfaceEffect(eff state.Effect) {
 	}
 }
 
-func (r *Runtime) executeTmuxEffect(eff state.Effect) {
+func (r *Runtime) executePaneEffect(eff state.Effect) {
 	switch e := eff.(type) {
-	case state.EffSpawnTmuxWindow:
-		go spawnTmuxWindow(r.buildSpawnDeps(), e)
+	case state.EffSpawnPaneWindow:
+		go spawnPaneWindow(r.buildSpawnDeps(), e)
 	case state.EffKillSessionWindow:
 		r.executeKillSessionWindow(e)
 	case state.EffActivateSession:
@@ -215,9 +215,9 @@ func (r *Runtime) executeTmuxEffect(eff state.Effect) {
 		_ = r.cfg.Backend.SelectPane(target)
 	case state.EffSyncStatusLine:
 		r.executeSyncStatusLine(e)
-	case state.EffSetTmuxEnv:
+	case state.EffSetPaneEnv:
 		_ = r.cfg.Backend.SetEnv(e.Key, e.Value)
-	case state.EffUnsetTmuxEnv:
+	case state.EffUnsetPaneEnv:
 		_ = r.cfg.Backend.UnsetEnv(e.Key)
 	case state.EffCheckPaneAlive:
 		r.executeCheckPaneAlive(e)
@@ -296,7 +296,7 @@ func (r *Runtime) executeSyncStatusLine(e state.EffSyncStatusLine) {
 
 func (r *Runtime) executeCheckPaneAlive(e state.EffCheckPaneAlive) {
 	// active frame の 0.1 は positional ではなく pane_id で probe する。
-	// remain-on-exit off で frame pane が破棄されると tmux が layout を詰めて
+	// remain-on-exit off で frame pane が破棄されると backend が layout を詰めて
 	// 別 pane が 0.1 を占めるため、positional クエリは alive を誤検知する。
 	// pane_id ならプロセスと共に消えるので、err も dead 扱いにする。
 	if e.Pane == "{sessionName}:0.1" && r.activeFrameID != "" {
@@ -304,7 +304,7 @@ func (r *Runtime) executeCheckPaneAlive(e state.EffCheckPaneAlive) {
 			alive, err := r.cfg.Backend.PaneAlive(paneID)
 			if err != nil && !isMissingPaneErr(err) {
 				// A transient probe failure (e.g. "context deadline exceeded"
-				// when tmux is slow under load) is NOT death — re-probe on the
+				// when the backend is slow under load) is NOT death — re-probe on the
 				// next tick instead of evicting a live session.
 				slog.Warn("runtime: active frame pane probe transient error (ignored)",
 					"pane", e.Pane, "target", paneID, "owner", r.activeFrameID, "err", err)
@@ -465,8 +465,8 @@ func (r *Runtime) activeStatusLine() string {
 //     eviction (exit 0) and keeping the frame as stopped (exit != 0).
 //
 //   - The query for the pane itself failed with a missing-pane style
-//     error: the tmux window was destroyed externally (user kill-window).
-//     Emit EvTmuxWindowVanished to evict unconditionally — there is
+//     error: the pane window was destroyed externally (user kill-window).
+//     Emit EvPaneWindowVanished to evict unconditionally — there is
 //     nothing left to inspect.
 //
 // The active frame is skipped because it is swap-paned into arc:0.1
@@ -482,7 +482,7 @@ func (r *Runtime) reconcileWindows() {
 		if err != nil {
 			if isMissingPaneErr(err) {
 				slog.Debug("runtime: reconcile pane vanished", "frame", frameID, "pane", target, "err", err)
-				r.Enqueue(state.EvTmuxWindowVanished{FrameID: frameID})
+				r.Enqueue(state.EvPaneWindowVanished{FrameID: frameID})
 			} else {
 				// Transient query failure (timeout/busy): keep the frame and
 				// re-probe next reconcile rather than treating it as vanished.

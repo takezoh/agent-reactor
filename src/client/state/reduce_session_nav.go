@@ -6,10 +6,10 @@ import (
 )
 
 // reduce_session_nav.go holds reducers for session navigation (preview,
-// switch, focus, list) and tmux spawn lifecycle events. Kept separate
+// switch, focus, list) and pane spawn lifecycle events. Kept separate
 // from the core session creation / push / fork logic in reduce_session.go.
 
-func reduceTmuxPaneSpawned(s State, e EvTmuxPaneSpawned) (State, []Effect) {
+func reducePaneSpawned(s State, e EvPaneSpawned) (State, []Effect) {
 	sess, ok := s.Sessions[e.SessionID]
 	if !ok {
 		return s, nil
@@ -77,7 +77,7 @@ type CreateSessionReply struct {
 	SessionID string
 }
 
-func reduceTmuxSpawnFailed(s State, e EvTmuxSpawnFailed) (State, []Effect) {
+func reduceSpawnFailed(s State, e EvSpawnFailed) (State, []Effect) {
 	var effs []Effect
 	if next, evictEffs, ok := evictFrame(s, e.FrameID, false); ok {
 		s = next
@@ -88,7 +88,7 @@ func reduceTmuxSpawnFailed(s State, e EvTmuxSpawnFailed) (State, []Effect) {
 	}
 	return s, append(effs,
 		errResp(e.ReplyConn, e.ReplyReqID, ErrCodeInternal,
-			fmt.Sprintf("tmux spawn failed: %s", e.Err)),
+			fmt.Sprintf("pane spawn failed: %s", e.Err)),
 	)
 }
 

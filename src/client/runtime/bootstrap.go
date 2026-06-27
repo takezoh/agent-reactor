@@ -19,7 +19,7 @@ import (
 // r.state. Driver state is restored via the registered Driver's
 // Restore method.
 //
-// On cold start the tmux session is brand new — any dead panes from
+// On cold start the pane backend is brand new — any dead panes from
 // the previous daemon run have evaporated along with the old server.
 // Frames whose driver was at status=stopped have nothing left to
 // inspect (the tail output lived in the dead pane, which is gone)
@@ -31,7 +31,7 @@ import (
 // codex, which resumes its thread): its stopped frames are kept and
 // relaunched.
 //
-// Warm start keeps everything: stopped frames in a live tmux session
+// Warm start keeps everything: stopped frames in a live pane backend
 // still have their dead panes attached for inspection.
 func (r *Runtime) LoadSnapshot(coldStart bool) error {
 	snaps, err := r.cfg.Persist.Load()
@@ -73,7 +73,7 @@ func restoreSession(snap SessionSnapshot, coldStart bool, now time.Time) (state.
 			fsnap.DriverState["status"] = "waiting"
 		}
 		driverState := drv.Restore(fsnap.DriverState, now)
-		// Cold start has no live tmux pane to inherit the dead command's
+		// Cold start has no live pane to inherit the dead command's
 		// tail output, so a stopped frame turns into a zombie (no pane
 		// to display, no window to close). Drop it here instead — unless
 		// the driver's durable state survives the pane (codex resumes its
@@ -124,7 +124,7 @@ func restoreSession(snap SessionSnapshot, coldStart bool, now time.Time) (state.
 	return sess, true
 }
 
-// LoadSessionPanes reads the ROOST_FRAME_* tmux session environment
+// LoadSessionPanes reads the ROOST_FRAME_* pane backend environment
 // variables and populates r.sessionPanes. Called on warm start after
 // LoadSnapshot.
 func (r *Runtime) LoadSessionPanes() error {
@@ -451,7 +451,7 @@ func (r *Runtime) SetDefaultCommand(cmd string) {
 	r.state.DefaultCommand = cmd
 }
 
-// SetSyncCallbacks installs the optional tmux sync callbacks.
+// SetSyncCallbacks installs the optional pane backend sync callbacks.
 // Kept as a stable hook for future use.
 func (r *Runtime) SetSyncCallbacks(active, status func(string)) {
 	// Reserved.

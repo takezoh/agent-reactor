@@ -105,7 +105,7 @@ func (c *Client) Shutdown() error {
 	return err
 }
 
-// Detach asks the daemon to detach the tmux client.
+// Detach asks the daemon to detach the backend client (legacy).
 func (c *Client) Detach() error {
 	_, err := sendJSONEvent[proto.RespOK](c.Client, state.EventDetach, nil)
 	return err

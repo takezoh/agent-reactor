@@ -116,13 +116,13 @@ func TestPaneDiedRootFrameWithSubsystemIDEvictsSession(t *testing.T) {
 	}
 }
 
-func TestTmuxWindowVanishedActiveSessionEmitsDeactivateAndRespawn(t *testing.T) {
+func TestPaneWindowVanishedActiveSessionEmitsDeactivateAndRespawn(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id)
 	s.ActiveOccupant = OccupantFrame
 	s.ActiveSession = id
-	_, effs := Reduce(s, EvTmuxWindowVanished{FrameID: FrameID(id)})
+	_, effs := Reduce(s, EvPaneWindowVanished{FrameID: FrameID(id)})
 	if _, ok := findEff[EffDeactivateSession](effs); !ok {
 		t.Error("expected EffDeactivateSession when active session's window vanishes")
 	}
@@ -131,13 +131,13 @@ func TestTmuxWindowVanishedActiveSessionEmitsDeactivateAndRespawn(t *testing.T) 
 	}
 }
 
-func TestTmuxWindowVanishedInactiveSessionNoDeactivate(t *testing.T) {
+func TestPaneWindowVanishedInactiveSessionNoDeactivate(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	other := SessionID("other")
 	s.Sessions[id] = stubSession(id)
 	s.ActiveSession = other
-	_, effs := Reduce(s, EvTmuxWindowVanished{FrameID: FrameID(id)})
+	_, effs := Reduce(s, EvPaneWindowVanished{FrameID: FrameID(id)})
 	if _, ok := findEff[EffDeactivateSession](effs); ok {
 		t.Error("should not emit EffDeactivateSession for inactive session's window vanish")
 	}
@@ -166,7 +166,7 @@ func TestSiblingIndependence(t *testing.T) {
 	}
 	s.ActiveSession = id
 
-	next, _ := Reduce(s, EvTmuxWindowVanished{FrameID: child1ID})
+	next, _ := Reduce(s, EvPaneWindowVanished{FrameID: child1ID})
 
 	sess, ok := next.Sessions[id]
 	if !ok {
@@ -331,7 +331,7 @@ func TestMRUFallbackOnFrameDeath(t *testing.T) {
 	}
 	s.ActiveSession = id
 
-	next, _ := Reduce(s, EvTmuxWindowVanished{FrameID: child2ID})
+	next, _ := Reduce(s, EvPaneWindowVanished{FrameID: child2ID})
 
 	sess, ok := next.Sessions[id]
 	if !ok {

@@ -49,7 +49,7 @@ func reduceSurfaceSendText(s State, e EvCmdSurfaceSendText) (State, []Effect) {
 			Message: "session not found: " + string(sid),
 		}}
 	}
-	return s, []Effect{EffSendTmuxKeys{
+	return s, []Effect{EffSendPaneKeys{
 		ConnID:    e.ConnID,
 		ReqID:     e.ReqID,
 		SessionID: sid,
@@ -71,7 +71,7 @@ func reduceSurfaceSendKey(s State, e EvCmdSurfaceSendKey) (State, []Effect) {
 			Message: "session not found: " + string(sid),
 		}}
 	}
-	return s, []Effect{EffSendTmuxKeys{
+	return s, []Effect{EffSendPaneKeys{
 		ConnID:    e.ConnID,
 		ReqID:     e.ReqID,
 		SessionID: sid,

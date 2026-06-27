@@ -31,7 +31,7 @@ func newTestRelayAttached(t *testing.T) (*Runtime, *FileRelay) {
 	r := New(Config{
 		SessionName: "reactor-test",
 		RoostExe:    "/usr/bin/roost",
-		Backend:     newFakeTmux(),
+		Backend:     newFakeBackend(),
 	})
 	r.relay = fr
 	return r, fr
@@ -76,7 +76,7 @@ func TestSyncRelayWatchesNoRelayIsNoop(t *testing.T) {
 	r := New(Config{
 		SessionName: "reactor-test",
 		RoostExe:    "/usr/bin/roost",
-		Backend:     newFakeTmux(),
+		Backend:     newFakeBackend(),
 	})
 	// r.relay == nil; must not panic
 	r.syncRelayWatches()
@@ -89,7 +89,7 @@ func newTestRuntimeWithConns(t *testing.T, ids ...state.ConnID) (*Runtime, map[s
 	r := New(Config{
 		SessionName: "reactor-test",
 		RoostExe:    "/usr/bin/roost",
-		Backend:     newFakeTmux(),
+		Backend:     newFakeBackend(),
 	})
 	outboxes := make(map[state.ConnID]chan []byte, len(ids))
 	for _, id := range ids {

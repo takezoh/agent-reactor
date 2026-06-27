@@ -494,7 +494,7 @@ func (m *Manager) BuildLaunchCommand(inst *sandbox.Instance[*ContainerState], la
 
 	var sb strings.Builder
 	// -t (pseudo-TTY) only when the consumer drives an interactive terminal
-	// (tmux pane). Piped/headless consumers (orchestrator JSON-RPC stdio) must
+	// (backend pane). Piped/headless consumers (orchestrator JSON-RPC stdio) must
 	// omit it: `docker exec -t` aborts when stdin is not a terminal.
 	sb.WriteString("docker exec -i")
 	if launchSpec.TTY {

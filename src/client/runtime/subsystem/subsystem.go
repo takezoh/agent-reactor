@@ -26,7 +26,7 @@ type BindResult struct {
 	// ExtraEnv is merged into the frame's environment before sandbox wrap.
 	ExtraEnv map[string]string
 	// WorktreeStartDir is non-empty when the subsystem created a managed
-	// worktree. The runtime enqueues DEvWorktreeResolved via EvTmuxPaneSpawned
+	// worktree. The runtime enqueues DEvWorktreeResolved via EvPaneSpawned
 	// so the driver persists the path for cold-start reconstruction.
 	WorktreeStartDir string
 	// WorktreeName is the petname chosen for the managed worktree.
@@ -45,11 +45,11 @@ type Subsystem interface {
 	// Called once before the first BindFrame.
 	Start(ctx context.Context) error
 
-	// BindFrame is called synchronously inside spawnTmuxWindowAsync
-	// (already a goroutine) before the tmux spawn. It resolves the
+	// BindFrame is called synchronously inside spawnPaneWindowAsync
+	// (already a goroutine) before the pane spawn. It resolves the
 	// LaunchPlan (worktree creation, stream thread binding, command
 	// rewrite) and registers the frame for cleanup tracking.
-	// BindFrame must complete before tmux spawn happens.
+	// BindFrame must complete before pane spawn happens.
 	BindFrame(ctx context.Context, req BindRequest) (BindResult, error)
 
 	// ReleaseFrame is called when a pane dies or a frame is explicitly

@@ -66,7 +66,7 @@ func Launch(command, target string) error {
 	args = append(args, target)
 	slog.Info("editor: launching", "bin", resolved, "args", args)
 	cmd := exec.CommandContext(context.Background(), resolved, args...)
-	// The palette runs in a short-lived tmux popup process; when it exits the
+	// The palette runs in a short-lived backend popup process; when it exits the
 	// popup is torn down and any child sharing its session is killed by SIGHUP
 	// before the editor can open. Detach the child into its own session so it
 	// outlives the palette, and point its stdout/stderr at a regular file so it

@@ -188,7 +188,7 @@ func TestHandleProtoError_ProtoErrorBodyPreserved(t *testing.T) {
 
 // TestHandleProtoError_ExhaustiveCodeMapping pins every proto.ErrCode to its
 // HTTP status. The user's original 500 from POST /api/sessions was a daemon
-// "tmux spawn failed" wrapped in ErrInternal; the pre-fix gateway mapped
+// "pane spawn failed" wrapped in ErrInternal; the pre-fix gateway mapped
 // ErrInternal to 500, hiding the upstream-attribution. This table now
 // requires every code to have a dedicated status and prevents that drift.
 //

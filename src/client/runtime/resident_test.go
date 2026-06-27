@@ -30,9 +30,9 @@ func TestIsMissingPaneErrIgnoresOther(t *testing.T) {
 	if isMissingPaneErr(other) {
 		t.Fatalf("isMissingPaneErr(%q) = true, want false", other.Error())
 	}
-	legacy := errors.New("tmux: can't find pane: arc:0.7")
+	legacy := errors.New("backend: can't find pane: arc:0.7")
 	if isMissingPaneErr(legacy) {
 		t.Fatalf("isMissingPaneErr(legacy substring) = true, want false " +
-			"after RealTmuxBackend removal")
+			"after legacy substring fallback removal")
 	}
 }

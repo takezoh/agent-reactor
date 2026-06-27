@@ -36,12 +36,12 @@ func isSandboxed(s State, project string, override SandboxOverride) bool {
 	return s.SandboxedProject != nil && s.SandboxedProject(project) && override != SandboxOverrideHost
 }
 
-// spawnEffect builds an EffSpawnTmuxWindow from a resolved LaunchPlan.
+// spawnEffect builds an EffSpawnPaneWindow from a resolved LaunchPlan.
 // plan.Project, plan.Sandbox, and plan.Stdin must be set by the caller before invoking.
 // The runtime resolves the frame's SubsystemID during ensureSubsystem and
-// reports it back via EvTmuxPaneSpawned.
-func spawnEffect(sessID SessionID, frameID FrameID, plan LaunchPlan, connID ConnID, reqID string) EffSpawnTmuxWindow {
-	return EffSpawnTmuxWindow{
+// reports it back via EvPaneSpawned.
+func spawnEffect(sessID SessionID, frameID FrameID, plan LaunchPlan, connID ConnID, reqID string) EffSpawnPaneWindow {
+	return EffSpawnPaneWindow{
 		SessionID:  sessID,
 		FrameID:    frameID,
 		Mode:       LaunchModeCreate,

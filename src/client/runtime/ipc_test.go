@@ -25,7 +25,7 @@ func startRuntimeWithIPC(t *testing.T, ctx context.Context) (*Runtime, string) {
 		RoostExe:     "/usr/bin/roost",
 		DataDir:      dir,
 		TickInterval: 10 * time.Second,
-		Backend:      newFakeTmux(),
+		Backend:      newFakeBackend(),
 	})
 	go func() {
 		_ = r.Run(ctx)

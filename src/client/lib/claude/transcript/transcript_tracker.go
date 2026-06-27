@@ -331,7 +331,7 @@ type StatusSnapshot struct {
 	Insight      SessionInsight
 }
 
-// FormatStatusLine renders a tmux status-line string from a snapshot.
+// FormatStatusLine renders a status-line string from a snapshot.
 // Sections are separated by " | " and omitted when empty.
 func FormatStatusLine(snap StatusSnapshot) string {
 	var parts []string

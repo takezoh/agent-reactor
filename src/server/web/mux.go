@@ -624,7 +624,7 @@ func protoCodeToHTTP(code proto.ErrCode) (int, string) {
 	case proto.ErrFrameNotReady:
 		return http.StatusServiceUnavailable, "frame_not_ready"
 	case proto.ErrInternal:
-		// Upstream daemon error (typically "tmux spawn failed: …").
+		// Upstream daemon error (typically "pane spawn failed: …").
 		// 502 Bad Gateway is the precise status — the gateway is healthy,
 		// the upstream daemon's operation failed. The user's original
 		// "POST /api/sessions returned 500" complaint was this code: a

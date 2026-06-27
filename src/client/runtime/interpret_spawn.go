@@ -17,7 +17,7 @@ import (
 // It holds no *Runtime reference, so the goroutine cannot touch loop-owned
 // state (conns, sessionPanes, subsystems, …) directly. Results flow back to
 // the event loop via sendInternal (internalSpawnComplete) / sendEvent
-// (EvTmuxSpawnFailed), preserving the single-writer discipline.
+// (EvSpawnFailed), preserving the single-writer discipline.
 type spawnDeps struct {
 	backend      PaneBackend
 	launcher     AgentLauncher
@@ -43,9 +43,9 @@ func (r *Runtime) buildSpawnDeps() spawnDeps {
 	}
 }
 
-// spawnTmuxWindow runs in a goroutine, performs all slow I/O (subsystem
-// ensure, bind, launch wrap, tmux spawn), and posts results back via
-// internalSpawnComplete / EvTmuxSpawnFailed. It holds no *Runtime reference,
+// spawnPaneWindow runs in a goroutine, performs all slow I/O (subsystem
+// ensure, bind, launch wrap, pane spawn), and posts results back via
+// internalSpawnComplete / EvSpawnFailed. It holds no *Runtime reference,
 // so every state mutation is deferred to the event loop in handleSpawnComplete.
 //
 // The deferred panic recovery (recoverSpawnPanic) is load-bearing: a panic
@@ -53,11 +53,11 @@ func (r *Runtime) buildSpawnDeps() spawnDeps {
 // launcher wrapper, …) would otherwise propagate out of this goroutine and
 // crash the entire daemon — killing every session inside it, including the
 // agent session that issued the POST /api/sessions that triggered the
-// spawn. Converting a panic into EvTmuxSpawnFailed keeps the failure scoped
+// spawn. Converting a panic into EvSpawnFailed keeps the failure scoped
 // to the one session being created; the rest of the daemon continues serving.
-func spawnTmuxWindow(deps spawnDeps, e state.EffSpawnTmuxWindow) {
+func spawnPaneWindow(deps spawnDeps, e state.EffSpawnPaneWindow) {
 	sendFailed := func(msg string) {
-		deps.sendEvent(state.EvTmuxSpawnFailed{
+		deps.sendEvent(state.EvSpawnFailed{
 			SessionID: e.SessionID, FrameID: e.FrameID,
 			Err: msg, ReplyConn: e.ReplyConn, ReplyReqID: e.ReplyReqID,
 		})
@@ -110,7 +110,7 @@ func spawnTmuxWindow(deps spawnDeps, e state.EffSpawnTmuxWindow) {
 	target, paneID, err := deps.backend.SpawnWindow(name, spawnCmd, wrapped.StartDir, wrapped.Env)
 	if err != nil {
 		// wrapLaunchForSpawn already acquired the sandbox/container; the pane never
-		// launched and no EvTmuxPaneSpawned/kill path will reach this frame, so
+		// launched and no EvPaneSpawned/kill path will reach this frame, so
 		// release it here to avoid leaking the container ref + cleanup closure.
 		if wrapped.Cleanup != nil {
 			if cerr := wrapped.Cleanup(); cerr != nil {
@@ -139,15 +139,15 @@ func spawnTmuxWindow(deps spawnDeps, e state.EffSpawnTmuxWindow) {
 	})
 }
 
-// recoverSpawnPanic is the deferred panic handler for spawnTmuxWindow. Logs
+// recoverSpawnPanic is the deferred panic handler for spawnPaneWindow. Logs
 // the panic at Error with a full stack so an operator can trace the root
 // cause, then surfaces the failure on the spawn reply channel via sendFailed
 // so the HTTP POST that triggered the spawn gets a clean 502 instead of
 // dropping its reply when the daemon crashes.
 //
-// Kept out of spawnTmuxWindow's body so spawnTmuxWindow stays under the
+// Kept out of spawnPaneWindow's body so spawnPaneWindow stays under the
 // project-wide 80-line function cap (funlen lint).
-func recoverSpawnPanic(e state.EffSpawnTmuxWindow, sendFailed func(string)) {
+func recoverSpawnPanic(e state.EffSpawnPaneWindow, sendFailed func(string)) {
 	rec := recover()
 	if rec == nil {
 		return
@@ -162,8 +162,8 @@ func recoverSpawnPanic(e state.EffSpawnTmuxWindow, sendFailed func(string)) {
 }
 
 // handleSpawnComplete runs on the event loop. It stores the per-frame I/O
-// handles produced by spawnTmuxWindow into loop-owned maps (and the container
-// registry), then dispatches the pure EvTmuxPaneSpawned event.
+// handles produced by spawnPaneWindow into loop-owned maps (and the container
+// registry), then dispatches the pure EvPaneSpawned event.
 func (r *Runtime) handleSpawnComplete(e internalSpawnComplete) {
 	r.subsystems[e.subsystemID] = e.sub
 	r.frameSubsystems[e.effect.FrameID] = e.sub
@@ -174,7 +174,7 @@ func (r *Runtime) handleSpawnComplete(e internalSpawnComplete) {
 		r.registerContainerFrame(e.effect.FrameID, e.effect.Project, e.containerSockDir, e.token, e.mounts)
 	}
 
-	r.dispatch(state.EvTmuxPaneSpawned{
+	r.dispatch(state.EvPaneSpawned{
 		SessionID:        e.effect.SessionID,
 		FrameID:          e.effect.FrameID,
 		SubsystemID:      e.subsystemID,
@@ -233,9 +233,9 @@ func (r *Runtime) reapSubsystemIfLast(sub rsubsystem.Subsystem, frameID state.Fr
 	}
 }
 
-// buildSpawnCommand builds the tmux command string for a resolved wrapped.Command.
+// buildSpawnCommand builds the spawn command string for a resolved wrapped.Command.
 // The bare shell command explicitly execs the user's passwd login shell rather
-// than relying on tmux's default-shell option.
+// than relying on a default-shell option.
 func buildSpawnCommand(command string, stdin []byte) string {
 	if isShellCommand(command) {
 		return "exec " + shellalias.LoginShellCommand + " -l"
@@ -246,7 +246,7 @@ func buildSpawnCommand(command string, stdin []byte) string {
 	return "exec " + command
 }
 
-// windowName builds a stable display name for a new tmux window from
+// windowName builds a stable display name for a new pane window from
 // project + session id (matches the legacy SessionService format).
 func windowName(project, sessionID string) string {
 	if i := strings.LastIndex(project, "/"); i >= 0 {

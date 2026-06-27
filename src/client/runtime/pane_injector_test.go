@@ -7,8 +7,8 @@ import (
 	"github.com/takezoh/agent-reactor/client/state"
 )
 
-// fakeTmux is a recording PaneBackend for injector tests.
-type fakeTmux struct {
+// injectorStubBackend is a recording PaneBackend for injector tests.
+type injectorStubBackend struct {
 	noopBackend
 	loadBufferCalls  []loadBufferCall
 	pasteBufferCalls []pasteBufferCall
@@ -21,17 +21,17 @@ type fakeTmux struct {
 type loadBufferCall struct{ name, text string }
 type pasteBufferCall struct{ name, target string }
 
-func (f *fakeTmux) LoadBuffer(name, text string) error {
+func (f *injectorStubBackend) LoadBuffer(name, text string) error {
 	f.loadBufferCalls = append(f.loadBufferCalls, loadBufferCall{name, text})
 	return f.loadErr
 }
 
-func (f *fakeTmux) PasteBuffer(name, target string) error {
+func (f *injectorStubBackend) PasteBuffer(name, target string) error {
 	f.pasteBufferCalls = append(f.pasteBufferCalls, pasteBufferCall{name, target})
 	return f.pasteErr
 }
 
-func (f *fakeTmux) SendEnter(target string) error {
+func (f *injectorStubBackend) SendEnter(target string) error {
 	f.sendEnterCalls = append(f.sendEnterCalls, target)
 	return f.enterErr
 }
@@ -41,7 +41,7 @@ func TestRuntimePaneInjector_ResolveFramePane(t *testing.T) {
 		"frame-1": "%5",
 		"frame-2": "",
 	}
-	inj := NewRuntimePaneInjector(panes, &fakeTmux{})
+	inj := NewRuntimePaneInjector(panes, &injectorStubBackend{})
 
 	t.Run("known frame returns target and true", func(t *testing.T) {
 		target, ok := inj.ResolveFramePane("frame-1")
@@ -70,7 +70,7 @@ func TestRuntimePaneInjector_ResolveFramePane(t *testing.T) {
 
 func TestRuntimePaneInjector_PastePrompt(t *testing.T) {
 	t.Run("calls LoadBuffer then PasteBuffer", func(t *testing.T) {
-		ft := &fakeTmux{}
+		ft := &injectorStubBackend{}
 		inj := NewRuntimePaneInjector(nil, ft)
 
 		if err := inj.PastePrompt("%5", "hello world"); err != nil {
@@ -97,7 +97,7 @@ func TestRuntimePaneInjector_PastePrompt(t *testing.T) {
 	})
 
 	t.Run("LoadBuffer error stops before PasteBuffer", func(t *testing.T) {
-		ft := &fakeTmux{loadErr: errors.New("load failed")}
+		ft := &injectorStubBackend{loadErr: errors.New("load failed")}
 		inj := NewRuntimePaneInjector(nil, ft)
 
 		if err := inj.PastePrompt("%5", "text"); err == nil {
@@ -110,7 +110,7 @@ func TestRuntimePaneInjector_PastePrompt(t *testing.T) {
 }
 
 func TestRuntimePaneInjector_SubmitEnter(t *testing.T) {
-	ft := &fakeTmux{}
+	ft := &injectorStubBackend{}
 	inj := NewRuntimePaneInjector(nil, ft)
 
 	if err := inj.SubmitEnter("%5"); err != nil {

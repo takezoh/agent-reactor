@@ -64,9 +64,9 @@ func TestReduceSurfaceSendText(t *testing.T) {
 	if len(effs) != 1 {
 		t.Fatalf("expected 1 effect, got %d", len(effs))
 	}
-	e, ok := effs[0].(EffSendTmuxKeys)
+	e, ok := effs[0].(EffSendPaneKeys)
 	if !ok {
-		t.Fatalf("effect = %T, want EffSendTmuxKeys", effs[0])
+		t.Fatalf("effect = %T, want EffSendPaneKeys", effs[0])
 	}
 	if !e.WithEnter {
 		t.Error("WithEnter should be true for send_text")
@@ -81,9 +81,9 @@ func TestReduceSurfaceSendKey(t *testing.T) {
 	s.Sessions["sess-1"] = Session{ID: "sess-1"}
 	ev := EvCmdSurfaceSendKey{ConnID: 1, ReqID: "r1", SessionID: "sess-1", Key: "Escape"}
 	_, effs := Reduce(s, ev)
-	e, ok := effs[0].(EffSendTmuxKeys)
+	e, ok := effs[0].(EffSendPaneKeys)
 	if !ok {
-		t.Fatalf("effect = %T, want EffSendTmuxKeys", effs[0])
+		t.Fatalf("effect = %T, want EffSendPaneKeys", effs[0])
 	}
 	if e.WithEnter {
 		t.Error("WithEnter should be false for send_key")

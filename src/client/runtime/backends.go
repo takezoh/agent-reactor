@@ -17,15 +17,15 @@ var ErrPaneMissing = errors.New("pane missing")
 var ErrNotImplemented = errors.New("runtime: not implemented on this backend")
 
 // Backend interfaces. The runtime depends on these abstractions, not
-// on concrete tmux/persistence/fs/log libraries, so tests can plug in
+// on concrete backend/persistence/fs/log libraries, so tests can plug in
 // fakes and so the production wiring lives in one place (cmd/main).
 
 // PaneLifecycle covers pane/window creation, destruction, and liveness.
 type PaneLifecycle interface {
-	// SpawnWindow creates a new tmux window for a session. Returns the
+	// SpawnWindow creates a new pane window for a session. Returns the
 	// window index (e.g. "1") and the pane id (e.g. "%5").
 	SpawnWindow(name, command, startDir string, env map[string]string) (windowIndex, paneID string, err error)
-	// KillPaneWindow destroys the tmux window containing the named pane.
+	// KillPaneWindow destroys the pane window containing the named pane.
 	KillPaneWindow(paneTarget string) error
 	// RespawnPane runs respawn-pane against a dead pane.
 	RespawnPane(target, command string) error
@@ -42,17 +42,17 @@ type PaneLifecycle interface {
 
 // PaneIO covers key input and buffer operations directed at a pane.
 type PaneIO interface {
-	// SendKeys sends text followed by Enter to a pane (tmux send-keys ... Enter).
+	// SendKeys sends text followed by Enter to a pane (backend send-keys equivalent ... Enter).
 	SendKeys(paneTarget, text string) error
 	// SendKey sends a named key (e.g. "Escape", "q") to a pane without Enter.
 	SendKey(paneTarget, key string) error
-	// SendEnter sends only the Enter key to a pane (tmux send-keys -t <target> Enter).
+	// SendEnter sends only the Enter key to a pane (backend send-keys equivalent -t <target> Enter).
 	SendEnter(target string) error
-	// LoadBuffer loads text into a named tmux buffer via stdin.
-	// Implements: tmux load-buffer -b <name> -
+	// LoadBuffer loads text into a named paste buffer via stdin.
+	// Implements: backend load-buffer equivalent -b <name> -
 	LoadBuffer(name, text string) error
 	// PasteBuffer pastes a named buffer into the target pane and deletes it.
-	// Implements: tmux paste-buffer -d -b <name> -t <target>
+	// Implements: backend paste-buffer equivalent -d -b <name> -t <target>
 	PasteBuffer(name, target string) error
 	// PipePane pipes pane output to a shell command.
 	// Passing an empty command stops the running pipe.
@@ -70,13 +70,13 @@ type PaneInspect interface {
 	CapturePane(paneTarget string, nLines int) (string, error)
 }
 
-// SessionEnv covers tmux session-level environment variable operations.
+// SessionEnv covers session-level environment variable operations.
 type SessionEnv interface {
-	// SetEnv writes a tmux session-level environment variable.
+	// SetEnv writes a session-level environment variable.
 	SetEnv(key, value string) error
-	// UnsetEnv removes a tmux session-level env var.
+	// UnsetEnv removes a session-level env var.
 	UnsetEnv(key string) error
-	// ShowEnvironment returns the tmux session environment as a
+	// ShowEnvironment returns the session environment as a
 	// newline-delimited KEY=VALUE string (output of show-environment).
 	ShowEnvironment() (string, error)
 }
@@ -93,25 +93,25 @@ type WindowLayout interface {
 	// JoinPane moves a pane into another pane slot. sizePct controls
 	// the new pane size; before inserts before the target pane.
 	JoinPane(srcPane, dstPane string, before bool, sizePct int) error
-	// SelectPane focuses a tmux pane.
+	// SelectPane focuses a backend pane.
 	SelectPane(target string) error
-	// ResizeWindow resizes the tmux window containing the target.
+	// ResizeWindow resizes the pane window containing the target.
 	ResizeWindow(target string, width, height int) error
 	// RunChain executes a sequence of swap-pane (or other) commands as
-	// a single tmux invocation. Used for the swap-pane preview chain.
+	// a single backend invocation. Used for the swap-pane preview chain.
 	RunChain(ops ...[]string) error
 }
 
 // BackendControl covers session/client-level control operations.
 type BackendControl interface {
-	// SetStatusLine writes the status-left line (tmux legacy; no-op on
+	// SetStatusLine writes the status-left line (legacy; no-op on
 	// PtyBackend).
 	SetStatusLine(line string) error
-	// DetachClient detaches the current client (tmux legacy).
+	// DetachClient detaches the current client (legacy).
 	DetachClient() error
-	// KillSession destroys the client session (tmux legacy).
+	// KillSession destroys the client session (legacy).
 	KillSession() error
-	// DisplayPopup runs a popup window (tmux legacy).
+	// DisplayPopup runs a popup window (legacy).
 	DisplayPopup(width, height, cmd string) error
 }
 
@@ -149,7 +149,7 @@ type PersistBackend interface {
 
 // SessionSnapshot is the on-disk format for one session in
 // sessions.json. Includes the static metadata + the driver's persisted
-// bag (opaque map of strings). Pane ids are tracked in tmux session env
+// bag (opaque map of strings). Pane ids are tracked in session env
 // vars (ROOST_SESSION_<sid>); sessions.json stays pane-id free.
 type SessionSnapshot struct {
 	ID            string                 `json:"id"`
@@ -286,10 +286,10 @@ func eventTypeName(ev state.Event) string {
 		return "EvEvent"
 	case state.EvJobResult:
 		return "EvJobResult"
-	case state.EvTmuxPaneSpawned:
-		return "EvTmuxPaneSpawned"
-	case state.EvTmuxSpawnFailed:
-		return "EvTmuxSpawnFailed"
+	case state.EvPaneSpawned:
+		return "EvPaneSpawned"
+	case state.EvSpawnFailed:
+		return "EvSpawnFailed"
 	case state.EvFileChanged:
 		return "EvFileChanged"
 	default:

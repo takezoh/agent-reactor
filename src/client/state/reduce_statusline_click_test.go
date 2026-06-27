@@ -19,7 +19,7 @@ func TestStatusLineClickNoOpWhenRangeEmpty(t *testing.T) {
 		Payload: json.RawMessage(`{"range":""}`),
 	})
 	mustOK(t, effs)
-	if _, ok := findEff[EffSpawnTmuxWindow](effs); ok {
+	if _, ok := findEff[EffSpawnPaneWindow](effs); ok {
 		t.Error("expected no spawn for empty range")
 	}
 }
@@ -34,7 +34,7 @@ func TestStatusLineClickNoOpWhenOccupantMain(t *testing.T) {
 		Payload: json.RawMessage(`{"range":"plan"}`),
 	})
 	mustOK(t, effs)
-	if _, ok := findEff[EffSpawnTmuxWindow](effs); ok {
+	if _, ok := findEff[EffSpawnPaneWindow](effs); ok {
 		t.Error("expected no spawn for OccupantMain")
 	}
 }

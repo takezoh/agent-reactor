@@ -19,7 +19,7 @@ import (
 //
 //   H2: FilePersist.Save([]) on a fresh process wipes pre-existing session
 //       files via pruneObsolete. A transient in-memory empty state
-//       (e.g. a cascade of EvTmuxSpawnFailed before LoadSnapshot has
+//       (e.g. a cascade of EvSpawnFailed before LoadSnapshot has
 //       repopulated state) becomes a permanent disk loss.
 //
 //   H3: Runtime.Run has no defer flush, so SIGINT/SIGTERM-driven shutdown
@@ -56,7 +56,7 @@ func TestRegressionFreshPersistDoesNotWipeOnEmptySave(t *testing.T) {
 	p := NewFilePersist(dir)
 
 	// The runtime fires EffPersistSnapshot while in-memory state is
-	// transiently empty — for example after a reduceTmuxSpawnFailed
+	// transiently empty — for example after a reduceSpawnFailed
 	// cascade. This must not be a destructive operation.
 	if err := p.Save(nil); err != nil {
 		t.Fatalf("Save(nil): %v", err)
@@ -74,7 +74,7 @@ func TestRegressionFreshPersistDoesNotWipeOnEmptySave(t *testing.T) {
 // T4: On cold start, a session whose frames are all status=stopped
 // MUST be dropped entirely — both from in-memory state and from
 // disk. The dead panes that gave those frames inspection value lived
-// in the previous tmux server, which no longer exists; keeping the
+// in the previous backend session, which no longer exists; keeping the
 // metadata around just creates a zombie session the user cannot
 // display or terminate.
 func TestRegressionColdStartDropsStoppedFrames(t *testing.T) {
@@ -111,12 +111,12 @@ func TestRegressionColdStartDropsStoppedFrames(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	tmux := newFakeTmux()
+	backend := newFakeBackend()
 	l := &trackingLauncher{calls: map[string]int{}}
 	r := New(Config{
 		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
-		Backend:      tmux,
+		Backend:      backend,
 		Persist:      p,
 		Launcher:     l,
 	})
@@ -143,10 +143,10 @@ func TestRegressionColdStartDropsStoppedFrames(t *testing.T) {
 	if err := r.RecreateAll(); err != nil {
 		t.Fatalf("RecreateAll: %v", err)
 	}
-	tmux.mu.Lock()
-	defer tmux.mu.Unlock()
-	if tmux.spawnCalls != 1 {
-		t.Errorf("spawnCalls = %d, want 1 (only the live frame should spawn)", tmux.spawnCalls)
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if backend.spawnCalls != 1 {
+		t.Errorf("spawnCalls = %d, want 1 (only the live frame should spawn)", backend.spawnCalls)
 	}
 }
 
@@ -156,12 +156,12 @@ func TestRegressionColdStartDropsStoppedFrames(t *testing.T) {
 // in place, the very act of mutating r.state.Sessions triggers a Save
 // at the runtime layer.
 func TestRegressionCreateSessionReachesDisk(t *testing.T) {
-	tmux := newFakeTmux()
+	backend := newFakeBackend()
 	persist := &recordingPersist{}
 	r := New(Config{
 		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
-		Backend:      tmux,
+		Backend:      backend,
 		Persist:      persist,
 	})
 
@@ -193,12 +193,12 @@ func TestRegressionCreateSessionReachesDisk(t *testing.T) {
 // translate that into Persist.Delete for the session's file so a
 // subsequent cold start does not resurrect the dead session.
 func TestRegressionSpawnFailureReachesDiskAsDelete(t *testing.T) {
-	tmux := newFakeTmux()
+	backend := newFakeBackend()
 	persist := &recordingPersist{}
 	r := New(Config{
 		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second,
-		Backend:      tmux,
+		Backend:      backend,
 		Persist:      persist,
 	})
 
@@ -221,7 +221,7 @@ func TestRegressionSpawnFailureReachesDiskAsDelete(t *testing.T) {
 	defer cancel()
 	go func() { _ = r.Run(ctx) }()
 
-	r.Enqueue(state.EvTmuxSpawnFailed{
+	r.Enqueue(state.EvSpawnFailed{
 		SessionID: "doomed",
 		FrameID:   "doomed",
 		Err:       "injected",
@@ -281,21 +281,21 @@ func waitForPersist(t *testing.T, p *recordingPersist, minSaves int, within time
 // any in-memory state mutations that did not happen to emit
 // EffPersistSnapshot must still reach disk before Run returns. Today
 // Run() has no defer flush, so a reducer that mutates state without
-// emitting persist (e.g. reduceTmuxSpawnFailed — see T1c) leaves the
+// emitting persist (e.g. reduceSpawnFailed — see T1c) leaves the
 // disk lagging in-memory until termination, at which point the mutation
 // is silently lost.
 //
-// This test pre-populates two sessions, enqueues EvTmuxSpawnFailed for
+// This test pre-populates two sessions, enqueues EvSpawnFailed for
 // one of them (which deletes the session from in-memory state without
 // emitting EffPersistSnapshot), then cancels the context. The final
 // Save call observed by the persist backend MUST reflect the eviction.
 func TestRegressionRunFlushesPendingMutationsOnCancel(t *testing.T) {
-	tmux := newFakeTmux()
+	backend := newFakeBackend()
 	persist := &recordingPersist{}
 	r := New(Config{
 		SessionName:  "reactor-test",
 		TickInterval: 10 * time.Second, // suppress periodic ticks that would mask the bug
-		Backend:      tmux,
+		Backend:      backend,
 		Persist:      persist,
 	})
 
@@ -321,7 +321,7 @@ func TestRegressionRunFlushesPendingMutationsOnCancel(t *testing.T) {
 	go func() { _ = r.Run(ctx) }()
 
 	// Wait until the event loop is actually consuming events. We can't
-	// rely on persist.saves here (T1c shows EvTmuxSpawnFailed never
+	// rely on persist.saves here (T1c shows EvSpawnFailed never
 	// triggers a save today), so we send a known-flushing event first.
 	r.Enqueue(state.EvEvent{ConnID: 0, ReqID: "warmup", Event: "list-sessions"})
 	deadline := time.Now().Add(2 * time.Second)
@@ -336,7 +336,7 @@ func TestRegressionRunFlushesPendingMutationsOnCancel(t *testing.T) {
 	}
 
 	// The mutation under test: spawn failure evicts "doomed" from state.
-	r.Enqueue(state.EvTmuxSpawnFailed{
+	r.Enqueue(state.EvSpawnFailed{
 		SessionID: "doomed",
 		FrameID:   "doomed",
 		Err:       "injected",
@@ -397,13 +397,13 @@ func TestRegressionRunFlushesPendingMutationsOnCancel(t *testing.T) {
 // session remains absent from state, no Save call includes its ID, and
 // Persist.Delete was called exactly once.
 func TestRegressionEvictedSessionStaysEvictedAfterPaneEvents(t *testing.T) {
-	tmux := newFakeTmux()
+	backend := newFakeBackend()
 	persist := &recordingPersist{}
 	r := New(Config{
 		SessionName:      "reactor-test",
 		TickInterval:     50 * time.Millisecond,
 		FastTickInterval: 25 * time.Millisecond,
-		Backend:          tmux,
+		Backend:          backend,
 		Persist:          persist,
 	})
 

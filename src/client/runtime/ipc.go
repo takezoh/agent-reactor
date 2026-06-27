@@ -61,7 +61,7 @@ func (r *Runtime) StartIPC(sockPath string) error {
 	if err != nil {
 		return fmt.Errorf("runtime: listen %s: %w", sockPath, err)
 	}
-	// Restrict socket to owner only — the client controls tmux session
+	// Restrict socket to owner only — the client controls the pane backend
 	// lifecycle, so unauthenticated local access = arbitrary command
 	// execution.
 	if err := os.Chmod(sockPath, 0o600); err != nil {
@@ -141,7 +141,7 @@ func (internalBroadcastWire) isInternalEvent() {}
 // attach pane taps to panes that were restored from the snapshot (warm
 // or cold start) — bypasses the reducer because Reduce is only invoked
 // by user-driven events, and restored panes never go through
-// EvTmuxPaneSpawned.
+// EvPaneSpawned.
 type internalStartRestoredTaps struct{}
 
 func (internalStartRestoredTaps) isInternalEvent() {}
@@ -152,7 +152,7 @@ func (internalStartRestoredTaps) isInternalEvent() {}
 // them into loop-owned maps (handleSpawnComplete), keeping spawn off the
 // single-writer state without any direct map writes from the goroutine.
 type internalSpawnComplete struct {
-	effect           state.EffSpawnTmuxWindow
+	effect           state.EffSpawnPaneWindow
 	subsystemID      state.SubsystemID
 	sub              rsubsystem.Subsystem
 	cleanup          func() error
@@ -267,7 +267,7 @@ func internalEventName(ev internalEvent) string {
 // sendSpawnComplete delivers a spawn-completion event to the loop. Unlike
 // enqueueInternal it must NOT drop: handleSpawnComplete is the sole writer of
 // the subsystem/cleanup maps and container registry for the frame, so losing
-// this event would leak the already-launched subsystem, tmux pane, container
+// this event would leak the already-launched subsystem, pane, container
 // token and cleanup closure with no recovery path. Blocks until the loop
 // accepts it or the daemon shuts down (r.done), so it never leaks a goroutine.
 func (r *Runtime) sendSpawnComplete(ev internalEvent) {

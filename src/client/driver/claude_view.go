@@ -81,9 +81,9 @@ func claudeInfoExtras(cs ClaudeState) []state.InfoLine {
 	return lines
 }
 
-// planStatusLine returns a tmux-formatted clickable "PLAN" label when the
+// planStatusLine returns a status-line-formatted clickable "PLAN" label when the
 // session has a detected plan file. The #[range=user|plan]…#[norange] markers
-// register the region so tmux reports mouse_status_range="plan" on click.
+// register the region so the backend reports mouse_status_range="plan" on click.
 func planStatusLine(cs ClaudeState) string {
 	if cs.PlanFile != "" {
 		return "#[range=user|plan]PLAN#[norange]"

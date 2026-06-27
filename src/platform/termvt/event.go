@@ -1,4 +1,4 @@
-// Package termvt is a tmux-free terminal multiplexer primitive: it runs a
+// Package termvt is a self-contained terminal multiplexer primitive: it runs a
 // command in a pty, parses its output through a server-side VT emulator (for
 // reattach snapshots and OSC handling), and fans typed events out to any number
 // of subscribers. It is shared base infrastructure and depends on neither

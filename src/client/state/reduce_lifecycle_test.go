@@ -68,7 +68,7 @@ func TestReduceShutdownEffects(t *testing.T) {
 
 // TestReduceShutdown_emitsSandboxRelease_order verifies that
 // EffReleaseFrameSandboxes precedes EffKillSession in the effect list so
-// containers receive a clean stop signal before the tmux session is destroyed.
+// containers receive a clean stop signal before the backend session is destroyed.
 func TestReduceShutdown_emitsSandboxRelease_order(t *testing.T) {
 	s := New()
 	_, effects := reduceShutdown(s, 1, "req-1", struct{}{})
