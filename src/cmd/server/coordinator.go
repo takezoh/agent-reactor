@@ -253,9 +253,6 @@ func startSession(ctx context.Context, rt *runtime.Runtime, loginShell string, i
 func bootSession(ctx context.Context, rt *runtime.Runtime, shellDriver statedriver.ShellDriver) error {
 	slog.Info("booting session")
 	state.Register(shellDriver)
-	if err := rt.LoadSessionFrames(); err != nil {
-		slog.Warn("session-panes env load failed", "err", err)
-	}
 	if err := rt.LoadSnapshot(true); err != nil {
 		slog.Error("snapshot load failed", "err", err)
 	}
@@ -359,7 +356,7 @@ func runAndWait(ctx context.Context, cancel context.CancelFunc, rt *runtime.Runt
 	defer stopSignals()
 	runErrCh := make(chan error, 1)
 	go superviseRun(cancel, runErrCh, func() error { return rt.Run(ctx) })
-	// Cold-start path: LoadSnapshot → RecreateAll populates sessionFrames
+	// Cold-start path: LoadSnapshot → RecreateAll spawns backend sessions
 	// directly without emitting EffRegisterFrame, so root frames restored from
 	// sessions.json never reach tap_manager.start through the reducer. With
 	// Config.Tap now wired to PtyFrameTap (plan A0), reinstate the bootstrap

@@ -14,7 +14,7 @@ import (
 
 // WrappedLaunch is the resolved launch specification after the launcher
 // has applied any sandboxing. The runtime passes Command/StartDir/Env
-// directly to FrameBackend.SpawnWindow; Cleanup is called when the frame
+// directly to FrameBackend.SpawnFrame; Cleanup is called when the frame
 // is destroyed (nil is safe to ignore).
 type WrappedLaunch struct {
 	Command  string

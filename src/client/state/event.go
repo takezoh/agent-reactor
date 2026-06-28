@@ -153,15 +153,12 @@ type EvConnClosed struct {
 // === Timer / I/O feedback ===
 
 // EvTick is the periodic tick fired by runtime's ticker. Drivers run
-// their Step{DEvTick} on every tick. PaneTargets maps each FrameID
-// to its pane id (e.g. "%5"), pre-filled by the runtime so reducers
-// can forward it to drivers without touching the runtime directly.
-// N is a monotonic counter used for effect bucketing (gate expensive
-// effects to every N-th tick rather than every tick).
+// their Step{DEvTick} on every tick. N is a monotonic counter used for
+// effect bucketing (gate expensive effects to every N-th tick rather
+// than every tick).
 type EvTick struct {
-	Now         time.Time
-	PaneTargets map[FrameID]string
-	N           uint64
+	Now time.Time
+	N   uint64
 }
 
 // EvFileChanged is fired by runtime's fsnotify watcher when a
@@ -204,18 +201,17 @@ type EvFrameCommandExited struct {
 }
 
 // EvFrameSpawned is the async result of a backend new-window call
-// initiated by EffSpawnFrame. PaneTarget is the pane id the runtime
-// uses to route activate/capture effects. SubsystemID is the opaque
-// identifier the subsystem factory chose for this frame's backend; the
-// reducer writes it onto the frame for future routing. WorktreeStartDir
-// is non-empty when the subsystem created a managed worktree during
-// BindFrame; the reducer routes DEvWorktreeResolved to the frame's driver
-// so the path is persisted for cold-start reconstruction.
+// initiated by EffSpawnFrame. SubsystemID is the opaque identifier the
+// subsystem factory chose for this frame's backend; the reducer writes
+// it onto the frame for future routing. WorktreeStartDir is non-empty
+// when the subsystem created a managed worktree during BindFrame; the
+// reducer routes DEvWorktreeResolved to the frame's driver so the path
+// is persisted for cold-start reconstruction. There is no separate pane
+// id field: termvt.Manager keys sessions on string(FrameID) directly.
 type EvFrameSpawned struct {
 	SessionID        SessionID
 	FrameID          FrameID
 	SubsystemID      SubsystemID
-	PaneTarget       string
 	WorktreeStartDir string
 	WorktreeName     string
 	ReplyConn        ConnID

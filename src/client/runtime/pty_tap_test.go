@@ -66,13 +66,18 @@ func waitChannelClosed(t *testing.T, ch <-chan []byte, budget time.Duration) {
 	}
 }
 
-// spawnPane spawns a pane under backend and returns its synthetic pane id. The
+// spawnPaneSeq lets each spawnPane invocation pick a unique frame id so
+// multiple tests in the same test binary cannot collide on the Manager.
+var spawnPaneSeq int
+
+// spawnPane spawns a frame under backend and returns its pane id. The
 // caller is responsible for backend.KillFrame on cleanup.
 func spawnPane(t *testing.T, backend *PtyBackend, command string) string {
 	t.Helper()
-	_, paneID, err := backend.SpawnWindow("test", command, "", nil)
-	if err != nil {
-		t.Fatalf("SpawnWindow: %v", err)
+	spawnPaneSeq++
+	paneID := "tap-frame-" + string(rune('a'+spawnPaneSeq%26))
+	if err := backend.SpawnFrame(paneID, "test", command, "", nil); err != nil {
+		t.Fatalf("SpawnFrame: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = backend.KillFrame(paneID)
@@ -85,7 +90,7 @@ func TestPtyPaneTap_Start_UnknownPaneReturnsMissing(t *testing.T) {
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 	tap := NewPtyFrameTap(backend)
 
-	_, err := tap.Start(context.Background(), "%999")
+	_, err := tap.Start(context.Background(), "unknown-frame")
 	if err == nil {
 		t.Fatal("expected error for unknown pane")
 	}

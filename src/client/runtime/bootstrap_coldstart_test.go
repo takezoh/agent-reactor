@@ -334,7 +334,7 @@ func TestRecreateAll_ContinuesPastFailingFrame(t *testing.T) {
 	calls := backend.spawnCalls
 	backend.mu.Unlock()
 	if calls != 2 {
-		t.Errorf("SpawnWindow calls = %d, want 2 (a failed frame must not abort its siblings)", calls)
+		t.Errorf("SpawnFrame calls = %d, want 2 (a failed frame must not abort its siblings)", calls)
 	}
 	if _, ok := r.state.Sessions["s1"]; !ok {
 		t.Error("session s1 should be preserved after partial spawn failure")

@@ -49,9 +49,8 @@ func reduceFrameSpawned(s State, e EvFrameSpawned) (State, []Effect) {
 	effs := []Effect{}
 	effs = append(effs, bootstrapEffs...)
 	effs = append(effs, EffRegisterFrame{
-		FrameID:    e.FrameID,
-		PaneTarget: e.PaneTarget,
-		Tap:        frameIdx == 0 || sess.Frames[frameIdx].SubsystemID != "",
+		FrameID: e.FrameID,
+		Tap:     frameIdx == 0 || sess.Frames[frameIdx].SubsystemID != "",
 	})
 	effs = append(effs,
 		EffPersistSnapshot{},

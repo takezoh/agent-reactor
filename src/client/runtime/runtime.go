@@ -92,10 +92,8 @@ type Runtime struct {
 
 	state state.State
 
-	// sessionFrames maps each FrameID to its pane id ("%5", "%12", ...).
-	sessionFrames map[state.FrameID]string
-	eventCh       chan state.Event   // public events from any goroutine
-	internalCh    chan internalEvent // runtime-internal lifecycle (conn open/close)
+	eventCh    chan state.Event   // public events from any goroutine
+	internalCh chan internalEvent // runtime-internal lifecycle (conn open/close)
 
 	workers *worker.Pool
 
@@ -245,7 +243,6 @@ func New(cfg Config) *Runtime {
 	r := &Runtime{
 		cfg:                cfg,
 		state:              initial,
-		sessionFrames:      map[state.FrameID]string{},
 		eventCh:            make(chan state.Event, 256),
 		internalCh:         make(chan internalEvent, 64),
 		conns:              map[state.ConnID]*ipcConn{},
@@ -432,14 +429,13 @@ func (r *Runtime) SetRelay(fr *FileRelay) {
 }
 
 // StartTapsForRestoredFrames attaches a pane tap to each frame that was
-// restored from the snapshot.  Normal sessions route through
-// EvFrameSpawned → EffRegisterFrame → tapManager.start, but bootstrap
-// paths (warm restart, cold-start RecreateAll) populate sessionFrames
-// directly without emitting that effect, leaving restored frames
-// without a tap.  Call once from the coordinator (see cmd/server/coordinator.go
-// runAndWait) immediately after Run has been started, so internalCh is
-// empty and the bootstrap event cannot be silently dropped by the
-// enqueueInternal non-blocking send.
+// restored from the snapshot. Normal sessions route through EvFrameSpawned →
+// EffRegisterFrame → tapManager.start, but bootstrap paths (warm restart,
+// cold-start RecreateAll) spawn the backend session without emitting that
+// effect, leaving restored frames without a tap. Call once from the
+// coordinator (see cmd/server/coordinator.go runAndWait) immediately after
+// Run has been started, so internalCh is empty and the bootstrap event
+// cannot be silently dropped by the enqueueInternal non-blocking send.
 func (r *Runtime) StartTapsForRestoredFrames() {
 	_ = r.enqueueInternal(internalStartRestoredTaps{})
 }
@@ -500,7 +496,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 
 		case t := <-ticker.C:
 			r.tickN++
-			r.dispatch(state.EvTick{Now: t, PaneTargets: r.snapshotPaneTargets(), N: r.tickN})
+			r.dispatch(state.EvTick{Now: t, N: r.tickN})
 
 		case res := <-r.workers.Results():
 			r.dispatch(res)
@@ -615,29 +611,10 @@ func (r *Runtime) reconcilePersist(prev, next map[state.SessionID]state.Session,
 	}
 }
 
-// snapshotPaneTargets returns a copy of sessionFrames for inclusion in
-// EvTick so reducers can forward pane targets to drivers without
-// accessing the runtime directly.
-func (r *Runtime) snapshotPaneTargets() map[state.FrameID]string {
-	if len(r.state.Sessions) == 0 {
-		return nil
-	}
-	out := make(map[state.FrameID]string, len(r.sessionFrames))
-	for _, sess := range r.state.Sessions {
-		for _, frame := range sess.Frames {
-			if pane := r.subsystemPaneForFrame(frame); pane != "" {
-				out[frame.ID] = pane
-			}
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
 // sessionPaneForSession returns the pane target for the head frame of the
-// given session. Returns "" if the session has no registered pane.
+// given session. Returns "" if the session has no head frame. After the B2
+// indirection removal termvt keys sessions on string(FrameID) directly, so
+// the lookup collapses to a HeadFrameID string conversion.
 func (r *Runtime) sessionPaneForSession(sid state.SessionID) string {
 	sess, ok := r.state.Sessions[sid]
 	if !ok {
@@ -647,11 +624,7 @@ func (r *Runtime) sessionPaneForSession(sid state.SessionID) string {
 	if !ok {
 		return ""
 	}
-	return r.subsystemPaneForFrame(frame)
-}
-
-func (r *Runtime) subsystemPaneForFrame(frame state.SessionFrame) string {
-	return r.sessionFrames[frame.ID]
+	return string(frame.ID)
 }
 
 // HelperBinaryPath resolves a helper binary (e.g. "sockbridge") using the

@@ -7,19 +7,14 @@ import (
 )
 
 // resident.go holds the small grab-bag of pane helpers that survived the
-// TUI removal: pane-missing error classification, session-level env-var
-// key derivation, and the per-frame "active" / "root" frame projections used
-// by snapshot helpers.
+// TUI removal: pane-missing error classification and the per-frame "head" /
+// "root" frame projections used by snapshot helpers.
 
 func isMissingFrameErr(err error) bool {
 	if err == nil {
 		return false
 	}
 	return errors.Is(err, ErrFrameMissing)
-}
-
-func sessionFrameEnvKey(frameID state.FrameID) string {
-	return "ROOST_FRAME_" + string(frameID)
 }
 
 func sessionHeadFrame(sess state.Session) (state.SessionFrame, bool) {

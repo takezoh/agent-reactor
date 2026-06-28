@@ -39,7 +39,7 @@ type ptyTapSub struct {
 
 // NewPtyFrameTap wires a tap onto the same termvt.Manager the backend uses.
 // Sharing the Manager is what keeps the pane-id key space consistent: ids
-// minted by SpawnWindow/RespawnFrame are exactly the keys mgr.Get resolves.
+// minted by SpawnFrame/RespawnFrame are exactly the keys mgr.Get resolves.
 func NewPtyFrameTap(b *PtyBackend) *PtyFrameTap {
 	return &PtyFrameTap{mgr: b.mgr, subs: map[string]ptyTapSub{}}
 }

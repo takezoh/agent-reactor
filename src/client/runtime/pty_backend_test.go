@@ -31,19 +31,23 @@ func waitUntil(t *testing.T, pred func() bool) {
 	}
 }
 
+// spawn is a small helper around SpawnFrame: each test gets a unique
+// frameID per call site so they cannot collide in the same Manager.
+func spawn(t *testing.T, b *PtyBackend, frameID, name, command string) string {
+	t.Helper()
+	if err := b.SpawnFrame(frameID, name, command, "", nil); err != nil {
+		t.Fatalf("SpawnFrame(%q): %v", frameID, err)
+	}
+	return frameID
+}
+
 // TestPtyBackendSpawnEchoCaptureKill exercises the full data-plane flow:
 // spawn a cat pty, send a line, capture the echoed output, then kill and
 // observe the exit status.
 func TestPtyBackendSpawnEchoCaptureKill(t *testing.T) {
 	b := NewPtyBackend(0)
 
-	winIdx, paneID, err := b.SpawnWindow("w1", "cat", "", nil)
-	if err != nil {
-		t.Fatalf("SpawnWindow: %v", err)
-	}
-	if winIdx == "" || paneID == "" {
-		t.Fatalf("SpawnWindow returned empty ids: win=%q pane=%q", winIdx, paneID)
-	}
+	paneID := spawn(t, b, "frame-echo", "w1", "cat")
 
 	// ResolveID echoes the synthetic id back.
 	if got, err := b.ResolveID(paneID); err != nil || got != paneID {
@@ -78,7 +82,7 @@ func TestPtyBackendSpawnEchoCaptureKill(t *testing.T) {
 	}
 
 	// After kill the pane is gone: either reported dead with no error
-	// or forgotten from the windows-map (ErrFrameMissing).
+	// or forgotten from the manager (ErrFrameMissing).
 	waitUntil(t, func() bool {
 		dead, _, err := b.FrameExitStatus(paneID)
 		if err != nil {
@@ -92,10 +96,7 @@ func TestPtyBackendSpawnEchoCaptureKill(t *testing.T) {
 // code via FrameExitStatus.
 func TestPtyBackendExitStatus(t *testing.T) {
 	b := NewPtyBackend(0)
-	_, paneID, err := b.SpawnWindow("w", "bash -c 'exit 7'", "", nil)
-	if err != nil {
-		t.Fatalf("SpawnWindow: %v", err)
-	}
+	paneID := spawn(t, b, "frame-exit7", "w", "bash -c 'exit 7'")
 
 	var code int
 	waitUntil(t, func() bool {
@@ -142,10 +143,7 @@ func TestPtyBackendEnvStore(t *testing.T) {
 // writes it to the pane then drops the buffer.
 func TestPtyBackendBufferRoundTrip(t *testing.T) {
 	b := NewPtyBackend(0)
-	_, paneID, err := b.SpawnWindow("w", "cat", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	paneID := spawn(t, b, "frame-buf", "w", "cat")
 	defer func() { _ = b.KillFrame(paneID) }()
 
 	if err := b.LoadBuffer("buf1", "pasted-text-abc\n"); err != nil {
@@ -168,10 +166,7 @@ func TestPtyBackendBufferRoundTrip(t *testing.T) {
 // FrameSize reflects the new dimensions.
 func TestPtyBackendResize(t *testing.T) {
 	b := NewPtyBackend(0)
-	_, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	paneID := spawn(t, b, "frame-resize", "w", "sleep 5")
 	defer func() { _ = b.KillFrame(paneID) }()
 
 	if err := b.ResizeWindow(paneID, 120, 40); err != nil {
@@ -186,25 +181,20 @@ func TestPtyBackendResize(t *testing.T) {
 	}
 }
 
-// TestPtyBackendSpawnSyntheticIDs verifies synthetic id allocation increments.
-func TestPtyBackendSpawnSyntheticIDs(t *testing.T) {
+// TestPtyBackendSpawnFrameIDIsTermVTKey verifies the frame id passed to
+// SpawnFrame becomes the termvt.Manager session key — addressing the
+// freshly spawned session by that id resolves through ResolveID.
+func TestPtyBackendSpawnFrameIDIsTermVTKey(t *testing.T) {
 	b := NewPtyBackend(0)
-	win1, pane1, err := b.SpawnWindow("a", "sleep 5", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = b.KillFrame(pane1) }()
-	win2, pane2, err := b.SpawnWindow("b", "sleep 5", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = b.KillFrame(pane2) }()
+	id1 := spawn(t, b, "frame-a", "a", "sleep 5")
+	defer func() { _ = b.KillFrame(id1) }()
+	id2 := spawn(t, b, "frame-b", "b", "sleep 5")
+	defer func() { _ = b.KillFrame(id2) }()
 
-	if pane1 != "%1" || pane2 != "%2" {
-		t.Fatalf("pane ids = %q,%q; want %%1,%%2", pane1, pane2)
-	}
-	if win1 != "1" || win2 != "2" {
-		t.Fatalf("window indexes = %q,%q; want 1,2", win1, win2)
+	for _, id := range []string{id1, id2} {
+		if got, err := b.ResolveID(id); err != nil || got != id {
+			t.Errorf("ResolveID(%q) = (%q, %v), want (%q, nil)", id, got, err, id)
+		}
 	}
 }
 
@@ -245,10 +235,7 @@ func TestKeyBytes(t *testing.T) {
 // keystroke through cat and observing it in the captured output.
 func TestPtyBackendSendKey(t *testing.T) {
 	b := NewPtyBackend(0)
-	_, paneID, err := b.SpawnWindow("w", "cat", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	paneID := spawn(t, b, "frame-sendkey", "w", "cat")
 	defer func() { _ = b.KillFrame(paneID) }()
 
 	// Send a recognisable text marker via SendKeys, then a Space via SendKey;
@@ -265,14 +252,15 @@ func TestPtyBackendSendKey(t *testing.T) {
 	})
 }
 
-// TestPtyBackendUnknownPaneErrors pins the unknown-target contract: every
+// TestPtyBackendUnknownFrameErrors pins the unknown-target contract: every
 // inspect/IO/lifecycle op that addresses a pane returns a non-nil error for an
-// unspawned target. The errors that flow out of the runtime-internal "unknown
-// pane" path must wrap ErrFrameMissing so callers like resident.isMissingFrameErr
-// can distinguish vanished panes from transient failures.
-func TestPtyBackendUnknownPaneErrors(t *testing.T) {
+// unspawned target. The errors that flow out of the runtime-internal
+// "unknown frame" path must wrap ErrFrameMissing so callers like
+// resident.isMissingFrameErr can distinguish vanished frames from transient
+// failures.
+func TestPtyBackendUnknownFrameErrors(t *testing.T) {
 	b := NewPtyBackend(0)
-	const unknown = "%999"
+	const unknown = "unknown-frame"
 
 	wantSentinel := func(name string, err error) {
 		t.Helper()
@@ -322,86 +310,19 @@ func TestPtyBackendUnknownPaneErrors(t *testing.T) {
 	}
 }
 
-// TestPtyBackendResizeByWindowIndex verifies ResizeWindow can be addressed by
-// the windowIndex form SpawnWindow returns (e.g. "1") — interpret_spawn calls
-// it that way (via the sessionName:windowIndex form, see other test) for the
-// post-spawn fit-to-main resize.
-func TestPtyBackendResizeByWindowIndex(t *testing.T) {
+// TestPtyBackendKillFrameWrapsSentinel verifies that KillFrame's
+// "frame not found" error path is recognised by isMissingFrameErr: the
+// second kill on the same target must wrap ErrFrameMissing so
+// reconcileWindows can evict the vanished frame instead of treating
+// the error as transient.
+func TestPtyBackendKillFrameWrapsSentinel(t *testing.T) {
 	b := NewPtyBackend(0)
-	winIdx, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = b.KillFrame(paneID) }()
-
-	if err := b.ResizeWindow(winIdx, 100, 30); err != nil {
-		t.Fatalf("ResizeWindow(%q) = %v, want nil", winIdx, err)
-	}
-	w, h, err := b.FrameSize(paneID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w != 100 || h != 30 {
-		t.Fatalf("FrameSize = %dx%d, want 100x30", w, h)
-	}
-}
-
-// TestPtyBackendResizeBySessionScopedTarget verifies that the sessionName-
-// scoped form interpret_spawn emits (e.g. "arc:1") is normalised — the prefix
-// is stripped and the windowIndex path runs.
-func TestPtyBackendResizeBySessionScopedTarget(t *testing.T) {
-	b := NewPtyBackend(0)
-	winIdx, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = b.KillFrame(paneID) }()
-
-	target := "arc:" + winIdx
-	if err := b.ResizeWindow(target, 90, 25); err != nil {
-		t.Fatalf("ResizeWindow(%q) = %v, want nil", target, err)
-	}
-	w, h, err := b.FrameSize(paneID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w != 90 || h != 25 {
-		t.Fatalf("FrameSize = %dx%d, want 90x25", w, h)
-	}
-}
-
-// TestPtyBackendKillForgetsWindowIndex verifies the windowIndex→paneID entry is
-// dropped after KillFrame so a stale windowIndex no longer routes anywhere.
-func TestPtyBackendKillForgetsWindowIndex(t *testing.T) {
-	b := NewPtyBackend(0)
-	winIdx, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.KillFrame(paneID); err != nil {
-		t.Fatal(err)
-	}
-	// After kill the windowIndex must not resolve to a live pane id.
-	if err := b.ResizeWindow(winIdx, 80, 24); err == nil {
-		t.Error("ResizeWindow(stale winIdx) = nil, want non-nil after KillFrame")
-	}
-}
-
-// TestPtyBackendKillPaneWindowWrapsSentinel verifies that KillFrame's
-// "pane not found" error path is recognised by isMissingFrameErr: the second
-// kill on the same target must wrap ErrFrameMissing so reconcileWindows can
-// evict the vanished frame instead of treating the error as transient.
-func TestPtyBackendKillPaneWindowWrapsSentinel(t *testing.T) {
-	b := NewPtyBackend(0)
-	_, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	paneID := spawn(t, b, "frame-kill-sentinel", "w", "sleep 5")
 	if err := b.KillFrame(paneID); err != nil {
 		t.Fatal(err)
 	}
 	// Second kill: pane already gone. Error must wrap ErrFrameMissing.
-	err = b.KillFrame(paneID)
+	err := b.KillFrame(paneID)
 	if err == nil {
 		t.Fatal("second KillFrame(pane) = nil, want non-nil")
 	}
@@ -414,78 +335,13 @@ func TestPtyBackendKillPaneWindowWrapsSentinel(t *testing.T) {
 	}
 }
 
-// TestIsPaneIDForm pins the "%<digits>" recogniser: plain "%", "%abc", and the
-// empty string are not pane-id shaped, while every id newPaneID can produce
-// is.
-func TestIsPaneIDForm(t *testing.T) {
-	cases := []struct {
-		in   string
-		want bool
-	}{
-		{"%1", true},
-		{"%99", true},
-		{"%", false},
-		{"%a", false},
-		{"%1a", false},
-		{"", false},
-		{"1", false},
-		{"arc:1", false},
-	}
-	for _, c := range cases {
-		if got := isPaneIDForm(c.in); got != c.want {
-			t.Errorf("isPaneIDForm(%q) = %v, want %v", c.in, got, c.want)
-		}
-	}
-}
-
-// TestPtyBackendResolveTargetWithBogusPanePrefix verifies a target shaped like
-// "%abc" (which only superficially resembles a pane id) is NOT short-circuited
-// as a pane id; the windows-map lookup runs and returns the original target
-// when nothing matches, so the caller's mgr.Get reports ErrFrameMissing.
-func TestPtyBackendResolveTargetWithBogusPanePrefix(t *testing.T) {
-	b := NewPtyBackend(0)
-	// "%abc" is not "%<digits>"; resolvePaneTarget falls through to the
-	// windows-map lookup, which has no entry → returned as-is → mgr.Get
-	// reports missing.
-	if got := b.resolvePaneTarget("%abc"); got != "%abc" {
-		t.Fatalf("resolvePaneTarget(%q) = %q, want %q", "%abc", got, "%abc")
-	}
-}
-
-// TestPtyBackendKillPaneWindowPreservesCallerTarget verifies the error message
-// quotes the ORIGINAL caller-supplied target, not the resolved paneID, so
-// log lines stay readable in the runtime's session-prefixed shape.
-func TestPtyBackendKillPaneWindowPreservesCallerTarget(t *testing.T) {
-	b := NewPtyBackend(0)
-	_, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.KillFrame(paneID); err != nil {
-		t.Fatal(err)
-	}
-	// Second kill via the session-prefixed form. The pane is gone; the error
-	// message must quote the original "arc:<paneID>" target, not just paneID.
-	target := "arc:" + paneID
-	err = b.KillFrame(target)
-	if err == nil {
-		t.Fatal("second KillFrame = nil, want non-nil")
-	}
-	if !strings.Contains(err.Error(), target) {
-		t.Fatalf("error %q does not quote caller target %q", err.Error(), target)
-	}
-}
-
 // TestPtyBackendSpawnRunsShellStrings verifies the runtime's shell-string spawn
 // inputs (with the "exec " prefix and embedded quoting) survive PtyBackend's
 // sh -c wrapping. interpret_spawn.buildSpawnCommand emits "exec <cmd>"; the
 // shell must honour exec semantics so the user's process replaces sh.
 func TestPtyBackendSpawnRunsShellStrings(t *testing.T) {
 	b := NewPtyBackend(0)
-	_, paneID, err := b.SpawnWindow("w", "exec bash -c 'exit 9'", "", nil)
-	if err != nil {
-		t.Fatalf("SpawnWindow: %v", err)
-	}
+	paneID := spawn(t, b, "frame-exec", "w", "exec bash -c 'exit 9'")
 
 	var code int
 	waitUntil(t, func() bool {
@@ -506,10 +362,7 @@ func TestPtyBackendSpawnRunsShellStrings(t *testing.T) {
 // reaped.
 func TestPtyBackendExitStatusLive(t *testing.T) {
 	b := NewPtyBackend(0)
-	_, paneID, err := b.SpawnWindow("w", "sleep 5", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	paneID := spawn(t, b, "frame-live", "w", "sleep 5")
 	defer func() { _ = b.KillFrame(paneID) }()
 
 	dead, code, err := b.FrameExitStatus(paneID)
@@ -521,10 +374,7 @@ func TestPtyBackendExitStatusLive(t *testing.T) {
 	}
 
 	// A separate pane that exits 0: FrameExitStatus must flip to dead.
-	_, exitPane, err := b.SpawnWindow("w2", "bash -c 'exit 0'", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	exitPane := spawn(t, b, "frame-exit0", "w2", "bash -c 'exit 0'")
 	defer func() { _ = b.KillFrame(exitPane) }()
 	waitUntil(t, func() bool {
 		dead, _, err := b.FrameExitStatus(exitPane)
@@ -536,10 +386,7 @@ func TestPtyBackendExitStatusLive(t *testing.T) {
 // empty respawn command is rejected.
 func TestPtyBackendRespawn(t *testing.T) {
 	b := NewPtyBackend(0)
-	_, paneID, err := b.SpawnWindow("w", "bash -c 'exit 0'", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	paneID := spawn(t, b, "frame-respawn", "w", "bash -c 'exit 0'")
 	defer func() { _ = b.KillFrame(paneID) }()
 
 	// Wait for the original to die so we respawn over a reaped pane.
@@ -576,10 +423,7 @@ func TestPtyBackendRespawn(t *testing.T) {
 func TestPtyBackendSubscribeSurface_SnapshotFirst(t *testing.T) {
 	b := NewPtyBackend(0)
 	// cat keeps the session alive so the subscriber channel stays open.
-	_, paneID, err := b.SpawnWindow("t", "cat", "", nil)
-	if err != nil {
-		t.Fatalf("SpawnWindow: %v", err)
-	}
+	paneID := spawn(t, b, "frame-snapshot", "t", "cat")
 	defer func() { _ = b.KillFrame(paneID) }()
 
 	// Send a marker so the VT emulator has rendered content before we subscribe.
@@ -616,10 +460,7 @@ func TestPtyBackendSubscribeSurface_SnapshotFirst(t *testing.T) {
 // the pty: cat echoes them back and they appear in the captured output.
 func TestPtyBackendWriteSurface(t *testing.T) {
 	b := NewPtyBackend(0)
-	_, paneID, err := b.SpawnWindow("t", "cat", "", nil)
-	if err != nil {
-		t.Fatalf("SpawnWindow: %v", err)
-	}
+	paneID := spawn(t, b, "frame-write", "t", "cat")
 	defer func() { _ = b.KillFrame(paneID) }()
 
 	subID, ch, err := b.SubscribeSurface(paneID)
@@ -665,10 +506,7 @@ func TestPtyBackendWriteSurface(t *testing.T) {
 // winsize and the VT emulator grid so FrameSize reports the new dimensions.
 func TestPtyBackendResizeSurface(t *testing.T) {
 	b := NewPtyBackend(0)
-	_, paneID, err := b.SpawnWindow("t", "sleep 5", "", nil)
-	if err != nil {
-		t.Fatalf("SpawnWindow: %v", err)
-	}
+	paneID := spawn(t, b, "frame-resize-surface", "t", "sleep 5")
 	defer func() { _ = b.KillFrame(paneID) }()
 
 	if err := b.ResizeSurface(paneID, 120, 40); err != nil {
@@ -684,11 +522,11 @@ func TestPtyBackendResizeSurface(t *testing.T) {
 	}
 }
 
-// TestPtyBackendSurface_MissingPaneTarget verifies that all surface accessors
+// TestPtyBackendSurface_MissingFrame verifies that all surface accessors
 // wrap ErrFrameMissing when the target pane does not exist.
-func TestPtyBackendSurface_MissingPaneTarget(t *testing.T) {
+func TestPtyBackendSurface_MissingFrame(t *testing.T) {
 	b := NewPtyBackend(0)
-	const unknown = "%999"
+	const unknown = "unknown-frame"
 
 	_, _, err := b.SubscribeSurface(unknown)
 	if err == nil || !errors.Is(err, ErrFrameMissing) {
@@ -718,11 +556,12 @@ func TestPtyBackendConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for i := 0; i < workers; i++ {
+		i := i
 		go func() {
 			defer wg.Done()
-			_, paneID, err := b.SpawnWindow("w", "cat", "", nil)
-			if err != nil {
-				t.Errorf("SpawnWindow: %v", err)
+			paneID := "concurrent-frame-" + strings.Repeat("a", i+1)
+			if err := b.SpawnFrame(paneID, "w", "cat", "", nil); err != nil {
+				t.Errorf("SpawnFrame: %v", err)
 				return
 			}
 			_ = b.SendKeys(paneID, "hello")

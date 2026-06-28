@@ -112,7 +112,7 @@ func (r *Runtime) executeSendPaneKeys(e state.EffSendFrameKeys) {
 			ConnID:  e.ConnID,
 			ReqID:   e.ReqID,
 			Code:    "not_found",
-			Message: "no pane registered for session: " + string(e.SessionID),
+			Message: "no frame registered for session: " + string(e.SessionID),
 		})
 		return
 	}
@@ -214,14 +214,18 @@ func (r *Runtime) executePaneEffect(eff state.Effect) {
 }
 
 func (r *Runtime) executeKillSessionWindow(e state.EffKillFrame) {
-	if target := r.sessionFrames[e.FrameID]; target != "" {
-		if tail, err := r.cfg.Backend.CaptureFrame(target, 20); err == nil && tail != "" {
-			slog.Info("runtime: pane tail on kill", "frame", e.FrameID, "target", target, "tail", tail)
-		}
-		if err := r.cfg.Backend.KillFrame(target); err != nil {
+	target := string(e.FrameID)
+	if tail, err := r.cfg.Backend.CaptureFrame(target, 20); err == nil && tail != "" {
+		slog.Info("runtime: pane tail on kill", "frame", e.FrameID, "target", target, "tail", tail)
+	}
+	if err := r.cfg.Backend.KillFrame(target); err != nil {
+		// Missing-frame errors are expected when the frame's pane vanished
+		// independently; log other failures at Error so they stay visible.
+		if isMissingFrameErr(err) {
+			slog.Debug("runtime: kill window already gone", "target", target, "err", err)
+		} else {
 			slog.Error("runtime: kill window failed", "target", target, "err", err)
 		}
-		delete(r.sessionFrames, e.FrameID)
 	}
 	if r.warmFrames != nil {
 		if err := r.warmFrames.Delete(e.FrameID); err != nil {
@@ -241,26 +245,18 @@ func (r *Runtime) executeKillSessionWindow(e state.EffKillFrame) {
 }
 
 func (r *Runtime) executeRegisterPane(e state.EffRegisterFrame) {
-	r.sessionFrames[e.FrameID] = e.PaneTarget
-	_ = r.cfg.Backend.SetEnv(sessionFrameEnvKey(e.FrameID), e.PaneTarget)
 	if e.Tap && r.taps != nil {
-		r.taps.start(e.FrameID, e.PaneTarget, r.Enqueue)
+		r.taps.start(e.FrameID, string(e.FrameID), r.Enqueue)
 	}
 }
 
 func (r *Runtime) executeUnregisterPane(e state.EffUnregisterFrame) {
-	target, ok := r.sessionFrames[e.FrameID]
-	if !ok {
-		return
-	}
 	if r.taps != nil {
 		r.taps.stop(e.FrameID)
 	}
-	delete(r.sessionFrames, e.FrameID)
-	_ = r.cfg.Backend.UnsetEnv(sessionFrameEnvKey(e.FrameID))
 	r.cfg.EventLog.Close(e.FrameID)
 	if r.cfg.TerminalEvict != nil {
-		r.cfg.TerminalEvict(target)
+		r.cfg.TerminalEvict(string(e.FrameID))
 	}
 }
 
@@ -364,40 +360,47 @@ func (r *Runtime) snapshotSessions() []SessionSnapshot {
 	return out
 }
 
-// reconcileWindows checks whether each tracked session pane still
+// reconcileWindows checks whether each live frame's backend session still
 // exists. Two distinct conditions are surfaced:
 //
-//   - The pane is dead but still around (remain-on-exit=on holds it):
+//   - The session is dead but still around (remain-on-exit=on holds it):
 //     the command process exited. Read #{pane_dead_status} and emit
 //     EvFrameCommandExited so the reducer can decide between
 //     eviction (exit 0) and keeping the frame as stopped (exit != 0).
 //
-//   - The query for the pane itself failed with a missing-pane style
+//   - The query for the session itself failed with a missing-frame style
 //     error: the pane window was destroyed externally (user kill-window).
 //     Emit EvFrameVanished to evict unconditionally — there is
 //     nothing left to inspect.
+//
+// Iterates state.Sessions directly: each frame's backend session key is
+// string(FrameID), so no auxiliary frame→pane map is needed.
 func (r *Runtime) reconcileWindows() {
-	for frameID, target := range r.sessionFrames {
-		dead, code, err := r.cfg.Backend.FrameExitStatus(target)
-		if err != nil {
-			if isMissingFrameErr(err) {
-				slog.Debug("runtime: reconcile pane vanished", "frame", frameID, "pane", target, "err", err)
-				r.Enqueue(state.EvFrameVanished{FrameID: frameID})
-			} else {
-				// Transient query failure (timeout/busy): keep the frame and
-				// re-probe next reconcile rather than treating it as vanished.
-				slog.Warn("runtime: reconcile pane transient error (ignored)", "frame", frameID, "pane", target, "err", err)
+	for _, sess := range r.state.Sessions {
+		for _, frame := range sess.Frames {
+			frameID := frame.ID
+			target := string(frameID)
+			dead, code, err := r.cfg.Backend.FrameExitStatus(target)
+			if err != nil {
+				if isMissingFrameErr(err) {
+					slog.Debug("runtime: reconcile pane vanished", "frame", frameID, "pane", target, "err", err)
+					r.Enqueue(state.EvFrameVanished{FrameID: frameID})
+				} else {
+					// Transient query failure (timeout/busy): keep the frame and
+					// re-probe next reconcile rather than treating it as vanished.
+					slog.Warn("runtime: reconcile pane transient error (ignored)", "frame", frameID, "pane", target, "err", err)
+				}
+				continue
 			}
-			continue
+			if !dead {
+				continue
+			}
+			if tail, terr := r.cfg.Backend.CaptureFrame(target, 20); terr == nil && tail != "" {
+				slog.Info("runtime: pane tail on exit", "frame", frameID, "target", target, "exit_code", code, "tail", tail)
+			} else {
+				slog.Info("runtime: pane exited", "frame", frameID, "target", target, "exit_code", code)
+			}
+			r.Enqueue(state.EvFrameCommandExited{FrameID: frameID, ExitCode: code})
 		}
-		if !dead {
-			continue
-		}
-		if tail, terr := r.cfg.Backend.CaptureFrame(target, 20); terr == nil && tail != "" {
-			slog.Info("runtime: pane tail on exit", "frame", frameID, "target", target, "exit_code", code, "tail", tail)
-		} else {
-			slog.Info("runtime: pane exited", "frame", frameID, "target", target, "exit_code", code)
-		}
-		r.Enqueue(state.EvFrameCommandExited{FrameID: frameID, ExitCode: code})
 	}
 }

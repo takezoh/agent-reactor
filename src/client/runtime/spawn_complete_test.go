@@ -29,7 +29,6 @@ func TestHandleSpawnComplete_storesHandlesNonContainer(t *testing.T) {
 		effect:      state.EffSpawnFrame{SessionID: "s1", FrameID: "f1", Project: "/p"},
 		subsystemID: "sub-1",
 		sub:         sub,
-		paneID:      "%1",
 	})
 
 	if r.subsystems["sub-1"] != sub {
@@ -68,7 +67,6 @@ func TestHandleSpawnComplete_registersContainerFrame(t *testing.T) {
 		token:            "tok-1",
 		mounts:           ms,
 		containerSockDir: dir,
-		paneID:           "%1",
 	})
 
 	id, ok := r.frameReg.Lookup("tok-1")
@@ -120,8 +118,13 @@ func TestSpawnPaneWindow_emitsInternalSpawnComplete(t *testing.T) {
 		if sc.token != "" {
 			t.Errorf("non-container spawn must carry empty token, got %q", sc.token)
 		}
-		if sc.paneID != "%1" {
-			t.Errorf("paneID = %q, want %%1", sc.paneID)
+		// Verify SpawnFrame was called with the frame id directly.
+		backend := deps.backend.(*fakeBackend)
+		backend.mu.Lock()
+		ids := append([]string(nil), backend.spawnFrameIDs...)
+		backend.mu.Unlock()
+		if len(ids) != 1 || ids[0] != "f1" {
+			t.Errorf("SpawnFrame called with frameIDs = %v, want [\"f1\"]", ids)
 		}
 	default:
 		t.Fatal("no internalSpawnComplete emitted")
@@ -134,7 +137,7 @@ func TestSpawnPaneWindow_emitsInternalSpawnComplete(t *testing.T) {
 	}
 }
 
-// TestSpawnPaneWindow_emitsSpawnFailedOnError verifies a backend SpawnWindow
+// TestSpawnPaneWindow_emitsSpawnFailedOnError verifies a backend SpawnFrame
 // failure is reported via EvSpawnFailed and no internalSpawnComplete.
 func TestSpawnPaneWindow_emitsSpawnFailedOnError(t *testing.T) {
 	sub := &fakeSubsystem{id: "sub-x", kind: state.LaunchSubsystemCLI}
@@ -175,7 +178,7 @@ func TestSpawnPaneWindow_emitsSpawnFailedOnError(t *testing.T) {
 }
 
 // TestSpawnPaneWindow_cleanupOnSpawnError verifies that when the sandbox was
-// acquired (WrapLaunch returned a Cleanup) but backend SpawnWindow then fails, the
+// acquired (WrapLaunch returned a Cleanup) but backend SpawnFrame then fails, the
 // spawn goroutine releases the sandbox — otherwise the container ref leaks
 // because no EvFrameSpawned / kill path ever reaches this frame.
 func TestSpawnPaneWindow_cleanupOnSpawnError(t *testing.T) {
@@ -198,7 +201,7 @@ func TestSpawnPaneWindow_cleanupOnSpawnError(t *testing.T) {
 	})
 
 	if !cleaned.Load() {
-		t.Error("wrapped.Cleanup was not invoked after SpawnWindow failure (sandbox leak)")
+		t.Error("wrapped.Cleanup was not invoked after SpawnFrame failure (sandbox leak)")
 	}
 }
 
@@ -220,7 +223,6 @@ func TestHandleSpawnComplete_discardsWhenFrameKilledMidSpawn(t *testing.T) {
 		subsystemID: "sub-1",
 		sub:         sub,
 		cleanup:     func() error { cleaned.Store(true); return nil },
-		paneID:      "%1",
 	})
 
 	// Loop-owned maps must remain untouched.
@@ -239,8 +241,8 @@ func TestHandleSpawnComplete_discardsWhenFrameKilledMidSpawn(t *testing.T) {
 	killCalls := backend.killCalls
 	killedPanes := append([]string(nil), backend.killedPanes...)
 	backend.mu.Unlock()
-	if killCalls != 1 || len(killedPanes) != 1 || killedPanes[0] != "%1" {
-		t.Errorf("expected one KillFrame(%%1), got killCalls=%d killedPanes=%v", killCalls, killedPanes)
+	if killCalls != 1 || len(killedPanes) != 1 || killedPanes[0] != "f1" {
+		t.Errorf("expected one KillFrame(\"f1\"), got killCalls=%d killedPanes=%v", killCalls, killedPanes)
 	}
 
 	// Cleanup + ReleaseFrame run off-loop. Wait briefly for the goroutine.
@@ -281,7 +283,6 @@ func TestHandleSpawnComplete_discardsContainerFrame(t *testing.T) {
 		token:            "tok-1",
 		mounts:           ms,
 		containerSockDir: dir,
-		paneID:           "%1",
 	})
 
 	if _, ok := r.frameReg.Lookup("tok-1"); ok {
@@ -299,8 +300,8 @@ func TestHandleSpawnComplete_discardsContainerFrame(t *testing.T) {
 	killCalls := backend.killCalls
 	killedPanes := append([]string(nil), backend.killedPanes...)
 	backend.mu.Unlock()
-	if killCalls != 1 || len(killedPanes) != 1 || killedPanes[0] != "%1" {
-		t.Errorf("expected one KillFrame(%%1), got killCalls=%d killedPanes=%v", killCalls, killedPanes)
+	if killCalls != 1 || len(killedPanes) != 1 || killedPanes[0] != "ghost" {
+		t.Errorf("expected one KillFrame(\"ghost\"), got killCalls=%d killedPanes=%v", killCalls, killedPanes)
 	}
 
 	// Cleanup + ReleaseFrame run off-loop. The container-frame discard path is
@@ -352,7 +353,6 @@ func TestHandleSpawnComplete_discardRepliesToOriginalCaller(t *testing.T) {
 		},
 		subsystemID: "sub-1",
 		sub:         sub,
-		paneID:      "%1",
 	})
 
 	select {

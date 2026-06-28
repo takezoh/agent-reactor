@@ -100,7 +100,7 @@ func TestShellStepNonRootSkipsTick(t *testing.T) {
 	d, s, now := newShellState(t, 5*time.Second)
 	s.Status = state.StatusRunning
 	next, effs, _ := d.Step(s, state.FrameContext{IsRoot: false}, state.DEvTick{
-		Now: now.Add(time.Second), Watched: true, Project: "/repo", PaneTarget: "%5",
+		Now: now.Add(time.Second), Watched: true, Project: "/repo",
 	})
 	if len(effs) != 0 {
 		t.Errorf("non-root DEvTick effects = %d, want 0", len(effs))

@@ -206,7 +206,7 @@ func TestEffReleaseFrameSandboxes_drainsCleanups(t *testing.T) {
 }
 
 // TestSpawnFrameWindow_cleanupCalledOnSpawnError verifies that when WrapLaunch
-// returns a Cleanup callback but SpawnWindow subsequently fails, the Cleanup is
+// returns a Cleanup callback but SpawnFrame subsequently fails, the Cleanup is
 // still invoked — preventing sandbox resource leaks (ref-count, containers).
 func TestSpawnFrameWindow_cleanupCalledOnSpawnError(t *testing.T) {
 	saved := state.GetRegistry()
@@ -244,7 +244,7 @@ func TestSpawnFrameWindow_cleanupCalledOnSpawnError(t *testing.T) {
 		t.Fatal("expected error from spawnFrameWindow, got nil")
 	}
 	if !cleanupCalled.Load() {
-		t.Error("Cleanup was not called after SpawnWindow failure")
+		t.Error("Cleanup was not called after SpawnFrame failure")
 	}
 }
 
@@ -277,7 +277,6 @@ func TestEffKillSessionWindow_doesNotInvokeCleanup(t *testing.T) {
 	r := New(Config{Backend: backend})
 
 	frameID := state.FrameID("f-kill")
-	r.sessionFrames[frameID] = "%42"
 	r.storeFrameCleanup(frameID, func() error {
 		called.Store(true)
 		return nil

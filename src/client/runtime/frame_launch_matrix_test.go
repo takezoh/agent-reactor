@@ -34,7 +34,7 @@ import (
 //     (projectPath hash vs SharedContainerKey hash).
 //   - the command-execution ORDER is subsystem.Ensure → subsystem.BindFrame →
 //     mgr.EnsureInstance → mgr.AcquireFrame → mgr.BuildLaunchCommand →
-//     backend.SpawnWindow.
+//     backend.SpawnFrame.
 //
 // The subsystem backends are faked (recSubsysFactory) so no real codex
 // app-server starts here; the codex command/socket rewrite is covered at the
@@ -180,16 +180,16 @@ func (f *recSubsysFactory) Ensure(_ context.Context, sid state.SessionID, _ stri
 	return &recSubsystem{id: id, kind: f.kind, rec: f.rec}, id, nil
 }
 
-// recordingBackend wraps fakeBackend, appending "backend.SpawnWindow" to the
+// recordingBackend wraps fakeBackend, appending "backend.SpawnFrame" to the
 // shared order trace before delegating. All other methods are promoted.
 type recordingBackend struct {
 	*fakeBackend
 	rec *orderRecorder
 }
 
-func (t *recordingBackend) SpawnWindow(name, command, startDir string, env map[string]string) (string, string, error) {
-	t.rec.add("backend.SpawnWindow")
-	return t.fakeBackend.SpawnWindow(name, command, startDir, env)
+func (t *recordingBackend) SpawnFrame(frameID, name, command, startDir string, env map[string]string) error {
+	t.rec.add("backend.SpawnFrame")
+	return t.fakeBackend.SpawnFrame(frameID, name, command, startDir, env)
 }
 
 // launchHarness wires a Runtime through the real launcher stack for one env.
@@ -265,7 +265,7 @@ func (h *launchHarness) spawnEnv(t *testing.T) map[string]string {
 	h.backend.mu.Lock()
 	defer h.backend.mu.Unlock()
 	if len(h.backend.spawnEnvs) != 1 {
-		t.Fatalf("SpawnWindow env captures = %d, want 1", len(h.backend.spawnEnvs))
+		t.Fatalf("SpawnFrame env captures = %d, want 1", len(h.backend.spawnEnvs))
 	}
 	return h.backend.spawnEnvs[0]
 }
@@ -395,14 +395,19 @@ func TestFrameLaunch_ColdStart_RecoverableCodexSpawnsResume(t *testing.T) {
 
 	h.backend.mu.Lock()
 	calls := h.backend.spawnCalls
+	spawnedIDs := append([]string(nil), h.backend.spawnFrameIDs...)
 	h.backend.mu.Unlock()
 	if calls != 1 {
-		t.Fatalf("SpawnWindow calls = %d, want 1 (codex resumed, stopped generic skipped)", calls)
+		t.Fatalf("SpawnFrame calls = %d, want 1 (codex resumed, stopped generic skipped)", calls)
 	}
-	if _, ok := h.r.sessionFrames["f-codex"]; !ok {
+	spawnedSet := make(map[string]struct{}, len(spawnedIDs))
+	for _, id := range spawnedIDs {
+		spawnedSet[id] = struct{}{}
+	}
+	if _, ok := spawnedSet["f-codex"]; !ok {
 		t.Error("recoverable stopped codex frame must be relaunched on cold start")
 	}
-	if _, ok := h.r.sessionFrames["f-gen"]; ok {
+	if _, ok := spawnedSet["f-gen"]; ok {
 		t.Error("stopped generic frame must be skipped on cold start")
 	}
 	if h.kinds.count(state.LaunchSubsystemStream) != 1 {
@@ -426,7 +431,7 @@ func TestFrameLaunch_ColdStart_CommandOrder(t *testing.T) {
 		"mgr.EnsureInstance",
 		"mgr.AcquireFrame",
 		"mgr.BuildLaunchCommand",
-		"backend.SpawnWindow",
+		"backend.SpawnFrame",
 	}
 	got := h.rec.snapshot()
 	if len(got) != len(want) {
@@ -549,7 +554,6 @@ func TestFrameLaunch_WarmStart_Host(t *testing.T) {
 		ID: "s1", Project: "/proj/host",
 		Frames: []state.SessionFrame{matrixFrame("/proj/host")},
 	}
-	h.r.sessionFrames["f1"] = "%1"
 
 	h.r.RecoverSandboxFrames(context.Background())
 
@@ -582,7 +586,6 @@ func TestFrameLaunch_WarmStart_PerProject(t *testing.T) {
 		ID: "s1", Project: project,
 		Frames: []state.SessionFrame{matrixFrame(project)},
 	}
-	h.r.sessionFrames["f1"] = "%1"
 
 	h.r.RecoverSandboxFrames(context.Background())
 

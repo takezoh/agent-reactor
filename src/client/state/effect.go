@@ -31,24 +31,23 @@ type EffSpawnFrame struct {
 	ReplyReqID string
 }
 
-// EffKillFrame destroys the pane window containing the given session pane.
-// The runtime looks up the pane target from its sessionFrames map.
+// EffKillFrame destroys the pane window for the given frame. The pane
+// backend is keyed directly on string(FrameID), so the runtime hands the
+// frame id straight to FrameBackend.KillFrame without an intermediate lookup.
 type EffKillFrame struct {
 	FrameID FrameID
 }
 
-// EffRegisterFrame records the pane target for a session in the runtime
-// and saves it as a session-level env var. Tap controls whether a
-// byte tap (FrameTap) is started for this pane — only root frames need
-// taps since driver state for non-root frames is not displayed in the UI.
+// EffRegisterFrame fires post-spawn registration for a frame. Tap controls
+// whether a byte tap (FrameTap) is started — only root frames need taps since
+// driver state for non-root frames is not displayed in the UI.
 type EffRegisterFrame struct {
-	FrameID    FrameID
-	PaneTarget string
-	Tap        bool
+	FrameID FrameID
+	Tap     bool
 }
 
-// EffUnregisterFrame removes a session from the runtime's pane map and
-// deletes the corresponding session-level env var.
+// EffUnregisterFrame fires per-frame teardown after a frame is evicted: stops
+// the tap, closes the event log, and evicts the VT emulator.
 type EffUnregisterFrame struct {
 	FrameID FrameID
 }
@@ -281,8 +280,8 @@ type EffSurfaceSubscribeStop struct {
 func (EffSurfaceSubscribeStop) isEffect() {}
 
 // EffSurfaceResize forwards a logical resize request to the pty backend
-// behind SessionID. The runtime resolves the backend from its internal
-// sessionFrames map.
+// behind SessionID. The runtime resolves the pane id by reading the session's
+// head frame and using string(HeadFrameID) directly.
 type EffSurfaceResize struct {
 	SessionID SessionID
 	Cols      uint16

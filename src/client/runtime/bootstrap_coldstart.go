@@ -50,7 +50,8 @@ func (r *Runtime) PrewarmContainers(ctx context.Context) {
 
 // RecreateAll spawns fresh pane windows for every session in r.state.
 // Used during cold-start (the pane backend session was just created and
-// contains no client windows yet). Populates r.sessionFrames.
+// contains no client windows yet). termvt keys sessions on string(FrameID)
+// directly, so no auxiliary frame→pane map needs populating.
 // Spawn failures are logged but do not remove the session: a transient
 // error is not evidence that the user intended to delete the session.
 func (r *Runtime) RecreateAll() error {
@@ -106,8 +107,9 @@ func coldStartRecoverable(drv state.Driver, s state.DriverState) bool {
 }
 
 // spawnFrameWindow prepares and spawns a single frame's pane window during cold start.
-// It runs PrepareLaunch → WrapLaunch → SpawnWindow, registers the cleanup callback,
-// and records the pane ID in session env.
+// It runs PrepareLaunch → WrapLaunch → SpawnFrame and registers the cleanup
+// callback. termvt keys sessions on string(FrameID), so no extra env shadow is
+// written.
 func (r *Runtime) spawnFrameWindow(id state.SessionID, sandbox state.SandboxOverride, frame state.SessionFrame) error {
 	drv := state.GetDriver(frame.Command)
 	if drv == nil {
@@ -156,8 +158,7 @@ func (r *Runtime) spawnFrameWindow(id state.SessionID, sandbox state.SandboxOver
 	}
 	wrapped := wrapResult.wrapped
 
-	paneID, err := r.spawnWrapped(frame.ID, frame.Project, wrapped)
-	if err != nil {
+	if err := r.spawnWrapped(frame.ID, frame.Project, wrapped); err != nil {
 		slog.Error("bootstrap: spawn failed", "id", id, "frame", frame.ID, "err", err)
 		if wrapped.Cleanup != nil {
 			if cerr := wrapped.Cleanup(); cerr != nil {
@@ -167,30 +168,21 @@ func (r *Runtime) spawnFrameWindow(id state.SessionID, sandbox state.SandboxOver
 		return err
 	}
 
-	r.sessionFrames[frame.ID] = paneID
 	if wrapped.Cleanup != nil {
 		r.storeFrameCleanup(frame.ID, wrapped.Cleanup)
 	}
 	if wrapResult.token != "" {
 		r.registerContainerFrame(frame.ID, frame.Project, wrapped.ContainerSockDir, wrapResult.token, wrapped.Mounts)
 	}
-	envKey := sessionFrameEnvKey(frame.ID)
-	if err := r.cfg.Backend.SetEnv(envKey, paneID); err != nil {
-		slog.Warn("bootstrap: set pane env failed", "key", envKey, "err", err)
-	}
 	return nil
 }
 
-// spawnWrapped calls SpawnWindow for a WrappedLaunch. Window sizing is owned by
-// the connected client (the browser terminal resizes via the surface RPC after
-// attach), so cold-start does not pre-size the pane.
-func (r *Runtime) spawnWrapped(frameID state.FrameID, project string, wrapped WrappedLaunch) (string, error) {
+// spawnWrapped calls SpawnFrame for a WrappedLaunch. Window sizing is owned
+// by the connected client (the browser terminal resizes via the surface RPC
+// after attach), so cold-start does not pre-size the pane.
+func (r *Runtime) spawnWrapped(frameID state.FrameID, project string, wrapped WrappedLaunch) error {
 	name := windowName(project, string(frameID))
 	spawnCmd := buildSpawnCommand(wrapped.Command, nil)
 	slog.Info("runtime: spawning window", "frame", frameID, "cmd", spawnCmd, "mode", "coldstart")
-	_, paneID, err := r.cfg.Backend.SpawnWindow(name, spawnCmd, wrapped.StartDir, wrapped.Env)
-	if err != nil {
-		return "", err
-	}
-	return paneID, nil
+	return r.cfg.Backend.SpawnFrame(string(frameID), name, spawnCmd, wrapped.StartDir, wrapped.Env)
 }

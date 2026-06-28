@@ -160,7 +160,6 @@ type internalSpawnComplete struct {
 	token            string         // empty for non-container frames
 	mounts           pathmap.Mounts // nil for non-container frames
 	containerSockDir string         // raw ContainerSockDir from WrappedLaunch; empty for non-container
-	paneID           string
 	bindResult       rsubsystem.BindResult
 }
 
@@ -196,26 +195,18 @@ func (r *Runtime) dispatchInternal(ev internalEvent) {
 // startRestoredTaps attaches a pane tap to each restored root frame.
 // Non-root frames don't get taps because their driver state isn't
 // displayed in the UI. Called from the event loop so r.taps is
-// guaranteed to be initialised and r.sessionFrames is accessed under
+// guaranteed to be initialised and state.Sessions is accessed under
 // the loop's single-writer discipline.
 func (r *Runtime) startRestoredTaps() {
 	if r.taps == nil {
 		return
 	}
-	rootFrames := make(map[state.FrameID]bool)
 	for _, sess := range r.state.Sessions {
-		if len(sess.Frames) > 0 {
-			rootFrames[sess.Frames[0].ID] = true
-		}
-	}
-	for frameID, pane := range r.sessionFrames {
-		if frameID == "_main" || pane == "" {
+		if len(sess.Frames) == 0 {
 			continue
 		}
-		if !rootFrames[frameID] {
-			continue
-		}
-		r.taps.start(frameID, pane, r.Enqueue)
+		frameID := sess.Frames[0].ID
+		r.taps.start(frameID, string(frameID), r.Enqueue)
 	}
 }
 

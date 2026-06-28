@@ -34,17 +34,18 @@ func TestGenericNewStateDefaults(t *testing.T) {
 func TestGenericTickSkipsWhenParkedAndWaiting(t *testing.T) {
 	d, s, now := newGenericState(t, 0)
 	// Status=Waiting (default), Watched=false → self-gate skips tick
-	_, effs, _ := d.Step(s, state.FrameContext{IsRoot: true}, state.DEvTick{Now: now, Watched: false, PaneTarget: "5"})
+	_, effs, _ := d.Step(s, state.FrameContext{IsRoot: true}, state.DEvTick{Now: now, Watched: false})
 	if len(effs) != 0 {
 		t.Errorf("expected 0 effects for parked+waiting, got %d", len(effs))
 	}
 }
 
-func TestGenericTickWithoutWindowEmitsNothing(t *testing.T) {
+func TestGenericTickWithoutProjectEmitsNothing(t *testing.T) {
 	d, s, now := newGenericState(t, 0)
+	// Watched=true but Project="" → branch detect has no target → no effects.
 	_, effs, _ := d.Step(s, state.FrameContext{IsRoot: true}, state.DEvTick{Now: now, Watched: true})
 	if len(effs) != 0 {
-		t.Errorf("expected 0 effects when PaneTarget empty, got %d", len(effs))
+		t.Errorf("expected 0 effects when Project empty, got %d", len(effs))
 	}
 }
 
@@ -299,7 +300,7 @@ func TestGenericTickActiveSchedulesBranchJobUpdatesState(t *testing.T) {
 
 func TestGenericTickInactiveSkipsBranchDetect(t *testing.T) {
 	d, s, now := newGenericState(t, 0)
-	_, effs, _ := d.Step(s, state.FrameContext{IsRoot: true}, state.DEvTick{Now: now, Watched: false, Project: "/repo", PaneTarget: "5"})
+	_, effs, _ := d.Step(s, state.FrameContext{IsRoot: true}, state.DEvTick{Now: now, Watched: false, Project: "/repo"})
 	for _, eff := range effs {
 		job, ok := eff.(state.EffStartJob)
 		if !ok {
@@ -461,7 +462,7 @@ func TestGenericStepNonRootSkipsTick(t *testing.T) {
 	d, s, now := newGenericState(t, 0)
 	s.Status = state.StatusRunning
 	next, effs, _ := d.Step(s, state.FrameContext{IsRoot: false}, state.DEvTick{
-		Now: now.Add(2 * time.Second), Watched: true, Project: "/repo", PaneTarget: "%5",
+		Now: now.Add(2 * time.Second), Watched: true, Project: "/repo",
 	})
 	if len(effs) != 0 {
 		t.Errorf("non-root DEvTick effects = %d, want 0", len(effs))

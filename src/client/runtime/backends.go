@@ -22,9 +22,10 @@ var ErrNotImplemented = errors.New("runtime: not implemented on this backend")
 
 // FrameLifecycle covers pane/window creation, destruction, and liveness.
 type FrameLifecycle interface {
-	// SpawnWindow creates a new pane window for a session. Returns the
-	// window index (e.g. "1") and the pane id (e.g. "%5").
-	SpawnWindow(name, command, startDir string, env map[string]string) (windowIndex, paneID string, err error)
+	// SpawnFrame creates a new pane window backed by frameID. The pane backend
+	// uses frameID as its termvt.Manager session key, so the runtime can
+	// address every subsequent op by string(FrameID) without an indirection.
+	SpawnFrame(frameID, name, command, startDir string, env map[string]string) error
 	// KillFrame destroys the pane window containing the named pane.
 	KillFrame(paneTarget string) error
 	// RespawnFrame runs respawn-pane against a dead pane.
@@ -219,8 +220,8 @@ type FSEvent struct {
 
 type noopBackend struct{}
 
-func (noopBackend) SpawnWindow(name, command, startDir string, env map[string]string) (string, string, error) {
-	return "", "", nil
+func (noopBackend) SpawnFrame(frameID, name, command, startDir string, env map[string]string) error {
+	return nil
 }
 func (noopBackend) KillFrame(string) error         { return nil }
 func (noopBackend) RunChain(...[]string) error     { return nil }

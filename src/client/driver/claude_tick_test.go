@@ -13,10 +13,9 @@ func TestClaudeTickEarlyReturnOnIdle(t *testing.T) {
 	cs.StartDir = "/repo" // would normally trigger branch refresh
 
 	next, effs := d.handleTick(cs, state.DEvTick{
-		Now:        now.Add(time.Second),
-		Watched:    true,
-		Project:    "/repo",
-		PaneTarget: "%5",
+		Now:     now.Add(time.Second),
+		Watched: true,
+		Project: "/repo",
 	})
 	if len(effs) != 0 {
 		t.Errorf("Idle handleTick effects = %d, want 0", len(effs))
@@ -32,10 +31,9 @@ func TestClaudeTickEarlyReturnOnStopped(t *testing.T) {
 	cs.StartDir = "/repo"
 
 	_, effs := d.handleTick(cs, state.DEvTick{
-		Now:        now.Add(time.Second),
-		Watched:    true,
-		Project:    "/repo",
-		PaneTarget: "%5",
+		Now:     now.Add(time.Second),
+		Watched: true,
+		Project: "/repo",
 	})
 	if len(effs) != 0 {
 		t.Errorf("Stopped handleTick effects = %d, want 0", len(effs))
@@ -74,7 +72,7 @@ func TestClaudeStepNonRootSkipsTick(t *testing.T) {
 	cs.Status = state.StatusRunning
 	cs.StartDir = "/repo"
 	next, effs, _ := d.Step(cs, state.FrameContext{IsRoot: false}, state.DEvTick{
-		Now: now.Add(time.Second), Watched: true, Project: "/repo", PaneTarget: "%5",
+		Now: now.Add(time.Second), Watched: true, Project: "/repo",
 	})
 	if len(effs) != 0 {
 		t.Errorf("non-root DEvTick effects = %d, want 0", len(effs))

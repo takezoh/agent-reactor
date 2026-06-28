@@ -10,19 +10,18 @@ func reduceTick(s State, e EvTick) (State, []Effect) {
 	s, effs, changed := stepActiveSessions(s, func(sessID SessionID, sess Session, watched bool) DriverEvent {
 		frame, _ := rootFrame(sess)
 		ev := DEvTick{
-			Now:        e.Now,
-			Watched:    watched,
-			Project:    frame.Project,
-			PaneTarget: e.PaneTargets[frame.ID],
-			N:          e.N,
-			Seq:        seq,
+			Now:     e.Now,
+			Watched: watched,
+			Project: frame.Project,
+			N:       e.N,
+			Seq:     seq,
 		}
 		seq++
 		return ev
 	})
 
-	// Frame liveness reconcile: every 5 ticks the runtime walks r.sessionFrames
-	// and emits EvFrameCommandExited / EvFrameVanished per dead frame.
+	// Frame liveness reconcile: every 5 ticks the runtime walks its live frame
+	// set and emits EvFrameCommandExited / EvFrameVanished per dead frame.
 	// reconcileWindows is the sole frame-death detection path now — the legacy
 	// per-tick EffCheckPaneAlive emissions targeted tmux control panes
 	// (0.0/0.1/0.2/__hidden__.0) that no longer exist under PtyBackend.

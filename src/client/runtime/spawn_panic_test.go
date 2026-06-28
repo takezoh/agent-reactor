@@ -30,7 +30,7 @@ func (p *panickingFactory) Ensure(_ context.Context, _ state.SessionID, _ string
 // Why this test exists: the user reported "POST /api/sessions returns 500
 // and the server session that started this conversation terminates." Without
 // the defer recover() in spawnPaneWindow, an upstream panic during
-// ensureSubsystem / BindFrame / wrapLaunchForSpawn / backend SpawnWindow would
+// ensureSubsystem / BindFrame / wrapLaunchForSpawn / backend SpawnFrame would
 // unwind out of the goroutine and Go's runtime would kill the process.
 // With it, the daemon stays up.
 func TestSpawnPaneWindow_recoversFromPanicAndEmitsSpawnFailed(t *testing.T) {

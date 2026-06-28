@@ -348,7 +348,6 @@ func TestPaneSpawnedRegistersWindowAndActivates(t *testing.T) {
 	_, effs := Reduce(s, EvFrameSpawned{
 		SessionID:  id,
 		FrameID:    FrameID(id),
-		PaneTarget: "%1",
 		ReplyConn:  1,
 		ReplyReqID: "r",
 	})
@@ -371,7 +370,7 @@ func TestPaneSpawnedRootFrameSetsTapTrue(t *testing.T) {
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id) // Frames[0] is the root
 	_, effs := Reduce(s, EvFrameSpawned{
-		SessionID: id, FrameID: FrameID(id), PaneTarget: "%1",
+		SessionID: id, FrameID: FrameID(id),
 	})
 	reg, ok := findEff[EffRegisterFrame](effs)
 	if !ok {
@@ -393,7 +392,7 @@ func TestPaneSpawnedChildFrameSetsTapFalse(t *testing.T) {
 	})
 	s.Sessions[id] = sess
 	_, effs := Reduce(s, EvFrameSpawned{
-		SessionID: id, FrameID: childID, PaneTarget: "%2",
+		SessionID: id, FrameID: childID,
 	})
 	reg, ok := findEff[EffRegisterFrame](effs)
 	if !ok {
@@ -421,9 +420,8 @@ func TestPaneSpawnedRootBootstrapRunsBeforeRegister(t *testing.T) {
 	}
 
 	next, effs := Reduce(s, EvFrameSpawned{
-		SessionID:  id,
-		FrameID:    FrameID(id),
-		PaneTarget: "%1",
+		SessionID: id,
+		FrameID:   FrameID(id),
 	})
 
 	got := next.Sessions[id].Frames[0].Driver.(bootstrapState)
@@ -449,9 +447,8 @@ func TestPaneSpawnedChildFrameSkipsBootstrap(t *testing.T) {
 	}
 
 	next, effs := Reduce(s, EvFrameSpawned{
-		SessionID:  id,
-		FrameID:    childID,
-		PaneTarget: "%2",
+		SessionID: id,
+		FrameID:   childID,
 	})
 
 	root := next.Sessions[id].Frames[0].Driver.(bootstrapState)
@@ -467,7 +464,7 @@ func TestPaneSpawnedChildFrameSkipsBootstrap(t *testing.T) {
 func TestPaneSpawnedUnknownSessionDropsSilently(t *testing.T) {
 	s := New()
 	_, effs := Reduce(s, EvFrameSpawned{
-		SessionID: "ghost", FrameID: "ghost", PaneTarget: "%1", ReplyConn: 1, ReplyReqID: "r",
+		SessionID: "ghost", FrameID: "ghost", ReplyConn: 1, ReplyReqID: "r",
 	})
 	if len(effs) != 0 {
 		t.Errorf("expected no effects, got %d", len(effs))

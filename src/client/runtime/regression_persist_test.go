@@ -381,10 +381,9 @@ func TestRegressionRunFlushesPendingMutationsOnCancel(t *testing.T) {
 // (new random ID, cannot collide) and the bootstrap path (only on
 // startup). All findFrame-gated paths return early when the session is
 // missing. Subsystem and panetap events for the dead frame are the
-// remaining suspects — particularly because executeUnregisterPane
-// early-returns when sessionFrames was already cleared by executeKill
-// SessionWindow, so the panetap for an evicted frame leaks and keeps
-// emitting EvFrameOsc / EvFramePrompt events with the dead FrameID.
+// remaining suspects — the panetap for an evicted frame must be torn
+// down by executeUnregisterPane so it stops emitting EvFrameOsc /
+// EvFramePrompt events under the dead FrameID.
 //
 // This test pre-loads "doomed" + a peer "keeper", evicts "doomed" via
 // EvFrameVanished (the same reducer the broken daemon's
@@ -417,9 +416,6 @@ func TestRegressionEvictedSessionStaysEvictedAfterPaneEvents(t *testing.T) {
 			}},
 		}
 	}
-	r.sessionFrames["doomed"] = "%doomed"
-	r.sessionFrames["keeper"] = "%keeper"
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = r.Run(ctx) }()

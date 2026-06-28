@@ -162,17 +162,15 @@ func (DEvSubsystem) isDriverEvent() {}
 // surface-subscribing to this session. Drivers use it to gate expensive work
 // that only matters when the user is looking. Unlike the old daemon-global
 // "active", this is the union across all connected clients — correct for
-// multi-client setups. PaneTarget is the backend pane id (e.g. "%5").
-// N and Seq are used for bucketing: drivers gate periodic work to ticks
-// where (N+Seq)%interval==0, so sessions are spread across different
-// ticks rather than all firing simultaneously.
+// multi-client setups. N and Seq are used for bucketing: drivers gate periodic
+// work to ticks where (N+Seq)%interval==0, so sessions are spread across
+// different ticks rather than all firing simultaneously.
 type DEvTick struct {
-	Now        time.Time
-	Watched    bool
-	Project    string
-	PaneTarget string
-	N          uint64 // monotonic tick counter from EvTick.N
-	Seq        uint64 // position of this session in sorted order (0-indexed)
+	Now     time.Time
+	Watched bool
+	Project string
+	N       uint64 // monotonic tick counter from EvTick.N
+	Seq     uint64 // position of this session in sorted order (0-indexed)
 }
 
 func (DEvTick) isDriverEvent() {}

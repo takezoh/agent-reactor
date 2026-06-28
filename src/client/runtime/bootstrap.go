@@ -4,15 +4,14 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/takezoh/agent-reactor/client/state"
 )
 
 // Bootstrap helpers used at startup before the event loop starts.
-// These mutate r.state and r.sessionFrames directly — safe because no
-// goroutine is reading state yet.
+// These mutate r.state directly — safe because no goroutine is reading
+// state yet.
 
 // LoadSnapshot reads sessions.json and registers each session in
 // r.state. Driver state is restored via the registered Driver's
@@ -121,92 +120,6 @@ func restoreSession(snap SessionSnapshot, coldStart bool, now time.Time) (state.
 	}
 	sess.MRUFrameIDs = mru
 	return sess, true
-}
-
-// LoadSessionFrames reads ROOST_FRAME_* env entries on the pane backend
-// and populates r.sessionFrames. With PtyBackend each daemon boot starts a
-// fresh termvt.Manager whose env table is empty, so this is effectively a
-// no-op today and exists only for backends that opt into ShowEnvironment
-// for diagnostic dumps.
-func (r *Runtime) LoadSessionFrames() error {
-	type envLister interface {
-		ShowEnvironment() (string, error)
-	}
-	el, ok := r.cfg.Backend.(envLister)
-	if !ok {
-		return nil
-	}
-	out, err := el.ShowEnvironment()
-	if err != nil {
-		return err
-	}
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		if !strings.HasPrefix(parts[0], "ROOST_FRAME_") {
-			continue
-		}
-		frameID := state.FrameID(strings.TrimPrefix(parts[0], "ROOST_FRAME_"))
-		r.sessionFrames[frameID] = parts[1]
-	}
-	return nil
-}
-
-// ReconcileOrphans compares the loaded sessionFrames against the snapshot
-// sessions, drops orphan sessions (in JSON but not in sessionFrames) and
-// cleans up stale env entries (in windowMap but not in JSON).
-//
-// In PtyBackend mode sessionFrames is empty at boot, so every persisted
-// session is "orphan" wrt panes. The cold-start spawn path in coordinator
-// recreates panes from snapshot; this reconciler therefore narrows to
-// pruning sessionFrames entries that no persisted frame owns — useful only
-// for backends that survive across daemon restarts (none in the tree today).
-func (r *Runtime) ReconcileOrphans() {
-	for id, sess := range r.state.Sessions {
-		cut := len(sess.Frames)
-		for i, frame := range sess.Frames {
-			if _, ok := r.sessionFrames[frame.ID]; !ok {
-				cut = i
-				break
-			}
-		}
-		if cut == len(sess.Frames) {
-			continue
-		}
-		if cut == 0 {
-			slog.Warn("bootstrap: dropping orphan session (missing root frame)", "id", id)
-			delete(r.state.Sessions, id)
-			continue
-		}
-		sess.Frames = append([]state.SessionFrame(nil), sess.Frames[:cut]...)
-		r.state.Sessions[id] = sess
-	}
-
-	for frameID := range r.sessionFrames {
-		found := false
-		for _, sess := range r.state.Sessions {
-			for _, frame := range sess.Frames {
-				if frame.ID == frameID {
-					found = true
-					break
-				}
-			}
-		}
-		if !found {
-			delete(r.sessionFrames, frameID)
-			slog.Warn("bootstrap: removing stale pane env", "frame", frameID)
-			_ = r.cfg.Backend.UnsetEnv(sessionFrameEnvKey(frameID))
-		}
-	}
-
-	if len(r.state.Sessions) > 0 {
-		if err := r.cfg.Persist.Save(r.snapshotSessions()); err != nil {
-			slog.Error("bootstrap: persist after reconcile failed", "err", err)
-		}
-	}
 }
 
 // RecoverActivePaneAtMain previously restored the TUI 0.0/0.1 swap on warm

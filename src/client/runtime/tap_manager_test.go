@@ -251,10 +251,6 @@ func TestStartRestoredTaps_StartsOnlyRootFrames(t *testing.T) {
 		ID:     "s2",
 		Frames: []state.SessionFrame{{ID: state.FrameID("frame_b")}},
 	}
-	r.sessionFrames["frame_a"] = "%1"
-	r.sessionFrames["frame_b"] = "%2"
-	r.sessionFrames["frame_c"] = "%3"
-	r.sessionFrames["_main"] = "%0"
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -263,7 +259,7 @@ func TestStartRestoredTaps_StartsOnlyRootFrames(t *testing.T) {
 	r.startRestoredTaps()
 
 	got := tap.startedSorted()
-	want := []string{"%1", "%2"}
+	want := []string{"frame_a", "frame_b"}
 	if len(got) != len(want) {
 		t.Fatalf("started panes = %v, want %v", got, want)
 	}
@@ -280,7 +276,10 @@ func TestStartRestoredTaps_NoTapsWhenNilManager(t *testing.T) {
 		TickInterval: 10 * time.Second,
 		Tap:          tap,
 	})
-	r.sessionFrames["frame_a"] = "%1"
+	r.state.Sessions[state.SessionID("s1")] = state.Session{
+		ID:     "s1",
+		Frames: []state.SessionFrame{{ID: state.FrameID("frame_a")}},
+	}
 	// r.taps left nil (Run not started)
 
 	r.startRestoredTaps() // must not panic
@@ -301,8 +300,6 @@ func TestStartTapsForRestoredFrames_DispatchesViaEventLoop(t *testing.T) {
 		ID:     "s1",
 		Frames: []state.SessionFrame{{ID: state.FrameID("frame_a")}},
 	}
-	r.sessionFrames["frame_a"] = "%1"
-	r.sessionFrames["_main"] = "%0"
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -317,7 +314,7 @@ func TestStartTapsForRestoredFrames_DispatchesViaEventLoop(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if got := tap.startedSorted(); got[0] != "%1" {
-		t.Errorf("started = %v, want [%%1]", got)
+	if got := tap.startedSorted(); got[0] != "frame_a" {
+		t.Errorf("started = %v, want [frame_a]", got)
 	}
 }

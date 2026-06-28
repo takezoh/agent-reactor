@@ -74,7 +74,7 @@ type Manager[I any] interface {
 	// BuildLaunchCommand generates the shell command string and environment to
 	// run spec inside the sandbox instance. frameCtx carries per-frame values
 	// (workDir, env) the launcher resolved at launch time. The returned command
-	// is passed to PaneBackend.SpawnWindow.
+	// is passed to FrameBackend.SpawnFrame.
 	BuildLaunchCommand(inst *Instance[I], spec LaunchSpec, frameCtx FrameContext, env map[string]string) (command string, outEnv map[string]string, err error)
 
 	// AcquireFrame increments the ref-count for the instance.
