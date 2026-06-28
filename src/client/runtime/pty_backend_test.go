@@ -162,25 +162,6 @@ func TestPtyBackendBufferRoundTrip(t *testing.T) {
 	}
 }
 
-// TestPtyBackendResize verifies ResizeWindow is delegated to the session and
-// FrameSize reflects the new dimensions.
-func TestPtyBackendResize(t *testing.T) {
-	b := NewPtyBackend(0)
-	frameID := spawn(t, b, "frame-resize", "w", "sleep 5")
-	defer func() { _ = b.KillFrame(frameID) }()
-
-	if err := b.ResizeWindow(frameID, 120, 40); err != nil {
-		t.Fatal(err)
-	}
-	w, h, err := b.FrameSize(frameID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w != 120 || h != 40 {
-		t.Fatalf("FrameSize = %dx%d, want 120x40", w, h)
-	}
-}
-
 // TestPtyBackendSpawnFrameIDIsTermVTKey verifies the frame id passed to
 // SpawnFrame becomes the termvt.Manager session key — addressing the
 // freshly spawned session by that id resolves through ResolveID.
@@ -282,11 +263,6 @@ func TestPtyBackendUnknownFrameErrors(t *testing.T) {
 		wantSentinel("CaptureFrame", err)
 	} else {
 		t.Error("CaptureFrame(unknown) error = nil, want non-nil")
-	}
-	if err := b.ResizeWindow(unknown, 80, 24); err != nil {
-		wantSentinel("ResizeWindow", err)
-	} else {
-		t.Error("ResizeWindow(unknown) error = nil, want non-nil")
 	}
 	if _, _, err := b.FrameSize(unknown); err != nil {
 		wantSentinel("FrameSize", err)

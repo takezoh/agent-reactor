@@ -85,27 +85,6 @@ type SessionEnv interface {
 	ShowEnvironment() (string, error)
 }
 
-// WindowLayout covers frame repositioning operations (legacy tmux era).
-type WindowLayout interface {
-	// SwapPane exchanges two frame positions without changing frame ids.
-	SwapPane(srcPane, dstPane string) error
-	// BreakPane moves a frame into another window.
-	BreakPane(srcPane, dstWindow string) error
-	// BreakPaneToNewWindow moves a frame into a newly created window and
-	// returns that window's index.
-	BreakPaneToNewWindow(srcPane, name string) (string, error)
-	// JoinPane moves a frame into another frame slot. sizePct controls
-	// the new frame size; before inserts before the target frame.
-	JoinPane(srcPane, dstPane string, before bool, sizePct int) error
-	// SelectPane focuses a backend frame.
-	SelectPane(target string) error
-	// ResizeWindow resizes the frame window containing the target.
-	ResizeWindow(target string, width, height int) error
-	// RunChain executes a sequence of swap (or other) commands as
-	// a single backend invocation. Used for the swap preview chain.
-	RunChain(ops ...[]string) error
-}
-
 // BackendControl covers session/client-level control operations that only
 // the legacy tmux backend implemented. PtyBackend stubs each method as a
 // no-op so the runtime stays backend-agnostic and reducers can emit the
@@ -131,7 +110,7 @@ type BackendControl interface {
 //
 // New code that needs only a subset of these operations should depend on
 // the narrower role interfaces (FrameLifecycle, FrameIO, FrameInspect,
-// SessionEnv, WindowLayout, BackendControl) instead.
+// SessionEnv, BackendControl) instead.
 //
 // FrameID identifiers are passed as plain strings (string(FrameID)) at the
 // backend boundary; persistence layer governs the FrameID typedef.
@@ -140,7 +119,6 @@ type FrameBackend interface {
 	FrameIO
 	FrameInspect
 	SessionEnv
-	WindowLayout
 	BackendControl
 }
 
@@ -226,18 +204,9 @@ type noopBackend struct{}
 func (noopBackend) SpawnFrame(frameID, name, command, startDir string, env map[string]string) error {
 	return nil
 }
-func (noopBackend) KillFrame(string) error         { return nil }
-func (noopBackend) RunChain(...[]string) error     { return nil }
-func (noopBackend) SwapPane(string, string) error  { return nil }
-func (noopBackend) BreakPane(string, string) error { return nil }
-func (noopBackend) BreakPaneToNewWindow(string, string) (string, error) {
-	return "", nil
-}
-func (noopBackend) JoinPane(string, string, bool, int) error  { return nil }
+func (noopBackend) KillFrame(string) error                    { return nil }
 func (noopBackend) ResolveID(string) (string, error)          { return "", nil }
 func (noopBackend) FrameSize(string) (int, int, error)        { return 0, 0, nil }
-func (noopBackend) SelectPane(string) error                   { return nil }
-func (noopBackend) ResizeWindow(string, int, int) error       { return nil }
 func (noopBackend) SetStatusLine(string) error                { return nil }
 func (noopBackend) SetEnv(string, string) error               { return nil }
 func (noopBackend) UnsetEnv(string) error                     { return nil }

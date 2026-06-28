@@ -102,7 +102,7 @@ func TestReduceFrameCommandExited_IntentionalExitCodesEvict(t *testing.T) {
 
 // Crash-style exit codes (a true abnormal exit — not in the
 // intentional-termination set) must keep the frame in state with
-// status=Stopped so the user can find the dead pane and the
+// status=Stopped so the user can find the dead frame and the
 // surrounding metadata for inspection.
 //
 //   - 1:   generic error
@@ -137,7 +137,7 @@ func TestReduceFrameCommandExited_CrashExitCodesMarkStopped(t *testing.T) {
 	}
 }
 
-// Reconciliation runs every few ticks, so a dead pane fires the
+// Reconciliation runs every few ticks, so a dead frame fires the
 // event repeatedly. The reducer must be idempotent: once a frame is
 // already Stopped, subsequent EvFrameCommandExited events produce no
 // effects.
@@ -156,10 +156,10 @@ func TestReduceFrameCommandExited_IdempotentAfterStopped(t *testing.T) {
 
 // A driver can reach StatusStopped via its own hook stream — claude
 // fires SessionEnd → status=stopped before the pty actually closes.
-// When the pane subsequently exits cleanly (code 0/129/130/137/143),
+// When the frame subsequently exits cleanly (code 0/129/130/137/143),
 // the reducer must still evict the frame. Otherwise the session
 // sticks in the list forever (the agent-reactor server has no fast
-// EvPaneDied path and relies entirely on reconcileWindows →
+// frame-died fast path and relies entirely on reconcileWindows →
 // EvFrameCommandExited for eviction).
 func TestReduceFrameCommandExited_IntentionalExitEvictsEvenWhenDriverStopped(t *testing.T) {
 	intentional := []int{0, 129, 130, 137, 143}

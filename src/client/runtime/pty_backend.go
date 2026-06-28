@@ -247,30 +247,6 @@ func (p *PtyBackend) ShowEnvironment() (string, error) {
 	return string(b), nil
 }
 
-// === WindowLayout ===
-
-// ResizeWindow resizes the session's pty/grid. The other layout ops are stubbed.
-func (p *PtyBackend) ResizeWindow(target string, width, height int) error {
-	sess, ok := p.mgr.Get(target)
-	if !ok {
-		return fmt.Errorf("runtime: unknown frame %q: %w", target, ErrFrameMissing)
-	}
-	return sess.Resize(width, height)
-}
-
-// The following WindowLayout ops have no pty equivalent — layout composition
-// moves client-side in the backend-replacement phase (ADR 0004).
-func (p *PtyBackend) SwapPane(srcPane, dstPane string) error    { return nil }
-func (p *PtyBackend) BreakPane(srcPane, dstWindow string) error { return nil }
-func (p *PtyBackend) BreakPaneToNewWindow(srcPane, name string) (string, error) {
-	return "", nil
-}
-func (p *PtyBackend) JoinPane(srcPane, dstPane string, before bool, sizePct int) error {
-	return nil
-}
-func (p *PtyBackend) SelectPane(target string) error { return nil }
-func (p *PtyBackend) RunChain(ops ...[]string) error { return nil }
-
 // === Surface accessors (ADR 0009) ===
 //
 // SubscribeSurface, UnsubscribeSurface, WriteSurface, and ResizeSurface are

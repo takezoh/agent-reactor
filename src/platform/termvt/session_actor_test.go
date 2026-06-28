@@ -275,7 +275,7 @@ func TestActor_SubscribeSeedClearsStaleInputTail(t *testing.T) {
 	}
 
 	// Replay the seed bytes into a fresh emulator, mirroring xterm.js on the
-	// client (keyed remount via <TerminalPane key={activeSessionID}>).
+	// client (keyed remount on session-id change).
 	fresh := vt.NewEmulator(80, 24)
 	if _, err := fresh.Write(ev.Data); err != nil {
 		t.Fatalf("fresh emulator write: %v", err)

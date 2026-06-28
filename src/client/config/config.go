@@ -14,7 +14,7 @@ type Config struct {
 	DataDir  string                        `toml:"data_dir"`
 	Theme    string                        `toml:"theme"`
 	Log      LogConfig                     `toml:"log"`
-	Pane     PaneConfig                    `toml:"tmux"`
+	Tmux     TmuxConfig                    `toml:"tmux"`
 	Monitor  MonitorConfig                 `toml:"monitor"`
 	Session  SessionConfig                 `toml:"session"`
 	Terminal TerminalConfig                `toml:"terminal"`
@@ -60,25 +60,13 @@ type LogConfig struct {
 	Level string `toml:"level"`
 }
 
-// PaneConfig holds the frame backend's session-level layout settings.
-// The struct + TOML keys keep the "Pane" prefix (and `tmux` TOML table key)
-// purely for back-compat with ~/.agent-reactor/config.toml: PaneRatio* /
-// SessionName / Prefix are tmux-era relics, but renaming the TOML keys
-// would invalidate every existing user config file.
-//
-// SessionName and PaneRatioVertical feed the runtime via
-// coordinator.Config. Prefix and PaneRatioHorizontal are *unused* on
-// PtyBackend (relics of the tmux backend); they are kept on the struct so
-// TOML parsing of existing user config does not surface "unknown field"
-// errors. Remove them once a deprecation window passes (track in a follow-up
-// of phase C in plans/arc-server-client-split.md).
-type PaneConfig struct {
+// TmuxConfig holds the legacy tmux backend's session-level settings. Only
+// SessionName remains live (used by coordinator startup log). The `tmux` TOML
+// table key is kept purely for back-compat with existing
+// ~/.agent-reactor/config.toml files. Deprecated tmux-era TOML keys are
+// silently ignored by BurntSushi/toml when present in user files.
+type TmuxConfig struct {
 	SessionName string `toml:"session_name"`
-	// Deprecated: unused after ADR 0004; ignored on PtyBackend.
-	Prefix string `toml:"prefix"`
-	// Deprecated: unused after ADR 0004; ignored on PtyBackend.
-	PaneRatioHorizontal int `toml:"pane_ratio_horizontal"`
-	PaneRatioVertical   int `toml:"pane_ratio_vertical"`
 }
 
 type MonitorConfig struct {
@@ -136,16 +124,12 @@ func DefaultConfig() *Config {
 	return &Config{
 		Theme: "default",
 		Log:   LogConfig{Level: "info"},
-		Pane: PaneConfig{
+		Tmux: TmuxConfig{
 			// Literal "arc" preserved for back-compat with existing user
 			// settings.toml that pin the legacy backend session name; phase F-F
 			// dropped appid.SessionName because the TUI (which consumed it) is
 			// gone, but the TOML key is still parsed silently for now.
-			SessionName:       "arc",
-			PaneRatioVertical: 75,
-			// Prefix and PaneRatioHorizontal are deprecated (ADR 0004) — no
-			// default seeded so a freshly written config does not re-introduce
-			// stale tmux-era values to a new user.
+			SessionName: "arc",
 		},
 		Monitor: MonitorConfig{
 			PollIntervalMs:     1000,

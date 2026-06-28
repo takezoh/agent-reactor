@@ -164,7 +164,7 @@ func TestBackendBindFrameColdStartRemoteCommand(t *testing.T) {
 	}
 
 	// Cold start now creates the thread synchronously (thread/start) and binds
-	// it, so the pane resumes that id — same command shape as a warm start.
+	// it, so the frame resumes that id — same command shape as a warm start.
 	threadID := res.Plan.Stream.ResumeThreadID
 	if threadID == "" {
 		t.Fatal("cold start must bind a synchronously-created thread id")

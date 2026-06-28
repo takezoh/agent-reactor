@@ -8,11 +8,10 @@ import (
 	"github.com/takezoh/agent-reactor/platform/termvt"
 )
 
-// PtyFrameTap implements FrameTap on top of a PtyBackend's termvt.Manager. It is
-// the replacement for the legacy pipe-pane tap on the pty backend path (plan A 5a/5b):
-// each Start resolves the frame id to a live Session via mgr.Get and subscribes,
-// then forwards termvt.EventOutput chunks as the raw byte stream the existing
-// tap_manager (and its 1x1 vt.Terminal) consumes.
+// PtyFrameTap implements FrameTap on top of a PtyBackend's termvt.Manager.
+// Each Start resolves the frame id to a live Session via mgr.Get and
+// subscribes, then forwards termvt.EventOutput chunks as the raw byte stream
+// the existing tap_manager (and its 1x1 vt.Terminal) consumes.
 //
 // EventControl is intentionally dropped here — tap_manager re-parses the same
 // OSC sequences out of the raw bytes via its vt.Terminal, so feeding structured

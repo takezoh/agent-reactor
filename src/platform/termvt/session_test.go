@@ -195,7 +195,7 @@ func TestClampDim(t *testing.T) {
 // handleRequestMode writes the reply to its internal io.Pipe synchronously,
 // and nothing drains the read end — em.Write blocks forever, holding s.mu,
 // and every ExitCode call (which the runtime dispatch loop fires every tick
-// via PaneAlive) hangs in turn. Bug surfaces as the whole daemon's IPC
+// via aliveness probe) hangs in turn. Bug surfaces as the whole daemon's IPC
 // freezing under any tty client that ever queries terminal modes.
 //
 // Skipped pre-fix; the responseLoop drain in step 3 makes it pass. Step 4's

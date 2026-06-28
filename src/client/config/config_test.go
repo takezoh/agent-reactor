@@ -10,8 +10,8 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.Pane.SessionName != "arc" {
-		t.Errorf("SessionName = %q, want %q", cfg.Pane.SessionName, "arc")
+	if cfg.Tmux.SessionName != "arc" {
+		t.Errorf("SessionName = %q, want %q", cfg.Tmux.SessionName, "arc")
 	}
 	if cfg.Monitor.PollIntervalMs != 1000 {
 		t.Errorf("PollIntervalMs = %d, want 1000", cfg.Monitor.PollIntervalMs)
@@ -195,8 +195,8 @@ func TestLoadFrom_Missing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Pane.SessionName != "arc" {
-		t.Fatalf("expected defaults, got session_name=%s", cfg.Pane.SessionName)
+	if cfg.Tmux.SessionName != "arc" {
+		t.Fatalf("expected defaults, got session_name=%s", cfg.Tmux.SessionName)
 	}
 }
 
@@ -211,8 +211,8 @@ session_name = "custom"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Pane.SessionName != "custom" {
-		t.Fatalf("expected custom, got %s", cfg.Pane.SessionName)
+	if cfg.Tmux.SessionName != "custom" {
+		t.Fatalf("expected custom, got %s", cfg.Tmux.SessionName)
 	}
 	if cfg.Monitor.PollIntervalMs != 1000 {
 		t.Fatalf("expected default 1000, got %d", cfg.Monitor.PollIntervalMs)

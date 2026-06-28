@@ -30,9 +30,4 @@ func TestIsMissingFrameErrIgnoresOther(t *testing.T) {
 	if isMissingFrameErr(other) {
 		t.Fatalf("isMissingFrameErr(%q) = true, want false", other.Error())
 	}
-	legacy := errors.New("backend: can't find pane: arc:0.7")
-	if isMissingFrameErr(legacy) {
-		t.Fatalf("isMissingFrameErr(legacy substring) = true, want false " +
-			"after legacy substring fallback removal")
-	}
 }

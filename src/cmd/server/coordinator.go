@@ -43,7 +43,7 @@ func runDaemon(df *daemonFlagSet) error {
 	if err := cfg.Sandbox.Validate(); err != nil {
 		return err
 	}
-	slog.Info("starting coordinator", "session", cfg.Pane.SessionName)
+	slog.Info("starting coordinator", "session", cfg.Tmux.SessionName)
 
 	dataDir := cfg.ResolveDataDir()
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {

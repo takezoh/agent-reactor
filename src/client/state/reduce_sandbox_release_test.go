@@ -18,7 +18,7 @@ func containsReleaseFor(effs []Effect, frameID FrameID) bool {
 
 // containsKillSessionWindow returns true when EffKillFrame is
 // emitted for frameID. Used together with containsReleaseFor to assert
-// the two effects' independence — pane kill follows window liveness,
+// the two effects' independence — frame kill follows window liveness,
 // sandbox release follows frame eviction regardless.
 func containsKillSessionWindow(effs []Effect, frameID FrameID) bool {
 	for _, e := range effs {
@@ -30,13 +30,13 @@ func containsKillSessionWindow(effs []Effect, frameID FrameID) bool {
 }
 
 // TestFrameVanished_emitsReleaseFrameSandbox_butNotKill asserts the
-// fix for the “container never goes away” bug. When the pane process
+// fix for the “container never goes away” bug. When the frame process
 // exits (pty EOF) the reducer routes via evictFrame(killWindow=false) so
 // no EffKillFrame is emitted (the backend window is already
 // gone), but EffReleaseFrameSandbox MUST still fire so the per-frame
 // cleanup runs Manager.ReleaseFrame → 0 なら DestroyInstance. Before the
 // fix the two responsibilities were welded into EffKillFrame and
-// pane-vanished left the container alive forever.
+// frame-vanished left the container alive forever.
 func TestFrameVanished_emitsReleaseFrameSandbox_butNotKill(t *testing.T) {
 	s := New()
 	id := SessionID("sess-vanish")
@@ -62,7 +62,7 @@ func TestFrameVanished_emitsReleaseFrameSandbox_butNotKill(t *testing.T) {
 }
 
 // TestFrameCommandExited_intentional_emitsKillAndRelease asserts the
-// clean exit path still kills the pane window AND releases the sandbox.
+// clean exit path still kills the frame window AND releases the sandbox.
 // Both effects are required: clean exit means the backend window is
 // alive and needs an explicit kill, but the sandbox refcount must drop
 // just the same.
@@ -126,7 +126,7 @@ func TestFrameCommandExited_abnormal_releasesSandboxButKeepsFrame(t *testing.T) 
 // EffKillFrame + EffUnregisterFrame + EffUnwatchFile per frame
 // and silently leaked the sandbox. The fix routes through the shared
 // teardown helper so a frame removed by stop-session releases its
-// container refcount the same way pane-vanish and clean-exit do.
+// container refcount the same way frame-vanish and clean-exit do.
 func TestStopSession_releasesEveryFrameSandbox(t *testing.T) {
 	s := New()
 	id := SessionID("sess-stop")

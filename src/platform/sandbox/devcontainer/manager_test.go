@@ -596,7 +596,7 @@ func TestBuildLaunchCommand_TTY(t *testing.T) {
 		}
 	})
 
-	t.Run("TTY true uses docker exec -it for interactive panes", func(t *testing.T) {
+	t.Run("TTY true uses docker exec -it for interactive frames", func(t *testing.T) {
 		got, _, err := m.BuildLaunchCommand(newInst(), sandbox.LaunchSpec{StartDir: project, Command: "bash", TTY: true}, sandbox.FrameContext{}, nil)
 		if err != nil {
 			t.Fatalf("BuildLaunchCommand error: %v", err)

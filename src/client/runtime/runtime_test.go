@@ -109,40 +109,6 @@ func (f *fakeBackend) KillFrame(frameID string) error {
 	return nil
 }
 
-func (f *fakeBackend) RunChain(ops ...[]string) error {
-	return nil
-}
-func (f *fakeBackend) BreakPane(srcPane, dstWindow string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.breakCalls++
-	f.breakTargets = append(f.breakTargets, dstWindow)
-	return nil
-}
-func (f *fakeBackend) SwapPane(srcPane, dstPane string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.swapCalls++
-	f.swapSources = append(f.swapSources, srcPane)
-	f.swapTargets = append(f.swapTargets, dstPane)
-	f.callLog = append(f.callLog, "swap")
-	return f.swapErr
-}
-func (f *fakeBackend) BreakPaneToNewWindow(srcPane, name string) (string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.breakNewCalls++
-	f.breakNewNames = append(f.breakNewNames, name)
-	return f.breakNewWID, nil
-}
-func (f *fakeBackend) JoinPane(srcPane, dstPane string, before bool, sizePct int) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.joinCalls++
-	f.joinSources = append(f.joinSources, srcPane)
-	f.joinTargets = append(f.joinTargets, dstPane)
-	return nil
-}
 func (f *fakeBackend) ResolveID(target string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -159,16 +125,6 @@ func (f *fakeBackend) FrameSize(string) (int, int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.frameWidth, f.frameHeight, nil
-}
-func (f *fakeBackend) SelectPane(string) error { return nil }
-func (f *fakeBackend) ResizeWindow(target string, width, height int) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.resizeCalls++
-	f.resizeTargets = append(f.resizeTargets, target)
-	f.resizeWidths = append(f.resizeWidths, width)
-	f.resizeHeights = append(f.resizeHeights, height)
-	return nil
 }
 func (f *fakeBackend) SetStatusLine(line string) error {
 	f.mu.Lock()

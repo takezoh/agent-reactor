@@ -56,13 +56,13 @@ func TestShellDisplayName(t *testing.T) {
 
 // SIGHUP must not kill the daemon. Regression test for the failure mode
 // where the daemon process vanished after `attaching to the backend session`,
-// leaving every TUI pane dead and the user staring at a broken session.
+// leaving every TUI frame dead and the user staring at a broken session.
 //
 // Historically a backend `attach-session` ran as a child of the daemon; once it
-// took the TTY the parent terminal could deliver a spurious SIGHUP (pane
+// took the TTY the parent terminal could deliver a spurious SIGHUP (terminal
 // closed in WSL/Windows Terminal, controlling-tty races, etc.). The default
 // action for SIGHUP is process termination, which would kill the daemon
-// while the backend session itself stays up — exactly the "all 4 TUI panes
+// while the backend session itself stays up — exactly the "all 4 TUI frames
 // EOFed simultaneously, daemon gone, no shutdown log" pattern.
 //
 // installSignalHandlers must log the signal and ignore it, leaving the
