@@ -23,7 +23,7 @@ func reduceTick(s State, e EvTick) (State, []Effect) {
 	// Frame liveness reconcile: every 5 ticks the runtime walks its live frame
 	// set and emits EvFrameCommandExited / EvFrameVanished per dead frame.
 	// reconcileWindows is the sole frame-death detection path now — the legacy
-	// per-tick EffCheckPaneAlive emissions targeted tmux control panes
+	// per-tick EffCheckPaneAlive emissions targeted tmux control frames
 	// (0.0/0.1/0.2/__hidden__.0) that no longer exist under PtyBackend.
 	if e.N%5 == 0 {
 		effs = append(effs, EffReconcileWindows{})
@@ -72,10 +72,10 @@ func isIntentionalExit(code int) bool {
 // reduceFrameCommandExited routes a command-exit signal based on its
 // exit code. Codes recognised by isIntentionalExit (clean exit or
 // standard termination signal) trigger full eviction — the dead backend
-// pane is also closed via EffKillFrame. Other codes are
+// frame is also closed via EffKillFrame. Other codes are
 // treated as crashes: the frame is kept in state with driver
 // status=Stopped so the user can still find it in the session list,
-// and the dead pane is left attached so the tail output (stack trace,
+// and the dead frame is left attached so the tail output (stack trace,
 // error message) remains visible.
 //
 // Intentional eviction runs first because the driver may have already
@@ -84,10 +84,10 @@ func isIntentionalExit(code int) bool {
 // If the idempotency guard below ran first, a hook-driven Stopped state
 // would suppress eviction every subsequent tick and the session would
 // stick around forever as "Stopped" — the bug reproduced when the
-// the legacy web server detected dead panes only via reconcileWindows.
+// the legacy web server detected dead frames only via reconcileWindows.
 //
 // The remaining idempotency check protects the crash path:
-// reconcileWindows may re-detect the same dead pane on subsequent
+// reconcileWindows may re-detect the same dead frame on subsequent
 // ticks, and once stepDriver has already advanced the driver to
 // StatusStopped we must not re-emit further effects.
 func reduceFrameCommandExited(s State, e EvFrameCommandExited) (State, []Effect) {

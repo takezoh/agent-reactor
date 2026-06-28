@@ -9,7 +9,7 @@ import (
 	"github.com/takezoh/agent-reactor/client/state"
 )
 
-// broadcastSurfaceOutput fans a chunk of pane output to all ConnIDs subscribed
+// broadcastSurfaceOutput fans a chunk of frame surface output to all ConnIDs subscribed
 // to e.SessionID via State.SurfaceSubs. Each ConnID gets its own EvtSurfaceOutput
 // message so the per-subscriber Sequence is handled by TerminalRelay (the
 // internalBroadcastSurface path). This function is used when the effect comes

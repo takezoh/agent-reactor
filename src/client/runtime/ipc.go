@@ -62,7 +62,7 @@ func (r *Runtime) StartIPC(sockPath string) error {
 	if err != nil {
 		return fmt.Errorf("runtime: listen %s: %w", sockPath, err)
 	}
-	// Restrict socket to owner only — the client controls the pane backend
+	// Restrict socket to owner only — the client controls the frame backend
 	// lifecycle, so unauthenticated local access = arbitrary command
 	// execution.
 	if err := os.Chmod(sockPath, 0o600); err != nil {
@@ -139,9 +139,9 @@ type internalBroadcastWire struct {
 func (internalBroadcastWire) isInternalEvent() {}
 
 // internalStartRestoredTaps is enqueued by StartTapsForRestoredFrames to
-// attach pane taps to panes that were restored from the snapshot (warm
+// attach frame taps to frames that were restored from the snapshot (warm
 // or cold start) — bypasses the reducer because Reduce is only invoked
-// by user-driven events, and restored panes never go through
+// by user-driven events, and restored frames never go through
 // EvFrameSpawned.
 type internalStartRestoredTaps struct{}
 
@@ -192,7 +192,7 @@ func (r *Runtime) dispatchInternal(ev internalEvent) {
 	}
 }
 
-// startRestoredTaps attaches a pane tap to each restored root frame.
+// startRestoredTaps attaches a frame tap to each restored root frame.
 // Non-root frames don't get taps because their driver state isn't
 // displayed in the UI. Called from the event loop so r.taps is
 // guaranteed to be initialised and state.Sessions is accessed under
@@ -332,7 +332,7 @@ func (c *internalDropCounter) snapshot() map[string]uint64 {
 // sendSpawnComplete delivers a spawn-completion event to the loop. Unlike
 // enqueueInternal it must NOT drop: handleSpawnComplete is the sole writer of
 // the subsystem/cleanup maps and container registry for the frame, so losing
-// this event would leak the already-launched subsystem, pane, container
+// this event would leak the already-launched subsystem, frame, container
 // token and cleanup closure with no recovery path. Blocks until the loop
 // accepts it or the daemon shuts down (r.done), so it never leaks a goroutine.
 func (r *Runtime) sendSpawnComplete(ev internalEvent) {

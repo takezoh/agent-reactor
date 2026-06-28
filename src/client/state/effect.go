@@ -8,9 +8,9 @@ type Effect interface {
 	isEffect()
 }
 
-// === pane backend operations (synchronous, fast — interpret inline) ===
+// === frame backend operations (synchronous, fast — interpret inline) ===
 
-// EffSpawnFrame asks the runtime to create a new pane window for
+// EffSpawnFrame asks the runtime to create a new pty session for
 // the given session. The runtime executes this and feeds back
 // EvFrameSpawned / EvSpawnFailed, forwarding the Reply*
 // fields so the reducer can complete the create-session round trip.
@@ -31,7 +31,7 @@ type EffSpawnFrame struct {
 	ReplyReqID string
 }
 
-// EffKillFrame destroys the pane window for the given frame. The pane
+// EffKillFrame destroys the pty session for the given frame. The frame
 // backend is keyed directly on string(FrameID), so the runtime hands the
 // frame id straight to FrameBackend.KillFrame without an intermediate lookup.
 type EffKillFrame struct {
@@ -79,9 +79,9 @@ type EffReleaseFrameSandboxes struct{}
 // 分かれるので、 reducer は frame ID だけ送れば良い。
 //
 // Emitted by evictFrame (root + child) and reduceFrameCommandExited (異常
-// exit 枝) so pane が vanish しても crash しても sandbox は確実に release
-// される。 EffKillFrame とは責務を分けていて、 後者は backend
-// pane window を kill するためだけのもの。 pane window が既に消えていて
+// exit 枝) so frame が vanish しても crash しても sandbox は確実に release
+// される。 EffKillFrame とは責務を分けていて、 後者は backend frame
+// (pty session) を kill するためだけのもの。 frame が既に消えていて
 // EffKillFrame が要らない経路 (EvFrameVanished) でも sandbox
 // release は別途必要なので別 effect に分けてある。
 type EffReleaseFrameSandbox struct {
@@ -135,7 +135,7 @@ type EffCloseConn struct {
 	ConnID ConnID
 }
 
-// EffSendFrameKeys asks the runtime to send key input against the pane
+// EffSendFrameKeys asks the runtime to send key input against the head frame
 // belonging to SessionID. WithEnter=true appends an Enter keypress (send_text
 // semantics); WithEnter=false sends Key as a literal key name (send_key semantics).
 type EffSendFrameKeys struct {
@@ -199,7 +199,7 @@ type JobInput interface {
 	JobKind() string
 }
 
-// EffRecordNotification broadcasts an OSC-sourced in-pane notification
+// EffRecordNotification broadcasts an OSC-sourced in-frame notification
 // to TUI subscribers and logs it to the session event log.
 // SessionID and FrameID are filled by postProcessEffect when blank.
 type EffRecordNotification struct {
@@ -257,7 +257,7 @@ func (EffSendFrameKeys) isEffect()            {}
 
 // === Surface streaming (PR-2 reducer-only; runtime wires in PR-3) ===
 
-// EffSurfaceSubscribeStart asks the runtime to begin streaming pane
+// EffSurfaceSubscribeStart asks the runtime to begin streaming frame surface
 // output for SessionID toward ConnID. The reducer guarantees the
 // session exists and that the head frame is non-nil before emitting this.
 // The runtime is responsible for starting the relay goroutine.
@@ -280,8 +280,8 @@ type EffSurfaceSubscribeStop struct {
 func (EffSurfaceSubscribeStop) isEffect() {}
 
 // EffSurfaceResize forwards a logical resize request to the pty backend
-// behind SessionID. The runtime resolves the pane id by reading the session's
-// head frame and using string(HeadFrameID) directly.
+// behind SessionID. The runtime resolves the frame target by reading the
+// session's head frame and using string(HeadFrameID) directly.
 type EffSurfaceResize struct {
 	SessionID SessionID
 	Cols      uint16
@@ -290,7 +290,7 @@ type EffSurfaceResize struct {
 
 func (EffSurfaceResize) isEffect() {}
 
-// EffSurfaceWriteRaw forwards uninterpreted bytes to SessionID's pane.
+// EffSurfaceWriteRaw forwards uninterpreted bytes to SessionID's head frame surface.
 // Data is owned by the effect; the reducer must not retain a reference
 // after emitting.
 type EffSurfaceWriteRaw struct {
@@ -301,7 +301,7 @@ type EffSurfaceWriteRaw struct {
 func (EffSurfaceWriteRaw) isEffect() {}
 
 // EffBroadcastSurfaceOutput tells the runtime to broadcast one chunk of
-// pane output as EvtSurfaceOutput to all ConnIDs subscribed to SessionID
+// frame surface output as EvtSurfaceOutput to all ConnIDs subscribed to SessionID
 // (per State.SurfaceSubs). The runtime is responsible for assigning the
 // per-subscribe Sequence number.
 type EffBroadcastSurfaceOutput struct {

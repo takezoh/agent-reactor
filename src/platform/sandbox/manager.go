@@ -2,7 +2,7 @@
 // sandbox lifecycle management (Docker, Firecracker, …).
 //
 // Each backend creates one long-lived sandbox instance per project directory.
-// Frames (pane windows / docker exec sessions) join by calling AcquireFrame;
+// Frames (pty sessions / docker exec sessions) join by calling AcquireFrame;
 // the sandbox is destroyed when the last frame calls ReleaseFrame.
 package sandbox
 
@@ -10,7 +10,7 @@ import (
 	"context"
 )
 
-// FrameID identifies a pane frame within a sandbox session.
+// FrameID identifies a frame within a sandbox session.
 type FrameID string
 
 // LaunchSpec carries the minimal launch parameters that BuildLaunchCommand
@@ -19,7 +19,7 @@ type LaunchSpec struct {
 	Command  string
 	StartDir string
 	// TTY requests a pseudo-TTY for the launch (docker exec -it). Interactive
-	// pane consumers set it; headless consumers that drive the agent over
+	// frame consumers set it; headless consumers that drive the agent over
 	// piped stdio (e.g. the orchestrator's JSON-RPC transport) must leave it
 	// false, because `docker exec -t` aborts when stdin is not a terminal.
 	TTY bool

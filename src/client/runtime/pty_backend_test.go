@@ -47,26 +47,26 @@ func spawn(t *testing.T, b *PtyBackend, frameID, name, command string) string {
 func TestPtyBackendSpawnEchoCaptureKill(t *testing.T) {
 	b := NewPtyBackend(0)
 
-	paneID := spawn(t, b, "frame-echo", "w1", "cat")
+	frameID := spawn(t, b, "frame-echo", "w1", "cat")
 
 	// ResolveID echoes the synthetic id back.
-	if got, err := b.ResolveID(paneID); err != nil || got != paneID {
-		t.Fatalf("ResolveID(%q) = %q, %v; want %q", paneID, got, err, paneID)
+	if got, err := b.ResolveID(frameID); err != nil || got != frameID {
+		t.Fatalf("ResolveID(%q) = %q, %v; want %q", frameID, got, err, frameID)
 	}
 
 	// Alive before kill.
-	if dead, _, err := b.FrameExitStatus(paneID); err != nil || dead {
-		t.Fatalf("FrameExitStatus(%q) = dead=%v, err=%v; want dead=false, err=nil", paneID, dead, err)
+	if dead, _, err := b.FrameExitStatus(frameID); err != nil || dead {
+		t.Fatalf("FrameExitStatus(%q) = dead=%v, err=%v; want dead=false, err=nil", frameID, dead, err)
 	}
 
 	// SendKeys appends Enter; cat echoes it back.
-	if err := b.SendKeys(paneID, "echo-marker-xyz"); err != nil {
+	if err := b.SendKeys(frameID, "echo-marker-xyz"); err != nil {
 		t.Fatalf("SendKeys: %v", err)
 	}
 
 	var captured string
 	waitUntil(t, func() bool {
-		out, err := b.CaptureFrame(paneID, 50)
+		out, err := b.CaptureFrame(frameID, 50)
 		if err != nil {
 			return false
 		}
@@ -77,14 +77,14 @@ func TestPtyBackendSpawnEchoCaptureKill(t *testing.T) {
 		t.Fatalf("CaptureFrame output still contains SGR escapes: %q", captured)
 	}
 
-	if err := b.KillFrame(paneID); err != nil {
+	if err := b.KillFrame(frameID); err != nil {
 		t.Fatalf("KillFrame: %v", err)
 	}
 
-	// After kill the pane is gone: either reported dead with no error
+	// After kill the frame is gone: either reported dead with no error
 	// or forgotten from the manager (ErrFrameMissing).
 	waitUntil(t, func() bool {
-		dead, _, err := b.FrameExitStatus(paneID)
+		dead, _, err := b.FrameExitStatus(frameID)
 		if err != nil {
 			return errors.Is(err, ErrFrameMissing)
 		}
@@ -96,11 +96,11 @@ func TestPtyBackendSpawnEchoCaptureKill(t *testing.T) {
 // code via FrameExitStatus.
 func TestPtyBackendExitStatus(t *testing.T) {
 	b := NewPtyBackend(0)
-	paneID := spawn(t, b, "frame-exit7", "w", "bash -c 'exit 7'")
+	frameID := spawn(t, b, "frame-exit7", "w", "bash -c 'exit 7'")
 
 	var code int
 	waitUntil(t, func() bool {
-		dead, c, err := b.FrameExitStatus(paneID)
+		dead, c, err := b.FrameExitStatus(frameID)
 		if err != nil || !dead {
 			return false
 		}
@@ -140,24 +140,24 @@ func TestPtyBackendEnvStore(t *testing.T) {
 }
 
 // TestPtyBackendBufferRoundTrip verifies LoadBuffer holds text and PasteBuffer
-// writes it to the pane then drops the buffer.
+// writes it to the frame then drops the buffer.
 func TestPtyBackendBufferRoundTrip(t *testing.T) {
 	b := NewPtyBackend(0)
-	paneID := spawn(t, b, "frame-buf", "w", "cat")
-	defer func() { _ = b.KillFrame(paneID) }()
+	frameID := spawn(t, b, "frame-buf", "w", "cat")
+	defer func() { _ = b.KillFrame(frameID) }()
 
 	if err := b.LoadBuffer("buf1", "pasted-text-abc\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.PasteBuffer("buf1", paneID); err != nil {
+	if err := b.PasteBuffer("buf1", frameID); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, func() bool {
-		out, err := b.CaptureFrame(paneID, 50)
+		out, err := b.CaptureFrame(frameID, 50)
 		return err == nil && strings.Contains(out, "pasted-text-abc")
 	})
 	// Buffer consumed: a second paste is a no-op error (buffer gone).
-	if err := b.PasteBuffer("buf1", paneID); err == nil {
+	if err := b.PasteBuffer("buf1", frameID); err == nil {
 		t.Fatal("PasteBuffer on consumed buffer should error")
 	}
 }
@@ -166,13 +166,13 @@ func TestPtyBackendBufferRoundTrip(t *testing.T) {
 // FrameSize reflects the new dimensions.
 func TestPtyBackendResize(t *testing.T) {
 	b := NewPtyBackend(0)
-	paneID := spawn(t, b, "frame-resize", "w", "sleep 5")
-	defer func() { _ = b.KillFrame(paneID) }()
+	frameID := spawn(t, b, "frame-resize", "w", "sleep 5")
+	defer func() { _ = b.KillFrame(frameID) }()
 
-	if err := b.ResizeWindow(paneID, 120, 40); err != nil {
+	if err := b.ResizeWindow(frameID, 120, 40); err != nil {
 		t.Fatal(err)
 	}
-	w, h, err := b.FrameSize(paneID)
+	w, h, err := b.FrameSize(frameID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,25 +235,25 @@ func TestKeyBytes(t *testing.T) {
 // keystroke through cat and observing it in the captured output.
 func TestPtyBackendSendKey(t *testing.T) {
 	b := NewPtyBackend(0)
-	paneID := spawn(t, b, "frame-sendkey", "w", "cat")
-	defer func() { _ = b.KillFrame(paneID) }()
+	frameID := spawn(t, b, "frame-sendkey", "w", "cat")
+	defer func() { _ = b.KillFrame(frameID) }()
 
 	// Send a recognisable text marker via SendKeys, then a Space via SendKey;
 	// cat echoes both. We assert the marker appears (SendKey path drove the pty).
-	if err := b.SendKeys(paneID, "key-marker"); err != nil {
+	if err := b.SendKeys(frameID, "key-marker"); err != nil {
 		t.Fatalf("SendKeys: %v", err)
 	}
-	if err := b.SendKey(paneID, "Space"); err != nil {
+	if err := b.SendKey(frameID, "Space"); err != nil {
 		t.Fatalf("SendKey: %v", err)
 	}
 	waitUntil(t, func() bool {
-		out, err := b.CaptureFrame(paneID, 50)
+		out, err := b.CaptureFrame(frameID, 50)
 		return err == nil && strings.Contains(out, "key-marker")
 	})
 }
 
 // TestPtyBackendUnknownFrameErrors pins the unknown-target contract: every
-// inspect/IO/lifecycle op that addresses a pane returns a non-nil error for an
+// inspect/IO/lifecycle op that addresses a frame returns a non-nil error for an
 // unspawned target. The errors that flow out of the runtime-internal
 // "unknown frame" path must wrap ErrFrameMissing so callers like
 // resident.isMissingFrameErr can distinguish vanished frames from transient
@@ -317,17 +317,17 @@ func TestPtyBackendUnknownFrameErrors(t *testing.T) {
 // the error as transient.
 func TestPtyBackendKillFrameWrapsSentinel(t *testing.T) {
 	b := NewPtyBackend(0)
-	paneID := spawn(t, b, "frame-kill-sentinel", "w", "sleep 5")
-	if err := b.KillFrame(paneID); err != nil {
+	frameID := spawn(t, b, "frame-kill-sentinel", "w", "sleep 5")
+	if err := b.KillFrame(frameID); err != nil {
 		t.Fatal(err)
 	}
-	// Second kill: pane already gone. Error must wrap ErrFrameMissing.
-	err := b.KillFrame(paneID)
+	// Second kill: frame already gone. Error must wrap ErrFrameMissing.
+	err := b.KillFrame(frameID)
 	if err == nil {
-		t.Fatal("second KillFrame(pane) = nil, want non-nil")
+		t.Fatal("second KillFrame(frame) = nil, want non-nil")
 	}
 	if !errors.Is(err, ErrFrameMissing) {
-		t.Fatalf("second KillFrame(pane) = %v, does not wrap ErrFrameMissing", err)
+		t.Fatalf("second KillFrame(frame) = %v, does not wrap ErrFrameMissing", err)
 	}
 	// And the runtime's resident.isMissingFrameErr must classify it as missing.
 	if !isMissingFrameErr(err) {
@@ -341,11 +341,11 @@ func TestPtyBackendKillFrameWrapsSentinel(t *testing.T) {
 // shell must honour exec semantics so the user's process replaces sh.
 func TestPtyBackendSpawnRunsShellStrings(t *testing.T) {
 	b := NewPtyBackend(0)
-	paneID := spawn(t, b, "frame-exec", "w", "exec bash -c 'exit 9'")
+	frameID := spawn(t, b, "frame-exec", "w", "exec bash -c 'exit 9'")
 
 	var code int
 	waitUntil(t, func() bool {
-		dead, c, err := b.FrameExitStatus(paneID)
+		dead, c, err := b.FrameExitStatus(frameID)
 		if err != nil || !dead {
 			return false
 		}
@@ -362,10 +362,10 @@ func TestPtyBackendSpawnRunsShellStrings(t *testing.T) {
 // reaped.
 func TestPtyBackendExitStatusLive(t *testing.T) {
 	b := NewPtyBackend(0)
-	paneID := spawn(t, b, "frame-live", "w", "sleep 5")
-	defer func() { _ = b.KillFrame(paneID) }()
+	frameID := spawn(t, b, "frame-live", "w", "sleep 5")
+	defer func() { _ = b.KillFrame(frameID) }()
 
-	dead, code, err := b.FrameExitStatus(paneID)
+	dead, code, err := b.FrameExitStatus(frameID)
 	if err != nil {
 		t.Fatalf("FrameExitStatus(live) err = %v, want nil", err)
 	}
@@ -373,46 +373,46 @@ func TestPtyBackendExitStatusLive(t *testing.T) {
 		t.Fatalf("FrameExitStatus(live) = %v, %d; want false, -1", dead, code)
 	}
 
-	// A separate pane that exits 0: FrameExitStatus must flip to dead.
-	exitPane := spawn(t, b, "frame-exit0", "w2", "bash -c 'exit 0'")
-	defer func() { _ = b.KillFrame(exitPane) }()
+	// A separate frame that exits 0: FrameExitStatus must flip to dead.
+	exitFrame := spawn(t, b, "frame-exit0", "w2", "bash -c 'exit 0'")
+	defer func() { _ = b.KillFrame(exitFrame) }()
 	waitUntil(t, func() bool {
-		dead, _, err := b.FrameExitStatus(exitPane)
+		dead, _, err := b.FrameExitStatus(exitFrame)
 		return err == nil && dead
 	})
 }
 
-// TestPtyBackendRespawn verifies a pane can be respawned in place and that an
+// TestPtyBackendRespawn verifies a frame can be respawned in place and that an
 // empty respawn command is rejected.
 func TestPtyBackendRespawn(t *testing.T) {
 	b := NewPtyBackend(0)
-	paneID := spawn(t, b, "frame-respawn", "w", "bash -c 'exit 0'")
-	defer func() { _ = b.KillFrame(paneID) }()
+	frameID := spawn(t, b, "frame-respawn", "w", "bash -c 'exit 0'")
+	defer func() { _ = b.KillFrame(frameID) }()
 
-	// Wait for the original to die so we respawn over a reaped pane.
+	// Wait for the original to die so we respawn over a reaped frame.
 	waitUntil(t, func() bool {
-		dead, _, err := b.FrameExitStatus(paneID)
+		dead, _, err := b.FrameExitStatus(frameID)
 		return err == nil && dead
 	})
 
-	// Respawn over the same target with a long-lived command: pane is alive again.
-	if err := b.RespawnFrame(paneID, "cat"); err != nil {
+	// Respawn over the same target with a long-lived command: frame is alive again.
+	if err := b.RespawnFrame(frameID, "cat"); err != nil {
 		t.Fatalf("RespawnFrame: %v", err)
 	}
-	if dead, _, err := b.FrameExitStatus(paneID); err != nil || dead {
+	if dead, _, err := b.FrameExitStatus(frameID); err != nil || dead {
 		t.Fatalf("FrameExitStatus after respawn = dead=%v, err=%v; want dead=false, err=nil", dead, err)
 	}
-	// Echo path still works on the respawned pane.
-	if err := b.SendKeys(paneID, "respawned-ok"); err != nil {
+	// Echo path still works on the respawned frame.
+	if err := b.SendKeys(frameID, "respawned-ok"); err != nil {
 		t.Fatalf("SendKeys after respawn: %v", err)
 	}
 	waitUntil(t, func() bool {
-		out, err := b.CaptureFrame(paneID, 50)
+		out, err := b.CaptureFrame(frameID, 50)
 		return err == nil && strings.Contains(out, "respawned-ok")
 	})
 
 	// Empty respawn command is rejected.
-	if err := b.RespawnFrame(paneID, ""); err == nil {
+	if err := b.RespawnFrame(frameID, ""); err == nil {
 		t.Error("RespawnFrame(empty) error = nil, want non-nil")
 	}
 }
@@ -423,23 +423,23 @@ func TestPtyBackendRespawn(t *testing.T) {
 func TestPtyBackendSubscribeSurface_SnapshotFirst(t *testing.T) {
 	b := NewPtyBackend(0)
 	// cat keeps the session alive so the subscriber channel stays open.
-	paneID := spawn(t, b, "frame-snapshot", "t", "cat")
-	defer func() { _ = b.KillFrame(paneID) }()
+	frameID := spawn(t, b, "frame-snapshot", "t", "cat")
+	defer func() { _ = b.KillFrame(frameID) }()
 
 	// Send a marker so the VT emulator has rendered content before we subscribe.
-	if err := b.SendKeys(paneID, "snapshot-marker"); err != nil {
+	if err := b.SendKeys(frameID, "snapshot-marker"); err != nil {
 		t.Fatalf("SendKeys: %v", err)
 	}
 	waitUntil(t, func() bool {
-		out, err := b.CaptureFrame(paneID, 50)
+		out, err := b.CaptureFrame(frameID, 50)
 		return err == nil && strings.Contains(out, "snapshot-marker")
 	})
 
-	subID, ch, err := b.SubscribeSurface(paneID)
+	subID, ch, err := b.SubscribeSurface(frameID)
 	if err != nil {
 		t.Fatalf("SubscribeSurface: %v", err)
 	}
-	defer func() { _ = b.UnsubscribeSurface(paneID, subID) }()
+	defer func() { _ = b.UnsubscribeSurface(frameID, subID) }()
 
 	// The first event from Subscribe is always the reattach snapshot (EventOutput).
 	deadline := time.After(3 * time.Second)
@@ -460,14 +460,14 @@ func TestPtyBackendSubscribeSurface_SnapshotFirst(t *testing.T) {
 // the pty: cat echoes them back and they appear in the captured output.
 func TestPtyBackendWriteSurface(t *testing.T) {
 	b := NewPtyBackend(0)
-	paneID := spawn(t, b, "frame-write", "t", "cat")
-	defer func() { _ = b.KillFrame(paneID) }()
+	frameID := spawn(t, b, "frame-write", "t", "cat")
+	defer func() { _ = b.KillFrame(frameID) }()
 
-	subID, ch, err := b.SubscribeSurface(paneID)
+	subID, ch, err := b.SubscribeSurface(frameID)
 	if err != nil {
 		t.Fatalf("SubscribeSurface: %v", err)
 	}
-	defer func() { _ = b.UnsubscribeSurface(paneID, subID) }()
+	defer func() { _ = b.UnsubscribeSurface(frameID, subID) }()
 
 	// Drain the initial snapshot event so the loop below sees only live output.
 	deadline := time.After(3 * time.Second)
@@ -477,7 +477,7 @@ func TestPtyBackendWriteSurface(t *testing.T) {
 		t.Fatal("timeout waiting for snapshot event")
 	}
 
-	if err := b.WriteSurface(paneID, []byte("hello\n")); err != nil {
+	if err := b.WriteSurface(frameID, []byte("hello\n")); err != nil {
 		t.Fatalf("WriteSurface: %v", err)
 	}
 
@@ -506,14 +506,14 @@ func TestPtyBackendWriteSurface(t *testing.T) {
 // winsize and the VT emulator grid so FrameSize reports the new dimensions.
 func TestPtyBackendResizeSurface(t *testing.T) {
 	b := NewPtyBackend(0)
-	paneID := spawn(t, b, "frame-resize-surface", "t", "sleep 5")
-	defer func() { _ = b.KillFrame(paneID) }()
+	frameID := spawn(t, b, "frame-resize-surface", "t", "sleep 5")
+	defer func() { _ = b.KillFrame(frameID) }()
 
-	if err := b.ResizeSurface(paneID, 120, 40); err != nil {
+	if err := b.ResizeSurface(frameID, 120, 40); err != nil {
 		t.Fatalf("ResizeSurface: %v", err)
 	}
 
-	cols, rows, err := b.FrameSize(paneID)
+	cols, rows, err := b.FrameSize(frameID)
 	if err != nil {
 		t.Fatalf("FrameSize: %v", err)
 	}
@@ -523,7 +523,7 @@ func TestPtyBackendResizeSurface(t *testing.T) {
 }
 
 // TestPtyBackendSurface_MissingFrame verifies that all surface accessors
-// wrap ErrFrameMissing when the target pane does not exist.
+// wrap ErrFrameMissing when the target frame does not exist.
 func TestPtyBackendSurface_MissingFrame(t *testing.T) {
 	b := NewPtyBackend(0)
 	const unknown = "unknown-frame"
@@ -559,15 +559,15 @@ func TestPtyBackendConcurrent(t *testing.T) {
 		i := i
 		go func() {
 			defer wg.Done()
-			paneID := "concurrent-frame-" + strings.Repeat("a", i+1)
-			if err := b.SpawnFrame(paneID, "w", "cat", "", nil); err != nil {
+			frameID := "concurrent-frame-" + strings.Repeat("a", i+1)
+			if err := b.SpawnFrame(frameID, "w", "cat", "", nil); err != nil {
 				t.Errorf("SpawnFrame: %v", err)
 				return
 			}
-			_ = b.SendKeys(paneID, "hello")
-			_, _ = b.CaptureFrame(paneID, 10)
-			_, _, _ = b.FrameExitStatus(paneID)
-			_ = b.KillFrame(paneID)
+			_ = b.SendKeys(frameID, "hello")
+			_, _ = b.CaptureFrame(frameID, 10)
+			_, _, _ = b.FrameExitStatus(frameID)
+			_ = b.KillFrame(frameID)
 		}()
 	}
 	wg.Wait()

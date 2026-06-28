@@ -11,8 +11,8 @@ package state
 // siblings are unaffected.
 //
 // killWindow controls whether EffKillFrame is emitted per removed
-// frame. Pass true when the backend window still exists (e.g. EvPaneDied);
-// pass false when the window has already vanished (e.g. EvFrameVanished).
+// frame. Pass true when the backend frame still exists (e.g. EvFrameCommandExited);
+// pass false when the frame has already vanished (e.g. EvFrameVanished).
 //
 // Effect ordering: cleanup → persist → broadcast.
 func evictFrame(s State, frameID FrameID, killWindow bool) (State, []Effect, bool) {
@@ -58,10 +58,10 @@ func evictChildFrame(s State, sessID SessionID, sess Session, idx int, frameID F
 }
 
 // frameTeardownEffects builds the canonical per-frame teardown effect set
-// emitted whenever a frame leaves the session graph: backend window kill
-// (only when the window is still alive — pane-vanished routes set
-// killWindow=false), sandbox release (always — pane-vanished must still
-// drop the container refcount), pane unregister, file unwatch.
+// emitted whenever a frame leaves the session graph: backend frame kill
+// (only when the frame is still alive — frame-vanished routes set
+// killWindow=false), sandbox release (always — frame-vanished must still
+// drop the container refcount), frame unregister, file unwatch.
 //
 // Centralising the set is load-bearing: any new reducer path that
 // removes a frame must call this helper, otherwise the silent regression

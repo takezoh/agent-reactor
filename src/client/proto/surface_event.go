@@ -6,7 +6,7 @@ const (
 	EvtNamePromptEvent   = "prompt-event"
 )
 
-// EvtSurfaceOutput pushes one chunk of pane output encoded as base64
+// EvtSurfaceOutput pushes one chunk of frame surface output encoded as base64
 // to subscribed clients. Each message carries exactly one binary chunk
 // so the receiver can reconstruct the raw byte stream in order.
 type EvtSurfaceOutput struct {

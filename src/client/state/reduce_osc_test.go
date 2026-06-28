@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestReducePaneOsc_EmitsRecordNotification(t *testing.T) {
+func TestReduceFrameOsc_EmitsRecordNotification(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
@@ -31,7 +31,7 @@ func TestReducePaneOsc_EmitsRecordNotification(t *testing.T) {
 	}
 }
 
-func TestReducePaneOsc_EmptyTitleBody_NoEffect(t *testing.T) {
+func TestReduceFrameOsc_EmptyTitleBody_NoEffect(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
@@ -43,7 +43,7 @@ func TestReducePaneOsc_EmptyTitleBody_NoEffect(t *testing.T) {
 	}
 }
 
-func TestReducePaneOsc_UnknownFrame_NoEffect(t *testing.T) {
+func TestReduceFrameOsc_UnknownFrame_NoEffect(t *testing.T) {
 	s := New()
 	_, effs := Reduce(s, EvFrameOsc{FrameID: "ghost", Cmd: 9, Title: "hi"})
 	if len(effs) != 0 {
@@ -51,7 +51,7 @@ func TestReducePaneOsc_UnknownFrame_NoEffect(t *testing.T) {
 	}
 }
 
-func TestReducePaneOsc_OSC0_RoutesToDriver_NotRecordNotification(t *testing.T) {
+func TestReduceFrameOsc_OSC0_RoutesToDriver_NotRecordNotification(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
@@ -66,7 +66,7 @@ func TestReducePaneOsc_OSC0_RoutesToDriver_NotRecordNotification(t *testing.T) {
 	}
 }
 
-func TestReducePaneOsc_OSC0_AppendsEventLog(t *testing.T) {
+func TestReduceFrameOsc_OSC0_AppendsEventLog(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
@@ -86,7 +86,7 @@ func TestReducePaneOsc_OSC0_AppendsEventLog(t *testing.T) {
 	}
 }
 
-func TestReducePaneOsc_OSC2_AppendsEventLog(t *testing.T) {
+func TestReduceFrameOsc_OSC2_AppendsEventLog(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
@@ -103,7 +103,7 @@ func TestReducePaneOsc_OSC2_AppendsEventLog(t *testing.T) {
 	}
 }
 
-func TestReducePaneOsc_OSC0_EmptyTitle_NoEffect(t *testing.T) {
+func TestReduceFrameOsc_OSC0_EmptyTitle_NoEffect(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
@@ -115,7 +115,7 @@ func TestReducePaneOsc_OSC0_EmptyTitle_NoEffect(t *testing.T) {
 	}
 }
 
-func TestReducePaneOsc_OSC2_RoutesToDriver_NotRecordNotification(t *testing.T) {
+func TestReduceFrameOsc_OSC2_RoutesToDriver_NotRecordNotification(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
@@ -130,7 +130,7 @@ func TestReducePaneOsc_OSC2_RoutesToDriver_NotRecordNotification(t *testing.T) {
 	}
 }
 
-func TestReducePaneOsc_OSC2_EmptyTitle_NoEffect(t *testing.T) {
+func TestReduceFrameOsc_OSC2_EmptyTitle_NoEffect(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
@@ -142,7 +142,7 @@ func TestReducePaneOsc_OSC2_EmptyTitle_NoEffect(t *testing.T) {
 	}
 }
 
-func TestReducePanePrompt_UnknownFrame_NoEffect(t *testing.T) {
+func TestReduceFramePrompt_UnknownFrame_NoEffect(t *testing.T) {
 	s := New()
 	_, effs := Reduce(s, EvFramePrompt{FrameID: "ghost", Phase: PromptPhaseInput})
 	if len(effs) != 0 {
@@ -150,7 +150,7 @@ func TestReducePanePrompt_UnknownFrame_NoEffect(t *testing.T) {
 	}
 }
 
-func TestReducePanePrompt_RoutesToDriver(t *testing.T) {
+func TestReduceFramePrompt_RoutesToDriver(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
@@ -166,7 +166,7 @@ func TestReducePanePrompt_RoutesToDriver(t *testing.T) {
 	}
 }
 
-func TestReducePanePrompt_AppendsEventLog_Input(t *testing.T) {
+func TestReduceFramePrompt_AppendsEventLog_Input(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
@@ -182,7 +182,7 @@ func TestReducePanePrompt_AppendsEventLog_Input(t *testing.T) {
 	}
 }
 
-func TestReducePanePrompt_AppendsEventLog_CompleteWithExitCode(t *testing.T) {
+func TestReduceFramePrompt_AppendsEventLog_CompleteWithExitCode(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
@@ -199,7 +199,7 @@ func TestReducePanePrompt_AppendsEventLog_CompleteWithExitCode(t *testing.T) {
 	}
 }
 
-func TestReducePanePrompt_AppendsPersistAndBroadcastWithoutDriverEffects(t *testing.T) {
+func TestReduceFramePrompt_AppendsPersistAndBroadcastWithoutDriverEffects(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}
@@ -214,7 +214,7 @@ func TestReducePanePrompt_AppendsPersistAndBroadcastWithoutDriverEffects(t *test
 	}
 }
 
-func TestReducePaneOsc_OSC9_StillEmitsRecordNotification(t *testing.T) {
+func TestReduceFrameOsc_OSC9_StillEmitsRecordNotification(t *testing.T) {
 	s := New()
 	sessID := SessionID("sess1")
 	s.Sessions = map[SessionID]Session{sessID: stubSession(sessID)}

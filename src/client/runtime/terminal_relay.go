@@ -12,10 +12,10 @@ import (
 // It is extracted as an interface so tests can inject a fake implementation
 // without starting a real pty.
 type SurfaceBackend interface {
-	SubscribeSurface(paneID string) (int, <-chan termvt.Event, error)
-	UnsubscribeSurface(paneID string, id int) error
-	WriteSurface(paneID string, data []byte) error
-	ResizeSurface(paneID string, cols, rows int) error
+	SubscribeSurface(frameID string) (int, <-chan termvt.Event, error)
+	UnsubscribeSurface(frameID string, id int) error
+	WriteSurface(frameID string, data []byte) error
+	ResizeSurface(frameID string, cols, rows int) error
 }
 
 // surfaceKey is the map key for a per-(ConnID, SessionID) subscription.
@@ -26,10 +26,10 @@ type surfaceKey struct {
 
 // surfaceSub holds the live state of one fan-out goroutine.
 type surfaceSub struct {
-	paneID string
-	subID  int           // termvt subscriber id returned by SubscribeSurface
-	cancel chan struct{} // closed to stop the fan-out goroutine early
-	seq    uint64        // next Sequence value to emit (subscribe-scoped, resets on re-subscribe)
+	frameID string
+	subID   int           // termvt subscriber id returned by SubscribeSurface
+	cancel  chan struct{} // closed to stop the fan-out goroutine early
+	seq     uint64        // next Sequence value to emit (subscribe-scoped, resets on re-subscribe)
 }
 
 // TerminalRelay manages per-(ConnID, SessionID) subscriptions to termvt
@@ -66,9 +66,9 @@ func NewTerminalRelay(b SurfaceBackend, send func(internalEvent) bool) *Terminal
 	}
 }
 
-// Subscribe starts a fan-out goroutine for (connID, sessionID) on paneID.
+// Subscribe starts a fan-out goroutine for (connID, sessionID) on frameID.
 // If a subscription already exists for that key it is a no-op (idempotent).
-func (tr *TerminalRelay) Subscribe(connID state.ConnID, sessionID state.SessionID, paneID string) error {
+func (tr *TerminalRelay) Subscribe(connID state.ConnID, sessionID state.SessionID, frameID string) error {
 	key := surfaceKey{connID: connID, sessionID: sessionID}
 
 	tr.mu.Lock()
@@ -78,22 +78,22 @@ func (tr *TerminalRelay) Subscribe(connID state.ConnID, sessionID state.SessionI
 	}
 	tr.mu.Unlock()
 
-	id, ch, err := tr.backend.SubscribeSurface(paneID)
+	id, ch, err := tr.backend.SubscribeSurface(frameID)
 	if err != nil {
 		return err
 	}
 
 	sub := &surfaceSub{
-		paneID: paneID,
-		subID:  id,
-		cancel: make(chan struct{}),
+		frameID: frameID,
+		subID:   id,
+		cancel:  make(chan struct{}),
 	}
 
 	tr.mu.Lock()
 	// Double-check after acquiring lock (another goroutine could have raced us).
 	if _, exists := tr.subs[key]; exists {
 		tr.mu.Unlock()
-		_ = tr.backend.UnsubscribeSurface(paneID, id)
+		_ = tr.backend.UnsubscribeSurface(frameID, id)
 		return nil
 	}
 	tr.subs[key] = sub
@@ -118,18 +118,18 @@ func (tr *TerminalRelay) Unsubscribe(connID state.ConnID, sessionID state.Sessio
 	tr.mu.Unlock()
 
 	close(sub.cancel)
-	_ = tr.backend.UnsubscribeSurface(sub.paneID, sub.subID)
+	_ = tr.backend.UnsubscribeSurface(sub.frameID, sub.subID)
 }
 
-// Write forwards raw bytes to the pane's pty. No carriage return is appended;
+// Write forwards raw bytes to the frame's pty. No carriage return is appended;
 // the caller (xterm.js via the web gateway) is responsible for proper encoding.
-func (tr *TerminalRelay) Write(paneID string, data []byte) error {
-	return tr.backend.WriteSurface(paneID, data)
+func (tr *TerminalRelay) Write(frameID string, data []byte) error {
+	return tr.backend.WriteSurface(frameID, data)
 }
 
-// Resize forwards a terminal resize to the pane's pty and VT emulator.
-func (tr *TerminalRelay) Resize(paneID string, cols, rows int) error {
-	return tr.backend.ResizeSurface(paneID, cols, rows)
+// Resize forwards a terminal resize to the frame's pty and VT emulator.
+func (tr *TerminalRelay) Resize(frameID string, cols, rows int) error {
+	return tr.backend.ResizeSurface(frameID, cols, rows)
 }
 
 // Close unsubscribes all active subscriptions and shuts down TerminalRelay.

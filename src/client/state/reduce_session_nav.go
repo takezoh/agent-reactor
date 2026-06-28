@@ -79,7 +79,7 @@ func reduceSpawnFailed(s State, e EvSpawnFailed) (State, []Effect) {
 	}
 	return s, append(effs,
 		errResp(e.ReplyConn, e.ReplyReqID, ErrCodeInternal,
-			fmt.Sprintf("pane spawn failed: %s", e.Err)),
+			fmt.Sprintf("frame spawn failed: %s", e.Err)),
 	)
 }
 

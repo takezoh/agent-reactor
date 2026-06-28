@@ -200,7 +200,7 @@ func (d CodexDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 
 // RecoverableOnColdStart reports whether a stopped codex frame can be restored
 // on cold start. The conversation lives in the codex thread (a host-mounted
-// session store that survives container recreation), not in the dead pane, so a
+// session store that survives container recreation), not in the dead frame, so a
 // frame with a resumable thread is worth keeping and relaunching rather than
 // dropping. This is the keep/drop decision only; the actual resume vs. fresh
 // launch is decided by PrepareLaunch (which additionally declines to auto-resume

@@ -29,7 +29,7 @@ func containsKillSessionWindow(effs []Effect, frameID FrameID) bool {
 	return false
 }
 
-// TestPaneWindowVanished_emitsReleaseFrameSandbox_butNotKill asserts the
+// TestFrameVanished_emitsReleaseFrameSandbox_butNotKill asserts the
 // fix for the “container never goes away” bug. When the pane process
 // exits (pty EOF) the reducer routes via evictFrame(killWindow=false) so
 // no EffKillFrame is emitted (the backend window is already
@@ -37,7 +37,7 @@ func containsKillSessionWindow(effs []Effect, frameID FrameID) bool {
 // cleanup runs Manager.ReleaseFrame → 0 なら DestroyInstance. Before the
 // fix the two responsibilities were welded into EffKillFrame and
 // pane-vanished left the container alive forever.
-func TestPaneWindowVanished_emitsReleaseFrameSandbox_butNotKill(t *testing.T) {
+func TestFrameVanished_emitsReleaseFrameSandbox_butNotKill(t *testing.T) {
 	s := New()
 	id := SessionID("sess-vanish")
 	rootID := FrameID("frame-vanish")

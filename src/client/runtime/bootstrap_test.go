@@ -206,7 +206,7 @@ func TestLoadSnapshot_ColdStartDropsStoppedGenericFrame(t *testing.T) {
 
 // TestLoadSnapshot_WarmStartKeepsStoppedCodexFrame ensures warm start is
 // unaffected — it keeps every frame, recoverable or not, since the live backend
-// pane is still attached for inspection.
+// frame is still attached for inspection.
 func TestLoadSnapshot_WarmStartKeepsStoppedCodexFrame(t *testing.T) {
 	persist := &snapLoader{snaps: []SessionSnapshot{{
 		ID: "codex-warm",
@@ -222,6 +222,6 @@ func TestLoadSnapshot_WarmStartKeepsStoppedCodexFrame(t *testing.T) {
 		t.Fatalf("LoadSnapshot(false): %v", err)
 	}
 	if _, ok := r.state.Sessions["codex-warm"]; !ok {
-		t.Error("warm start must keep stopped frames (dead pane still attached for inspection)")
+		t.Error("warm start must keep stopped frames (dead frame still attached for inspection)")
 	}
 }

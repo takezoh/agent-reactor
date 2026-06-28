@@ -26,7 +26,7 @@ type RegisterOptions struct {
 // that import multiple sub-packages don't double-register.
 //
 // The "shell" driver is intentionally NOT registered here because its
-// display name must reflect the shell the pane backend will actually spawn
+// display name must reflect the shell the frame backend will actually spawn
 // (resolved via the user's login shell). The coordinator registers it directly
 // with NewGenericDriver("shell", <resolved-name>, threshold) after
 // the backend is up.

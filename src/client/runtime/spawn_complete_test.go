@@ -84,10 +84,10 @@ func TestHandleSpawnComplete_registersContainerFrame(t *testing.T) {
 
 // fakeFactory and fakeSubsystem live in subsystem_dispatch_test.go.
 
-// TestSpawnPaneWindow_emitsInternalSpawnComplete verifies the free spawn
+// TestSpawnFrameWindow_emitsInternalSpawnComplete verifies the free spawn
 // function performs I/O and reports back via internalSpawnComplete without
 // touching any *Runtime state (it holds only a spawnDeps).
-func TestSpawnPaneWindow_emitsInternalSpawnComplete(t *testing.T) {
+func TestSpawnFrameWindow_emitsInternalSpawnComplete(t *testing.T) {
 	sub := &fakeSubsystem{id: "sub-x", kind: state.LaunchSubsystemCLI}
 	internalCh := make(chan internalEvent, 1)
 	eventCh := make(chan state.Event, 1)
@@ -102,7 +102,7 @@ func TestSpawnPaneWindow_emitsInternalSpawnComplete(t *testing.T) {
 		sendEvent:    func(ev state.Event) { eventCh <- ev },
 	}
 
-	spawnPaneWindow(deps, state.EffSpawnFrame{
+	spawnFrameWindow(deps, state.EffSpawnFrame{
 		SessionID: "s1", FrameID: "f1", Project: "/p", Command: "minimal-test",
 	})
 
@@ -137,9 +137,9 @@ func TestSpawnPaneWindow_emitsInternalSpawnComplete(t *testing.T) {
 	}
 }
 
-// TestSpawnPaneWindow_emitsSpawnFailedOnError verifies a backend SpawnFrame
+// TestSpawnFrameWindow_emitsSpawnFailedOnError verifies a backend SpawnFrame
 // failure is reported via EvSpawnFailed and no internalSpawnComplete.
-func TestSpawnPaneWindow_emitsSpawnFailedOnError(t *testing.T) {
+func TestSpawnFrameWindow_emitsSpawnFailedOnError(t *testing.T) {
 	sub := &fakeSubsystem{id: "sub-x", kind: state.LaunchSubsystemCLI}
 	backend := newFakeBackend()
 	backend.spawnErr = errors.New("backend boom")
@@ -157,7 +157,7 @@ func TestSpawnPaneWindow_emitsSpawnFailedOnError(t *testing.T) {
 		sendEvent:    func(ev state.Event) { eventCh <- ev },
 	}
 
-	spawnPaneWindow(deps, state.EffSpawnFrame{
+	spawnFrameWindow(deps, state.EffSpawnFrame{
 		SessionID: "s1", FrameID: "f1", Project: "/p", Command: "minimal-test",
 	})
 
@@ -177,11 +177,11 @@ func TestSpawnPaneWindow_emitsSpawnFailedOnError(t *testing.T) {
 	}
 }
 
-// TestSpawnPaneWindow_cleanupOnSpawnError verifies that when the sandbox was
+// TestSpawnFrameWindow_cleanupOnSpawnError verifies that when the sandbox was
 // acquired (WrapLaunch returned a Cleanup) but backend SpawnFrame then fails, the
 // spawn goroutine releases the sandbox — otherwise the container ref leaks
 // because no EvFrameSpawned / kill path ever reaches this frame.
-func TestSpawnPaneWindow_cleanupOnSpawnError(t *testing.T) {
+func TestSpawnFrameWindow_cleanupOnSpawnError(t *testing.T) {
 	var cleaned atomic.Bool
 	backend := newFakeBackend()
 	backend.spawnErr = errors.New("backend boom")
@@ -196,7 +196,7 @@ func TestSpawnPaneWindow_cleanupOnSpawnError(t *testing.T) {
 		sendEvent:    func(state.Event) {},
 	}
 
-	spawnPaneWindow(deps, state.EffSpawnFrame{
+	spawnFrameWindow(deps, state.EffSpawnFrame{
 		SessionID: "s1", FrameID: "f1", Project: "/p", Command: "minimal-test",
 	})
 
@@ -209,7 +209,7 @@ func TestSpawnPaneWindow_cleanupOnSpawnError(t *testing.T) {
 // fix: if the spawn target session/frame is no longer in reducer state when
 // the completion arrives (EffKillFrame processed first), the loop
 // must NOT write the loop-owned maps and must release the resources the
-// goroutine acquired (cleanup closure, ReleaseFrame, pane kill).
+// goroutine acquired (cleanup closure, ReleaseFrame, frame kill).
 func TestHandleSpawnComplete_discardsWhenFrameKilledMidSpawn(t *testing.T) {
 	backend := newFakeBackend()
 	r := New(Config{Backend: backend})
@@ -236,13 +236,13 @@ func TestHandleSpawnComplete_discardsWhenFrameKilledMidSpawn(t *testing.T) {
 		t.Error("frameSubsystemIDs[f1] was written for a killed frame (resurrection leak)")
 	}
 
-	// The orphan pane must be killed synchronously on the loop.
+	// The orphan frame must be killed synchronously on the loop.
 	backend.mu.Lock()
 	killCalls := backend.killCalls
-	killedPanes := append([]string(nil), backend.killedPanes...)
+	killedFrames := append([]string(nil), backend.killedFrames...)
 	backend.mu.Unlock()
-	if killCalls != 1 || len(killedPanes) != 1 || killedPanes[0] != "f1" {
-		t.Errorf("expected one KillFrame(\"f1\"), got killCalls=%d killedPanes=%v", killCalls, killedPanes)
+	if killCalls != 1 || len(killedFrames) != 1 || killedFrames[0] != "f1" {
+		t.Errorf("expected one KillFrame(\"f1\"), got killCalls=%d killedFrames=%v", killCalls, killedFrames)
 	}
 
 	// Cleanup + ReleaseFrame run off-loop. Wait briefly for the goroutine.
@@ -295,13 +295,13 @@ func TestHandleSpawnComplete_discardsContainerFrame(t *testing.T) {
 		t.Error("container endpoint was started for a killed frame (endpoint leak)")
 	}
 
-	// Pane kill is loop-synchronous.
+	// Frame kill is loop-synchronous.
 	backend.mu.Lock()
 	killCalls := backend.killCalls
-	killedPanes := append([]string(nil), backend.killedPanes...)
+	killedFrames := append([]string(nil), backend.killedFrames...)
 	backend.mu.Unlock()
-	if killCalls != 1 || len(killedPanes) != 1 || killedPanes[0] != "ghost" {
-		t.Errorf("expected one KillFrame(\"ghost\"), got killCalls=%d killedPanes=%v", killCalls, killedPanes)
+	if killCalls != 1 || len(killedFrames) != 1 || killedFrames[0] != "ghost" {
+		t.Errorf("expected one KillFrame(\"ghost\"), got killCalls=%d killedFrames=%v", killCalls, killedFrames)
 	}
 
 	// Cleanup + ReleaseFrame run off-loop. The container-frame discard path is

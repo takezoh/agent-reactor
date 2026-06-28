@@ -342,7 +342,7 @@ func (b *Backend) bindThread(frameID state.FrameID, startDir, worktreePath strin
 	}
 	// Cold start: create the thread synchronously (thread/start request) so its
 	// id is known here and the frame binds deterministically — no async
-	// thread.started guessing, no cwd/active-frame heuristic. The spawned pane
+	// thread.started guessing, no cwd/active-frame heuristic. The spawned frame
 	// then resumes this id (RemoteAttachArgs with a non-empty threadID).
 	threadID, err := codexclient.StartThread(b.conn, startDir, nil, codexclient.ThreadOptions{})
 	if err != nil {
@@ -365,7 +365,7 @@ func (b *Backend) bindThread(frameID state.FrameID, startDir, worktreePath strin
 	// thread.started re-confirms idempotently.
 	b.emit(frameID, state.SubsystemSessionReady, b.payload(frameID))
 	// Inject an initial prompt only when one was supplied (orchestrator-style);
-	// interactive panes drive their own turns.
+	// interactive frames drive their own turns.
 	if len(stdin) > 0 {
 		if err := codexclient.StartTurn(b.conn, threadID, startDir, stdin, codexclient.TurnOptions{}); err != nil {
 			return "", err

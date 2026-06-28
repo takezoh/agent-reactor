@@ -11,29 +11,29 @@ import (
 	"github.com/takezoh/agent-reactor/client/state"
 )
 
-// fakePaneTap records Start/Stop calls for assertions.
-type fakePaneTap struct {
+// fakeFrameTap records Start/Stop calls for assertions.
+type fakeFrameTap struct {
 	mu      sync.Mutex
 	started []string
 	stopped []string
 }
 
-func (f *fakePaneTap) Start(_ context.Context, pane string) (<-chan []byte, error) {
+func (f *fakeFrameTap) Start(_ context.Context, frameID string) (<-chan []byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.started = append(f.started, pane)
+	f.started = append(f.started, frameID)
 	ch := make(chan []byte)
 	return ch, nil
 }
 
-func (f *fakePaneTap) Stop(pane string) error {
+func (f *fakeFrameTap) Stop(frameID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.stopped = append(f.stopped, pane)
+	f.stopped = append(f.stopped, frameID)
 	return nil
 }
 
-func (f *fakePaneTap) startedSorted() []string {
+func (f *fakeFrameTap) startedSorted() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	out := append([]string(nil), f.started...)
@@ -151,12 +151,12 @@ func TestReadTapCancelStops(t *testing.T) {
 	}
 }
 
-// Regression: the pane-tap VT emulator runs at 1x1 dimensions and the
+// Regression: the frame tap VT emulator runs at 1x1 dimensions and the
 // upstream charmbracelet/x/vt library panics with "index out of range"
 // when certain ESC sequences (e.g. CSI M / DECRC / ESC M) drive
 // Screen.InsertLineArea past the buffer bounds. The panic was raised in
 // the per-frame readTap goroutine and, with no recovery, terminated the
-// whole daemon — closing every IPC socket and leaving every TUI pane
+// whole daemon — closing every IPC socket and leaving every TUI frame
 // dead. feedSafe must absorb the panic, log it, and let the reader move
 // on to the next chunk so a single rogue codex frame can't take down
 // the daemon.
@@ -179,7 +179,7 @@ func TestFeedSafe_ContinuesAfterPanic(t *testing.T) {
 	frameID := state.FrameID("f1")
 	var events []state.Event
 	enqueue := func(e state.Event) { events = append(events, e) }
-	term := newPaneTapTerminal(frameID, enqueue)
+	term := newFrameTapTerminal(frameID, enqueue)
 	// Chunk 1: ESC sequences that crash the 1x1 emulator.
 	feedSafe(frameID, "%1", term, []byte("\x1bM\x1bM\x1bM"))
 	// Chunk 2: a well-formed OSC notification must still come through.
@@ -233,7 +233,7 @@ func TestReadTap_SurvivesVTPanic(t *testing.T) {
 }
 
 func TestStartRestoredTaps_StartsOnlyRootFrames(t *testing.T) {
-	tap := &fakePaneTap{}
+	tap := &fakeFrameTap{}
 	r := New(Config{
 		TickInterval: 10 * time.Second,
 		Tap:          tap,
@@ -261,7 +261,7 @@ func TestStartRestoredTaps_StartsOnlyRootFrames(t *testing.T) {
 	got := tap.startedSorted()
 	want := []string{"frame_a", "frame_b"}
 	if len(got) != len(want) {
-		t.Fatalf("started panes = %v, want %v", got, want)
+		t.Fatalf("started frames = %v, want %v", got, want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
@@ -271,7 +271,7 @@ func TestStartRestoredTaps_StartsOnlyRootFrames(t *testing.T) {
 }
 
 func TestStartRestoredTaps_NoTapsWhenNilManager(t *testing.T) {
-	tap := &fakePaneTap{}
+	tap := &fakeFrameTap{}
 	r := New(Config{
 		TickInterval: 10 * time.Second,
 		Tap:          tap,
@@ -290,7 +290,7 @@ func TestStartRestoredTaps_NoTapsWhenNilManager(t *testing.T) {
 }
 
 func TestStartTapsForRestoredFrames_DispatchesViaEventLoop(t *testing.T) {
-	tap := &fakePaneTap{}
+	tap := &fakeFrameTap{}
 	r := New(Config{
 		TickInterval: 10 * time.Millisecond,
 		Tap:          tap,

@@ -60,8 +60,11 @@ type LogConfig struct {
 	Level string `toml:"level"`
 }
 
-// PaneConfig holds the pane backend's session-level layout settings.
-// The TOML key remains "tmux" for back-compat with ~/.agent-reactor/config.toml.
+// PaneConfig holds the frame backend's session-level layout settings.
+// The struct + TOML keys keep the "Pane" prefix (and `tmux` TOML table key)
+// purely for back-compat with ~/.agent-reactor/config.toml: PaneRatio* /
+// SessionName / Prefix are tmux-era relics, but renaming the TOML keys
+// would invalidate every existing user config file.
 //
 // SessionName and PaneRatioVertical feed the runtime via
 // coordinator.Config. Prefix and PaneRatioHorizontal are *unused* on

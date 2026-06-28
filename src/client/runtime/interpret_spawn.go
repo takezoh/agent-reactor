@@ -39,8 +39,8 @@ func (r *Runtime) buildSpawnDeps() spawnDeps {
 	}
 }
 
-// spawnPaneWindow runs in a goroutine, performs all slow I/O (subsystem
-// ensure, bind, launch wrap, pane spawn), and posts results back via
+// spawnFrameWindow runs in a goroutine, performs all slow I/O (subsystem
+// ensure, bind, launch wrap, frame spawn), and posts results back via
 // internalSpawnComplete / EvSpawnFailed. It holds no *Runtime reference,
 // so every state mutation is deferred to the event loop in handleSpawnComplete.
 //
@@ -51,7 +51,7 @@ func (r *Runtime) buildSpawnDeps() spawnDeps {
 // agent session that issued the POST /api/sessions that triggered the
 // spawn. Converting a panic into EvSpawnFailed keeps the failure scoped
 // to the one session being created; the rest of the daemon continues serving.
-func spawnPaneWindow(deps spawnDeps, e state.EffSpawnFrame) {
+func spawnFrameWindow(deps spawnDeps, e state.EffSpawnFrame) {
 	sendFailed := func(msg string) {
 		deps.sendEvent(state.EvSpawnFailed{
 			SessionID: e.SessionID, FrameID: e.FrameID,
@@ -103,7 +103,7 @@ func spawnPaneWindow(deps spawnDeps, e state.EffSpawnFrame) {
 	spawnCmd := buildSpawnCommand(wrapped.Command, e.Stdin)
 	slog.Info("runtime: spawning window", "frame", e.FrameID, "cmd", spawnCmd)
 	if err := deps.backend.SpawnFrame(string(e.FrameID), name, spawnCmd, wrapped.StartDir, wrapped.Env); err != nil {
-		// wrapLaunchForSpawn already acquired the sandbox/container; the pane never
+		// wrapLaunchForSpawn already acquired the sandbox/container; the frame never
 		// launched and no EvFrameSpawned/kill path will reach this frame, so
 		// release it here to avoid leaking the container ref + cleanup closure.
 		if wrapped.Cleanup != nil {
@@ -127,13 +127,13 @@ func spawnPaneWindow(deps spawnDeps, e state.EffSpawnFrame) {
 	})
 }
 
-// recoverSpawnPanic is the deferred panic handler for spawnPaneWindow. Logs
+// recoverSpawnPanic is the deferred panic handler for spawnFrameWindow. Logs
 // the panic at Error with a full stack so an operator can trace the root
 // cause, then surfaces the failure on the spawn reply channel via sendFailed
 // so the HTTP POST that triggered the spawn gets a clean 502 instead of
 // dropping its reply when the daemon crashes.
 //
-// Kept out of spawnPaneWindow's body so spawnPaneWindow stays under the
+// Kept out of spawnFrameWindow's body so spawnFrameWindow stays under the
 // project-wide 80-line function cap (funlen lint).
 func recoverSpawnPanic(e state.EffSpawnFrame, sendFailed func(string)) {
 	rec := recover()
@@ -150,7 +150,7 @@ func recoverSpawnPanic(e state.EffSpawnFrame, sendFailed func(string)) {
 }
 
 // handleSpawnComplete runs on the event loop. It stores the per-frame I/O
-// handles produced by spawnPaneWindow into loop-owned maps (and the container
+// handles produced by spawnFrameWindow into loop-owned maps (and the container
 // registry), then dispatches the pure EvFrameSpawned event.
 //
 // If the session or frame was killed while spawn was in flight (an
@@ -204,8 +204,8 @@ func (r *Runtime) spawnTargetAlive(sessionID state.SessionID, frameID state.Fram
 
 // discardSpawnResult releases the resources a spawn goroutine acquired when
 // the loop discovers that EffKillFrame ran first and the target frame
-// is gone. Tears down what the goroutine produced (pane window, per-frame
-// subsystem binding, sandbox/container cleanup) and dispatches EvSpawnFailed
+// is gone. Tears down what the goroutine produced (frame backend session,
+// per-frame subsystem binding, sandbox/container cleanup) and dispatches EvSpawnFailed
 // so the original CreateSession/AddFrame caller — which is still parked on
 // its reply channel — gets an explicit error rather than a silent timeout.
 //
@@ -323,7 +323,7 @@ func buildSpawnCommand(command string, stdin []byte) string {
 	return "exec " + command
 }
 
-// windowName builds a stable display name for a new pane window from
+// windowName builds a stable display name for a new frame from
 // project + session id (matches the legacy SessionService format).
 func windowName(project, sessionID string) string {
 	if i := strings.LastIndex(project, "/"); i >= 0 {

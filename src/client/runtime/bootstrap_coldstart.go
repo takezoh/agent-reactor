@@ -48,10 +48,10 @@ func (r *Runtime) PrewarmContainers(ctx context.Context) {
 	_ = eg.Wait()
 }
 
-// RecreateAll spawns fresh pane windows for every session in r.state.
-// Used during cold-start (the pane backend session was just created and
-// contains no client windows yet). termvt keys sessions on string(FrameID)
-// directly, so no auxiliary frame→pane map needs populating.
+// RecreateAll spawns fresh pty sessions for every frame in r.state.
+// Used during cold-start (the frame backend has just been created and
+// contains no pty sessions yet). termvt keys sessions on string(FrameID)
+// directly, so no auxiliary frame→target map needs populating.
 // Spawn failures are logged but do not remove the session: a transient
 // error is not evidence that the user intended to delete the session.
 func (r *Runtime) RecreateAll() error {
@@ -86,7 +86,7 @@ func (r *Runtime) recreateSessionFrames(id state.SessionID, sess state.Session) 
 // on cold start. The command exited in a prior session and the frame is kept
 // for inspection; resurrecting it as a fresh process would destroy the very
 // state the user wants to look at. The exception is a driver whose durable
-// state survives the dead pane (codex resumes its thread) — such a frame is
+// state survives the dead frame (codex resumes its thread) — such a frame is
 // relaunched, so it is not skipped.
 func skipColdStartSpawn(frame state.SessionFrame) bool {
 	drv := state.GetDriver(frame.Command)
@@ -106,7 +106,7 @@ func coldStartRecoverable(drv state.Driver, s state.DriverState) bool {
 	return ok && s != nil && rec.RecoverableOnColdStart(s)
 }
 
-// spawnFrameWindow prepares and spawns a single frame's pane window during cold start.
+// spawnFrameWindow prepares and spawns a single frame's pty session during cold start.
 // It runs PrepareLaunch → WrapLaunch → SpawnFrame and registers the cleanup
 // callback. termvt keys sessions on string(FrameID), so no extra env shadow is
 // written.
@@ -177,9 +177,9 @@ func (r *Runtime) spawnFrameWindow(id state.SessionID, sandbox state.SandboxOver
 	return nil
 }
 
-// spawnWrapped calls SpawnFrame for a WrappedLaunch. Window sizing is owned
+// spawnWrapped calls SpawnFrame for a WrappedLaunch. Frame sizing is owned
 // by the connected client (the browser terminal resizes via the surface RPC
-// after attach), so cold-start does not pre-size the pane.
+// after attach), so cold-start does not pre-size the frame.
 func (r *Runtime) spawnWrapped(frameID state.FrameID, project string, wrapped WrappedLaunch) error {
 	name := windowName(project, string(frameID))
 	spawnCmd := buildSpawnCommand(wrapped.Command, nil)

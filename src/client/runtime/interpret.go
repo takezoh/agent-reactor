@@ -12,7 +12,7 @@ import (
 
 // execute is the side-effect interpreter. Each Effect type has a
 // dedicated case that performs the I/O on the appropriate backend.
-// Effects that produce events back into the loop (pane spawn, pane
+// Effects that produce events back into the loop (frame spawn, frame
 // alive, etc.) call r.Enqueue, which is non-blocking and goroutine-
 // safe so the case can fire from inside the event loop without
 // risking deadlock on the channel.
@@ -22,7 +22,7 @@ func (r *Runtime) execute(eff state.Effect) {
 		state.EffRegisterFrame, state.EffUnregisterFrame,
 		state.EffSetSessionEnv, state.EffUnsetSessionEnv,
 		state.EffReconcileWindows:
-		r.executePaneEffect(e)
+		r.executeFrameEffect(e)
 
 	case state.EffSendResponse, state.EffSendResponseSync, state.EffSendError,
 		state.EffBroadcastSessionsChanged, state.EffBroadcastEvent, state.EffCloseConn:
@@ -32,7 +32,7 @@ func (r *Runtime) execute(eff state.Effect) {
 		r.executeFSEffect(e)
 
 	case state.EffSendFrameKeys:
-		r.executeSendPaneKeys(e)
+		r.executeSendFrameKeys(e)
 
 	case state.EffSurfaceSubscribeStart, state.EffSurfaceSubscribeStop,
 		state.EffSurfaceResize, state.EffSurfaceWriteRaw,
@@ -44,7 +44,7 @@ func (r *Runtime) execute(eff state.Effect) {
 	}
 }
 
-// executeMiscEffect handles effects that don't fit the pane/IPC/FS categories.
+// executeMiscEffect handles effects that don't fit the frame/IPC/FS categories.
 func (r *Runtime) executeMiscEffect(eff state.Effect) {
 	switch e := eff.(type) {
 	case state.EffPersistSnapshot:
@@ -105,9 +105,9 @@ func (r *Runtime) executeRecordNotification(e state.EffRecordNotification) {
 	}
 }
 
-func (r *Runtime) executeSendPaneKeys(e state.EffSendFrameKeys) {
-	pane := r.sessionPaneForSession(e.SessionID)
-	if pane == "" {
+func (r *Runtime) executeSendFrameKeys(e state.EffSendFrameKeys) {
+	frameID := r.sessionHeadFrameTarget(e.SessionID)
+	if frameID == "" {
 		r.executeIPCEffect(state.EffSendError{
 			ConnID:  e.ConnID,
 			ReqID:   e.ReqID,
@@ -118,9 +118,9 @@ func (r *Runtime) executeSendPaneKeys(e state.EffSendFrameKeys) {
 	}
 	var err error
 	if e.WithEnter {
-		err = r.cfg.Backend.SendKeys(pane, e.Text)
+		err = r.cfg.Backend.SendKeys(frameID, e.Text)
 	} else {
-		err = r.cfg.Backend.SendKey(pane, e.Key)
+		err = r.cfg.Backend.SendKey(frameID, e.Key)
 	}
 	if err != nil {
 		slog.Warn("runtime: send-keys failed", "session", e.SessionID, "err", err)
@@ -143,13 +143,13 @@ func (r *Runtime) executeSurfaceEffect(eff state.Effect) {
 		if r.terminalRelay == nil {
 			return
 		}
-		paneID := r.sessionPaneForSession(e.SessionID)
-		if paneID == "" {
-			slog.Warn("runtime: surface subscribe: no pane for session",
+		frameID := r.sessionHeadFrameTarget(e.SessionID)
+		if frameID == "" {
+			slog.Warn("runtime: surface subscribe: no frame for session",
 				"session", e.SessionID, "conn", e.ConnID)
 			return
 		}
-		if err := r.terminalRelay.Subscribe(e.ConnID, e.SessionID, paneID); err != nil {
+		if err := r.terminalRelay.Subscribe(e.ConnID, e.SessionID, frameID); err != nil {
 			slog.Warn("runtime: surface subscribe failed",
 				"session", e.SessionID, "conn", e.ConnID, "err", err)
 		}
@@ -164,11 +164,11 @@ func (r *Runtime) executeSurfaceEffect(eff state.Effect) {
 		if r.terminalRelay == nil {
 			return
 		}
-		paneID := r.sessionPaneForSession(e.SessionID)
-		if paneID == "" {
+		frameID := r.sessionHeadFrameTarget(e.SessionID)
+		if frameID == "" {
 			return
 		}
-		if err := r.terminalRelay.Resize(paneID, int(e.Cols), int(e.Rows)); err != nil {
+		if err := r.terminalRelay.Resize(frameID, int(e.Cols), int(e.Rows)); err != nil {
 			slog.Warn("runtime: surface resize failed",
 				"session", e.SessionID, "err", err)
 		}
@@ -177,11 +177,11 @@ func (r *Runtime) executeSurfaceEffect(eff state.Effect) {
 		if r.terminalRelay == nil {
 			return
 		}
-		paneID := r.sessionPaneForSession(e.SessionID)
-		if paneID == "" {
+		frameID := r.sessionHeadFrameTarget(e.SessionID)
+		if frameID == "" {
 			return
 		}
-		if err := r.terminalRelay.Write(paneID, e.Data); err != nil {
+		if err := r.terminalRelay.Write(frameID, e.Data); err != nil {
 			slog.Warn("runtime: surface write failed",
 				"session", e.SessionID, "err", err)
 		}
@@ -194,16 +194,16 @@ func (r *Runtime) executeSurfaceEffect(eff state.Effect) {
 	}
 }
 
-func (r *Runtime) executePaneEffect(eff state.Effect) {
+func (r *Runtime) executeFrameEffect(eff state.Effect) {
 	switch e := eff.(type) {
 	case state.EffSpawnFrame:
-		go spawnPaneWindow(r.buildSpawnDeps(), e)
+		go spawnFrameWindow(r.buildSpawnDeps(), e)
 	case state.EffKillFrame:
 		r.executeKillSessionWindow(e)
 	case state.EffRegisterFrame:
-		r.executeRegisterPane(e)
+		r.executeRegisterFrame(e)
 	case state.EffUnregisterFrame:
-		r.executeUnregisterPane(e)
+		r.executeUnregisterFrame(e)
 	case state.EffSetSessionEnv:
 		_ = r.cfg.Backend.SetEnv(e.Key, e.Value)
 	case state.EffUnsetSessionEnv:
@@ -216,15 +216,16 @@ func (r *Runtime) executePaneEffect(eff state.Effect) {
 func (r *Runtime) executeKillSessionWindow(e state.EffKillFrame) {
 	target := string(e.FrameID)
 	if tail, err := r.cfg.Backend.CaptureFrame(target, 20); err == nil && tail != "" {
-		slog.Info("runtime: pane tail on kill", "frame", e.FrameID, "target", target, "tail", tail)
+		slog.Info("runtime: frame tail on kill", "frame", e.FrameID, "target", target, "tail", tail)
 	}
 	if err := r.cfg.Backend.KillFrame(target); err != nil {
-		// Missing-frame errors are expected when the frame's pane vanished
-		// independently; log other failures at Error so they stay visible.
+		// Missing-frame errors are expected when the frame's pty session
+		// vanished independently; log other failures at Error so they stay
+		// visible.
 		if isMissingFrameErr(err) {
-			slog.Debug("runtime: kill window already gone", "target", target, "err", err)
+			slog.Debug("runtime: kill frame already gone", "target", target, "err", err)
 		} else {
-			slog.Error("runtime: kill window failed", "target", target, "err", err)
+			slog.Error("runtime: kill frame failed", "target", target, "err", err)
 		}
 	}
 	if r.warmFrames != nil {
@@ -236,7 +237,7 @@ func (r *Runtime) executeKillSessionWindow(e state.EffKillFrame) {
 	// Sandbox cleanup (container token+mounts removal, ReleaseFrame →
 	// DestroyInstance) is driven by a separate EffReleaseFrameSandbox
 	// emitted from the reducer for the same frame, so this handler is
-	// pane-window kill + subsystem release only.
+	// frame kill + subsystem release only.
 	if sub, ok := r.frameSubsystems[e.FrameID]; ok {
 		delete(r.frameSubsystems, e.FrameID)
 		sub.ReleaseFrame(e.FrameID)
@@ -244,13 +245,13 @@ func (r *Runtime) executeKillSessionWindow(e state.EffKillFrame) {
 	}
 }
 
-func (r *Runtime) executeRegisterPane(e state.EffRegisterFrame) {
+func (r *Runtime) executeRegisterFrame(e state.EffRegisterFrame) {
 	if e.Tap && r.taps != nil {
 		r.taps.start(e.FrameID, string(e.FrameID), r.Enqueue)
 	}
 }
 
-func (r *Runtime) executeUnregisterPane(e state.EffUnregisterFrame) {
+func (r *Runtime) executeUnregisterFrame(e state.EffUnregisterFrame) {
 	if r.taps != nil {
 		r.taps.stop(e.FrameID)
 	}
@@ -364,17 +365,17 @@ func (r *Runtime) snapshotSessions() []SessionSnapshot {
 // exists. Two distinct conditions are surfaced:
 //
 //   - The session is dead but still around (remain-on-exit=on holds it):
-//     the command process exited. Read #{pane_dead_status} and emit
+//     the command process exited. Read the frame's exit status and emit
 //     EvFrameCommandExited so the reducer can decide between
 //     eviction (exit 0) and keeping the frame as stopped (exit != 0).
 //
 //   - The query for the session itself failed with a missing-frame style
-//     error: the pane window was destroyed externally (user kill-window).
-//     Emit EvFrameVanished to evict unconditionally — there is
-//     nothing left to inspect.
+//     error: the frame was destroyed externally (user kill). Emit
+//     EvFrameVanished to evict unconditionally — there is nothing left
+//     to inspect.
 //
 // Iterates state.Sessions directly: each frame's backend session key is
-// string(FrameID), so no auxiliary frame→pane map is needed.
+// string(FrameID), so no auxiliary frame→target map is needed.
 func (r *Runtime) reconcileWindows() {
 	for _, sess := range r.state.Sessions {
 		for _, frame := range sess.Frames {
@@ -383,12 +384,12 @@ func (r *Runtime) reconcileWindows() {
 			dead, code, err := r.cfg.Backend.FrameExitStatus(target)
 			if err != nil {
 				if isMissingFrameErr(err) {
-					slog.Debug("runtime: reconcile pane vanished", "frame", frameID, "pane", target, "err", err)
+					slog.Debug("runtime: reconcile frame vanished", "frame", frameID, "target", target, "err", err)
 					r.Enqueue(state.EvFrameVanished{FrameID: frameID})
 				} else {
 					// Transient query failure (timeout/busy): keep the frame and
 					// re-probe next reconcile rather than treating it as vanished.
-					slog.Warn("runtime: reconcile pane transient error (ignored)", "frame", frameID, "pane", target, "err", err)
+					slog.Warn("runtime: reconcile frame transient error (ignored)", "frame", frameID, "target", target, "err", err)
 				}
 				continue
 			}
@@ -396,9 +397,9 @@ func (r *Runtime) reconcileWindows() {
 				continue
 			}
 			if tail, terr := r.cfg.Backend.CaptureFrame(target, 20); terr == nil && tail != "" {
-				slog.Info("runtime: pane tail on exit", "frame", frameID, "target", target, "exit_code", code, "tail", tail)
+				slog.Info("runtime: frame tail on exit", "frame", frameID, "target", target, "exit_code", code, "tail", tail)
 			} else {
-				slog.Info("runtime: pane exited", "frame", frameID, "target", target, "exit_code", code)
+				slog.Info("runtime: frame exited", "frame", frameID, "target", target, "exit_code", code)
 			}
 			r.Enqueue(state.EvFrameCommandExited{FrameID: frameID, ExitCode: code})
 		}

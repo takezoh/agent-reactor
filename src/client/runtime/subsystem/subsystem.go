@@ -45,16 +45,16 @@ type Subsystem interface {
 	// Called once before the first BindFrame.
 	Start(ctx context.Context) error
 
-	// BindFrame is called synchronously inside spawnPaneWindowAsync
-	// (already a goroutine) before the pane spawn. It resolves the
+	// BindFrame is called synchronously inside spawnFrameWindow
+	// (already a goroutine) before the frame spawn. It resolves the
 	// LaunchPlan (worktree creation, stream thread binding, command
 	// rewrite) and registers the frame for cleanup tracking.
-	// BindFrame must complete before pane spawn happens.
+	// BindFrame must complete before frame spawn happens.
 	BindFrame(ctx context.Context, req BindRequest) (BindResult, error)
 
-	// ReleaseFrame is called when a pane dies or a frame is explicitly
-	// stopped. The subsystem removes the frame from its registry and
-	// fires any frame-specific cleanup (worktree removal, thread teardown).
+	// ReleaseFrame is called when a frame dies or is explicitly stopped.
+	// The subsystem removes the frame from its registry and fires any
+	// frame-specific cleanup (worktree removal, thread teardown).
 	ReleaseFrame(frameID state.FrameID)
 
 	// Stop is called at daemon shutdown. It waits for all in-flight

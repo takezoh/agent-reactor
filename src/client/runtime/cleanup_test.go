@@ -156,7 +156,7 @@ func TestDirectLauncher_adoptFrame_noop(t *testing.T) {
 
 // TestCtxCancel_doesNotDrainCleanups verifies that cancelling the runtime
 // context (= daemon SIGINT / detach) does not invoke frame cleanup callbacks.
-// Containers must survive so backend panes stay alive for warm-restart adoption.
+// Containers must survive so backend frames stay alive for warm-restart adoption.
 // The explicit shutdown path drains via EffReleaseFrameSandboxes (see
 // TestEffReleaseFrameSandboxes_drainsCleanups).
 func TestCtxCancel_doesNotDrainCleanups(t *testing.T) {
@@ -266,11 +266,11 @@ func (l *testLauncher) EnsureProject(_ context.Context, _ string) error { return
 func (l *testLauncher) IsContainer(_ string) bool { return false }
 
 // TestEffKillSessionWindow_doesNotInvokeCleanup asserts that
-// EffKillFrame is responsible for pane-backend window kill only
+// EffKillFrame is responsible for frame-backend kill only
 // — sandbox cleanup (Manager.ReleaseFrame → DestroyInstance) is driven
 // by EffReleaseFrameSandbox emitted from the reducer for the same frame.
 // Splitting the responsibilities lets EvFrameVanished release the
-// container even though it skips the pane kill (`killWindow=false`).
+// container even though it skips the frame kill (`killWindow=false`).
 func TestEffKillSessionWindow_doesNotInvokeCleanup(t *testing.T) {
 	var called atomic.Bool
 	backend := noopBackend{}
@@ -293,8 +293,8 @@ func TestEffKillSessionWindow_doesNotInvokeCleanup(t *testing.T) {
 // TestEffReleaseFrameSandbox_invokesCleanup asserts the new effect fires
 // the per-frame cleanup closure (devcontainer.makeCleanup =
 // Manager.ReleaseFrame → 0 なら DestroyInstance). reducer emits this
-// effect for every evicted frame regardless of killWindow so EvPane-
-// WindowVanished and reduceFrameCommandExited (abnormal exit) routes
+// effect for every evicted frame regardless of killWindow so
+// EvFrameVanished and reduceFrameCommandExited (abnormal exit) routes
 // also free the container.
 func TestEffReleaseFrameSandbox_invokesCleanup(t *testing.T) {
 	var called atomic.Bool

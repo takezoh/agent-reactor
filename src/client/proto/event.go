@@ -11,7 +11,6 @@ type ServerEvent interface {
 const (
 	EvtNameSessionsChanged   = "sessions-changed"
 	EvtNameProjectSelected   = "project-selected"
-	EvtNamePaneFocused       = "pane-focused"
 	EvtNameLogLine           = "log-line"
 	EvtNameSessionFileLine   = "session-file-line"
 	EvtNameAgentNotification = "agent-notification"
@@ -36,15 +35,6 @@ type EvtProjectSelected struct {
 func (EvtProjectSelected) isEvent()          {}
 func (EvtProjectSelected) EventName() string { return EvtNameProjectSelected }
 
-// EvtPaneFocused fires after focus-pane changes the active control
-// pane.
-type EvtPaneFocused struct {
-	Pane string `json:"pane"`
-}
-
-func (EvtPaneFocused) isEvent()          {}
-func (EvtPaneFocused) EventName() string { return EvtNamePaneFocused }
-
 // EvtLogLine pushes one new line of the global daemon log to TUI
 // subscribers (Phase 7).
 type EvtLogLine struct {
@@ -67,7 +57,7 @@ func (EvtSessionFileLine) isEvent()          {}
 func (EvtSessionFileLine) EventName() string { return EvtNameSessionFileLine }
 
 // EvtAgentNotification is emitted when an OSC 9/99/777 notification
-// escape is captured from an agent pane.
+// escape is captured from an agent frame.
 type EvtAgentNotification struct {
 	SessionID string `json:"session_id"`
 	Cmd       int    `json:"cmd"`

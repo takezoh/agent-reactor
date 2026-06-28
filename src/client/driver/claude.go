@@ -77,7 +77,7 @@ type ClaudeState struct {
 	// abandoned silently (e.g. daemon restart mid-tool).
 	PendingTools map[string]pendingTool
 
-	// LastWindowTitle is the most-recently seen OSC 0 title from the pane.
+	// LastWindowTitle is the most-recently seen OSC 0 title from the frame.
 	// Used to deduplicate rapid spinner updates so only meaningful transitions
 	// (Braille → ✳ or vice-versa) trigger a status change.
 	LastWindowTitle string

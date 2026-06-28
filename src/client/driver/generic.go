@@ -7,9 +7,9 @@ import (
 	"github.com/takezoh/agent-reactor/client/state"
 )
 
-// Generic driver: polling-driven status producer for arbitrary terminal panes
+// Generic driver: polling-driven status producer for arbitrary terminal frames
 // (vim, tig, build output, unknown commands, fallback). Receives OSC events
-// via DEvFrameOsc when the pane emits semantic sequences; otherwise transitions
+// via DEvFrameOsc when the frame emits semantic sequences; otherwise transitions
 // Running → Waiting after IdleThreshold elapses.
 //
 // Shell-specific logic (OSC 133, promptRe heuristic) lives in ShellDriver.
@@ -150,7 +150,7 @@ func (d GenericDriver) Step(prev state.DriverState, ctx state.FrameContext, ev s
 
 	switch e := ev.(type) {
 	case state.DEvTick:
-		// Tick only when visible on the main pane OR actively running
+		// Tick only when visible on the main frame OR actively running
 		// (hash still changing). Parked + waiting sessions skip to save CPU;
 		// the next tick after the user brings them back to active resumes.
 		if !e.Watched && gs.Status != state.StatusRunning {

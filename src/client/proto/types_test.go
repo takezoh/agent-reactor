@@ -34,7 +34,6 @@ func TestEventNames(t *testing.T) {
 	}{
 		{EvtSessionsChanged{}, EvtNameSessionsChanged},
 		{EvtProjectSelected{}, EvtNameProjectSelected},
-		{EvtPaneFocused{}, EvtNamePaneFocused},
 		{EvtLogLine{}, EvtNameLogLine},
 		{EvtSessionFileLine{}, EvtNameSessionFileLine},
 		{EvtAgentNotification{}, EvtNameAgentNotification},

@@ -73,7 +73,7 @@ func TestRegressionFreshPersistDoesNotWipeOnEmptySave(t *testing.T) {
 
 // T4: On cold start, a session whose frames are all status=stopped
 // MUST be dropped entirely — both from in-memory state and from
-// disk. The dead panes that gave those frames inspection value lived
+// disk. The dead frames that gave those frames inspection value lived
 // in the previous backend session, which no longer exists; keeping the
 // metadata around just creates a zombie session the user cannot
 // display or terminate.
@@ -363,7 +363,7 @@ func TestRegressionRunFlushesPendingMutationsOnCancel(t *testing.T) {
 	}
 }
 
-// TestRegressionEvictedSessionStaysEvictedAfterPaneEvents reproduces the
+// TestRegressionEvictedSessionStaysEvictedAfterFrameEvents reproduces the
 // "session restored every cold start" bug.
 //
 // Observed: a daemon evicted session "doomed" via the frame-death path
@@ -380,9 +380,9 @@ func TestRegressionRunFlushesPendingMutationsOnCancel(t *testing.T) {
 // cloned map; legitimate adders are reduceCreateSession / forkSession
 // (new random ID, cannot collide) and the bootstrap path (only on
 // startup). All findFrame-gated paths return early when the session is
-// missing. Subsystem and panetap events for the dead frame are the
-// remaining suspects — the panetap for an evicted frame must be torn
-// down by executeUnregisterPane so it stops emitting EvFrameOsc /
+// missing. Subsystem and frametap events for the dead frame are the
+// remaining suspects — the frametap for an evicted frame must be torn
+// down by executeUnregisterFrame so it stops emitting EvFrameOsc /
 // EvFramePrompt events under the dead FrameID.
 //
 // This test pre-loads "doomed" + a peer "keeper", evicts "doomed" via
@@ -391,7 +391,7 @@ func TestRegressionRunFlushesPendingMutationsOnCancel(t *testing.T) {
 // can emit (EvFrameOsc, EvFramePrompt) and verifies the session remains
 // absent from state, no Save call includes its ID, and Persist.Delete
 // was called exactly once.
-func TestRegressionEvictedSessionStaysEvictedAfterPaneEvents(t *testing.T) {
+func TestRegressionEvictedSessionStaysEvictedAfterFrameEvents(t *testing.T) {
 	backend := newFakeBackend()
 	persist := &recordingPersist{}
 	r := New(Config{
@@ -446,7 +446,7 @@ func TestRegressionEvictedSessionStaysEvictedAfterPaneEvents(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Now fire the events a leaked panetap would still emit for the
+	// Now fire the events a leaked frametap would still emit for the
 	// dead frame. If any of these re-inserts the session, subsequent
 	// Save calls will include "doomed".
 	r.Enqueue(state.EvFrameOsc{

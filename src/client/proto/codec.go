@@ -206,9 +206,6 @@ func DecodeEvent(env Envelope) (ServerEvent, error) {
 	case EvtNameProjectSelected:
 		var e EvtProjectSelected
 		return decodeIntoEvent(env.Data, &e)
-	case EvtNamePaneFocused:
-		var e EvtPaneFocused
-		return decodeIntoEvent(env.Data, &e)
 	case EvtNameLogLine:
 		var e EvtLogLine
 		return decodeIntoEvent(env.Data, &e)

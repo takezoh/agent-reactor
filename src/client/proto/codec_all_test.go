@@ -53,7 +53,6 @@ func TestEncodeDecodeAllEvents(t *testing.T) {
 	evts := []ServerEvent{
 		EvtSessionsChanged{},
 		EvtProjectSelected{Project: "p"},
-		EvtPaneFocused{Pane: "1"},
 		EvtLogLine{Path: "/a", Line: "x"},
 		EvtSessionFileLine{SessionID: "s", Kind: "k", Line: "x"},
 		EvtAgentNotification{SessionID: "s", Cmd: 9, Title: "t"},
@@ -172,7 +171,7 @@ func TestDecodeIntoEmpty(t *testing.T) {
 	if err != nil || got == nil {
 		t.Errorf("decodeInto empty: got=%v err=%v", got, err)
 	}
-	var e EvtPaneFocused
+	var e EvtLogLine
 	gotE, err := decodeIntoEvent(nil, &e)
 	if err != nil || gotE == nil {
 		t.Errorf("decodeIntoEvent empty: got=%v err=%v", gotE, err)
@@ -180,7 +179,7 @@ func TestDecodeIntoEmpty(t *testing.T) {
 }
 
 func TestDecodeIntoEventBad(t *testing.T) {
-	var e EvtPaneFocused
+	var e EvtLogLine
 	if _, err := decodeIntoEvent([]byte(`bad`), &e); err == nil {
 		t.Error("expected error")
 	}

@@ -34,7 +34,7 @@ type State struct {
 	Sessions    map[SessionID]Session
 	Subscribers map[ConnID]Subscriber
 	// SurfaceSubs records which (ConnID, SessionID) pairs are streaming
-	// pane output via the surface.subscribe RPC. The outer map is keyed by
+	// frame surface output via the surface.subscribe RPC. The outer map is keyed by
 	// ConnID so connection close can drop all subscriptions in one step
 	// (see reduceConnClosed). The inner set keeps lookup O(1).
 	//

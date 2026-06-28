@@ -20,7 +20,7 @@ func (p *panickingFactory) Ensure(_ context.Context, _ state.SessionID, _ string
 	panic(p.msg)
 }
 
-// TestSpawnPaneWindow_recoversFromPanicAndEmitsSpawnFailed verifies that a
+// TestSpawnFrameWindow_recoversFromPanicAndEmitsSpawnFailed verifies that a
 // panic inside the spawn pipeline does NOT propagate out of the spawn
 // goroutine (which would crash the daemon and kill every session inside —
 // including the agent session that issued the POST /api/sessions). Instead,
@@ -29,11 +29,11 @@ func (p *panickingFactory) Ensure(_ context.Context, _ state.SessionID, _ string
 //
 // Why this test exists: the user reported "POST /api/sessions returns 500
 // and the server session that started this conversation terminates." Without
-// the defer recover() in spawnPaneWindow, an upstream panic during
+// the defer recover() in spawnFrameWindow, an upstream panic during
 // ensureSubsystem / BindFrame / wrapLaunchForSpawn / backend SpawnFrame would
 // unwind out of the goroutine and Go's runtime would kill the process.
 // With it, the daemon stays up.
-func TestSpawnPaneWindow_recoversFromPanicAndEmitsSpawnFailed(t *testing.T) {
+func TestSpawnFrameWindow_recoversFromPanicAndEmitsSpawnFailed(t *testing.T) {
 	backend := newFakeBackend()
 	internalCh := make(chan internalEvent, 1)
 	eventCh := make(chan state.Event, 1)
@@ -48,11 +48,11 @@ func TestSpawnPaneWindow_recoversFromPanicAndEmitsSpawnFailed(t *testing.T) {
 		sendEvent:    func(ev state.Event) { eventCh <- ev },
 	}
 
-	// This call MUST NOT panic. Without defer recover() in spawnPaneWindow
+	// This call MUST NOT panic. Without defer recover() in spawnFrameWindow
 	// it would propagate the panic out of the goroutine; in a goroutine
 	// that would crash the process, but synchronously here `testing` would
 	// fail the test with the panic surface. Either way, panic = test fail.
-	spawnPaneWindow(deps, state.EffSpawnFrame{
+	spawnFrameWindow(deps, state.EffSpawnFrame{
 		SessionID: "s-survives", FrameID: "f-survives",
 		Project: "/p", Command: "minimal-test",
 	})

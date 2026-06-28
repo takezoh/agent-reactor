@@ -388,7 +388,7 @@ type CreateLaunch struct {
 
 // CreateSessionPlanner is an optional driver extension for commands
 // that need to transform or prepare their start environment during
-// create-session before pane spawn happens. The subsystem resolves any
+// create-session before frame spawn happens. The subsystem resolves any
 // deferred setup (e.g. worktree creation) during BindFrame; drivers
 // only strip tool-specific flags and set LaunchOptions.
 type CreateSessionPlanner interface {
@@ -417,11 +417,11 @@ type WarmStartRecoverer interface {
 }
 
 // ColdStartRecoverer is an optional driver extension for drivers whose
-// durable conversational state survives the loss of the backend pane and the
+// durable conversational state survives the loss of the backend frame and the
 // backend process — e.g. codex, whose thread lives in a host-mounted session
 // store and can be resumed against a fresh app-server. Cold start discards
 // the old backend (and may recreate the sandbox), so by default a stopped
-// frame is unrecoverable and dropped: its state lived only in the dead pane.
+// frame is unrecoverable and dropped: its state lived only in the dead frame.
 // A driver that returns true for a stopped state opts back in, so the runtime
 // keeps the frame and relaunches it (resuming the durable session) instead.
 type ColdStartRecoverer interface {

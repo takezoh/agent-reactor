@@ -457,7 +457,7 @@ func TestFrameLaunch_ColdStart_SubsystemKindSelection(t *testing.T) {
 	}
 }
 
-// === new session (spawnPaneWindow goroutine + handleSpawnComplete loop) ===
+// === new session (spawnFrameWindow goroutine + handleSpawnComplete loop) ===
 
 func (h *launchHarness) newSessionSpawn(t *testing.T, e state.EffSpawnFrame) internalSpawnComplete {
 	t.Helper()
@@ -480,7 +480,7 @@ func (h *launchHarness) newSessionSpawn(t *testing.T, e state.EffSpawnFrame) int
 		sendInternal: func(ev internalEvent) { internalCh <- ev },
 		sendEvent:    func(ev state.Event) { eventCh <- ev },
 	}
-	spawnPaneWindow(deps, e)
+	spawnFrameWindow(deps, e)
 	select {
 	case ev := <-internalCh:
 		sc, ok := ev.(internalSpawnComplete)

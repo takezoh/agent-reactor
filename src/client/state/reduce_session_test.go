@@ -339,7 +339,7 @@ func TestCreateSessionPlannerSpawnsImmediately(t *testing.T) {
 
 // === reduceFrameSpawned ===
 
-func TestPaneSpawnedRegistersWindowAndActivates(t *testing.T) {
+func TestFrameSpawnedRegistersWindowAndActivates(t *testing.T) {
 	s := New()
 	s.Now = time.Now()
 	id := SessionID("abc")
@@ -365,7 +365,7 @@ func TestPaneSpawnedRegistersWindowAndActivates(t *testing.T) {
 	}
 }
 
-func TestPaneSpawnedRootFrameSetsTapTrue(t *testing.T) {
+func TestFrameSpawnedRootFrameSetsTapTrue(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id) // Frames[0] is the root
@@ -381,7 +381,7 @@ func TestPaneSpawnedRootFrameSetsTapTrue(t *testing.T) {
 	}
 }
 
-func TestPaneSpawnedChildFrameSetsTapFalse(t *testing.T) {
+func TestFrameSpawnedChildFrameSetsTapFalse(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	childID := FrameID("child-frame")
@@ -403,7 +403,7 @@ func TestPaneSpawnedChildFrameSetsTapFalse(t *testing.T) {
 	}
 }
 
-func TestPaneSpawnedRootBootstrapRunsBeforeRegister(t *testing.T) {
+func TestFrameSpawnedRootBootstrapRunsBeforeRegister(t *testing.T) {
 	s := New()
 	id := SessionID("boot")
 	s.Sessions[id] = Session{
@@ -431,7 +431,7 @@ func TestPaneSpawnedRootBootstrapRunsBeforeRegister(t *testing.T) {
 	assertEffectOrder[EffEventLogAppend, EffRegisterFrame](t, effs)
 }
 
-func TestPaneSpawnedChildFrameSkipsBootstrap(t *testing.T) {
+func TestFrameSpawnedChildFrameSkipsBootstrap(t *testing.T) {
 	s := New()
 	id := SessionID("boot")
 	childID := FrameID("boot-child")
@@ -461,7 +461,7 @@ func TestPaneSpawnedChildFrameSkipsBootstrap(t *testing.T) {
 	}
 }
 
-func TestPaneSpawnedUnknownSessionDropsSilently(t *testing.T) {
+func TestFrameSpawnedUnknownSessionDropsSilently(t *testing.T) {
 	s := New()
 	_, effs := Reduce(s, EvFrameSpawned{
 		SessionID: "ghost", FrameID: "ghost", ReplyConn: 1, ReplyReqID: "r",
@@ -656,7 +656,7 @@ func TestShutdownReleasesSandboxes(t *testing.T) {
 
 // === reduceFrameVanished ===
 
-func TestPaneWindowVanishedEvicts(t *testing.T) {
+func TestFrameVanishedEvicts(t *testing.T) {
 	s := New()
 	id := SessionID("abc")
 	s.Sessions[id] = stubSession(id)

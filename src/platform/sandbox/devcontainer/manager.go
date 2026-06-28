@@ -105,7 +105,7 @@ func (cs *ContainerState) ContainerID() string {
 // PreExec returns the devcontainer.json `preExecCommand` (or the spec
 // fallback). Callers that build their own docker exec command (bypassing
 // BuildLaunchCommand) need this to wrap their command with the same
-// `<login-shell> -lc 'preExec; exec ...'` envelope the pane uses, otherwise
+// `<login-shell> -lc 'preExec; exec ...'` envelope the frame uses, otherwise
 // binaries that depend on the shell init (mise shims, tool-version managers,
 // env loaders) won't see the expected setup.
 func (cs *ContainerState) PreExec() string {
@@ -520,7 +520,7 @@ func (m *Manager) BuildLaunchCommand(inst *sandbox.Instance[*ContainerState], la
 
 	var sb strings.Builder
 	// -t (pseudo-TTY) only when the consumer drives an interactive terminal
-	// (backend pane). Piped/headless consumers (orchestrator JSON-RPC stdio) must
+	// (backend frame). Piped/headless consumers (orchestrator JSON-RPC stdio) must
 	// omit it: `docker exec -t` aborts when stdin is not a terminal.
 	sb.WriteString("docker exec -i")
 	if launchSpec.TTY {

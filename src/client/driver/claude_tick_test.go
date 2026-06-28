@@ -64,7 +64,7 @@ func TestClaudeTickRunsOnRunning(t *testing.T) {
 	}
 }
 
-// IsRoot=false ガード: 非 root frame は Tick / PaneActivity / PaneOsc を無視する。
+// IsRoot=false ガード: 非 root frame は Tick / FrameActivity / FrameOsc を無視する。
 // fan-out と tap は reducer / runtime 側で root 限定だが Step も defense-in-depth で返す。
 
 func TestClaudeStepNonRootSkipsTick(t *testing.T) {
@@ -82,7 +82,7 @@ func TestClaudeStepNonRootSkipsTick(t *testing.T) {
 	}
 }
 
-func TestClaudeStepNonRootSkipsPaneOsc(t *testing.T) {
+func TestClaudeStepNonRootSkipsFrameOsc(t *testing.T) {
 	d, cs, now := newClaude(t)
 	next, _, _ := d.Step(cs, state.FrameContext{IsRoot: false}, state.DEvFrameOsc{
 		Cmd: 0, Title: "✳ Done", Now: now.Add(time.Second),

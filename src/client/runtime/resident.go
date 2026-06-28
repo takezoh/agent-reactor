@@ -6,9 +6,9 @@ import (
 	"github.com/takezoh/agent-reactor/client/state"
 )
 
-// resident.go holds the small grab-bag of pane helpers that survived the
-// TUI removal: pane-missing error classification and the per-frame "head" /
-// "root" frame projections used by snapshot helpers.
+// resident.go holds the small grab-bag of frame helpers that survived the
+// TUI removal: frame-missing error classification and the per-session "head"
+// / "root" frame projections used by snapshot helpers.
 
 func isMissingFrameErr(err error) bool {
 	if err == nil {

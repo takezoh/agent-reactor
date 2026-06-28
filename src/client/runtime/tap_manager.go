@@ -11,10 +11,10 @@ import (
 	"github.com/takezoh/agent-reactor/client/state"
 )
 
-// tapEntry holds the cancel function and pane identifier for one running tap.
+// tapEntry holds the cancel function and frame target for one running tap.
 type tapEntry struct {
 	cancel context.CancelFunc
-	pane   string
+	target string
 }
 
 // tapManager starts and stops FrameTap reader goroutines per frame.
@@ -33,35 +33,35 @@ func newTapManager(ctx context.Context, tap FrameTap) *tapManager {
 	}
 }
 
-// start begins a tap for the given frame/pane pair. If a tap already exists
-// for frameID it is stopped first.
-func (m *tapManager) start(frameID state.FrameID, pane string, enqueue func(state.Event)) {
+// start begins a tap for the given (frameID, target) pair. If a tap already
+// exists for frameID it is stopped first.
+func (m *tapManager) start(frameID state.FrameID, target string, enqueue func(state.Event)) {
 	if m.tap == nil {
 		return
 	}
 	m.stop(frameID)
 
 	tapCtx, cancel := context.WithCancel(m.ctx)
-	ch, err := m.tap.Start(tapCtx, pane)
+	ch, err := m.tap.Start(tapCtx, target)
 	if err != nil {
-		slog.Warn("panetap: start failed", "frame", frameID, "pane", pane, "err", err)
+		slog.Warn("frametap: start failed", "frame", frameID, "target", target, "err", err)
 		cancel()
 		return
 	}
-	slog.Info("panetap: started", "frame", frameID, "pane", pane)
-	m.cancels[frameID] = tapEntry{cancel: cancel, pane: pane}
-	go readTap(tapCtx, frameID, pane, ch, enqueue)
+	slog.Info("frametap: started", "frame", frameID, "target", target)
+	m.cancels[frameID] = tapEntry{cancel: cancel, target: target}
+	go readTap(tapCtx, frameID, target, ch, enqueue)
 }
 
-// stop cancels the reader goroutine and stops the underlying pipe-pane process.
+// stop cancels the reader goroutine and stops the underlying tap forwarder.
 func (m *tapManager) stop(frameID state.FrameID) {
 	entry, ok := m.cancels[frameID]
 	if !ok {
 		return
 	}
 	entry.cancel()
-	if err := m.tap.Stop(entry.pane); err != nil {
-		slog.Debug("panetap: stop failed", "frame", frameID, "pane", entry.pane, "err", err)
+	if err := m.tap.Stop(entry.target); err != nil {
+		slog.Debug("frametap: stop failed", "frame", frameID, "target", entry.target, "err", err)
 	}
 	delete(m.cancels, frameID)
 }
@@ -124,10 +124,10 @@ func vtPromptPhase(p vt.PromptPhase) state.PromptPhase {
 	}
 }
 
-// newPaneTapTerminal creates a VT emulator wired to emit EvFrameOsc and
+// newFrameTapTerminal creates a VT emulator wired to emit EvFrameOsc and
 // EvFramePrompt events via enqueue. Minimal 1×1 dimensions are used because
 // the emulator is only needed for OSC sequence extraction, not rendering.
-func newPaneTapTerminal(frameID state.FrameID, enqueue func(state.Event)) *vt.Terminal {
+func newFrameTapTerminal(frameID state.FrameID, enqueue func(state.Event)) *vt.Terminal {
 	term := vt.New(1, 1)
 	term.OnWindowTitle = func(cmd int, title string) {
 		if title != "" {
@@ -149,15 +149,15 @@ func newPaneTapTerminal(frameID state.FrameID, enqueue func(state.Event)) *vt.Te
 // readTap feeds raw bytes from ch into a VT emulator and enqueues EvFrameOsc
 // and EvFramePrompt events for each OSC sequence detected.
 // Runs in its own goroutine; exits when ch is closed or ctx is cancelled.
-func readTap(ctx context.Context, frameID state.FrameID, pane string, ch <-chan []byte, enqueue func(state.Event)) {
-	term := newPaneTapTerminal(frameID, enqueue)
+func readTap(ctx context.Context, frameID state.FrameID, target string, ch <-chan []byte, enqueue func(state.Event)) {
+	term := newFrameTapTerminal(frameID, enqueue)
 	for {
 		select {
 		case data, ok := <-ch:
 			if !ok {
 				return
 			}
-			feedSafe(frameID, pane, term, data)
+			feedSafe(frameID, target, term, data)
 		case <-ctx.Done():
 			return
 		}
@@ -167,16 +167,16 @@ func readTap(ctx context.Context, frameID state.FrameID, pane string, ch <-chan 
 // feedSafe drives the VT emulator with one chunk and recovers any panic.
 // vt.New(1,1) panics on ESC M / CSI M / DECRC via InsertLineArea out-of-bounds;
 // emulator handler state remains valid after the panic so the next chunk is safe.
-func feedSafe(frameID state.FrameID, pane string, term *vt.Terminal, data []byte) {
+func feedSafe(frameID state.FrameID, target string, term *vt.Terminal, data []byte) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			slog.Error("panetap: vt emulator panic, skipping chunk",
-				"frame", frameID, "pane", pane,
+			slog.Error("frametap: vt emulator panic, skipping chunk",
+				"frame", frameID, "target", target,
 				"err", fmt.Sprintf("%v", rec),
 				"len", len(data))
 		}
 	}()
 	if err := term.Feed(data); err != nil {
-		slog.Debug("panetap: feed error", "frame", frameID, "pane", pane, "err", err)
+		slog.Debug("frametap: feed error", "frame", frameID, "target", target, "err", err)
 	}
 }

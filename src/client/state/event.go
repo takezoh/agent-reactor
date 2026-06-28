@@ -49,7 +49,7 @@ type EvEvent struct {
 	Payload json.RawMessage
 }
 
-// EvCmdSurfaceReadText requests the trailing lines of a session's pane.
+// EvCmdSurfaceReadText requests the trailing lines of a session's head frame.
 type EvCmdSurfaceReadText struct {
 	ConnID    ConnID
 	ReqID     string
@@ -57,7 +57,7 @@ type EvCmdSurfaceReadText struct {
 	Lines     int // 0 = server default
 }
 
-// EvCmdSurfaceSendText sends Text + Enter to a session's active pane.
+// EvCmdSurfaceSendText sends Text + Enter to a session's head frame surface.
 type EvCmdSurfaceSendText struct {
 	ConnID    ConnID
 	ReqID     string
@@ -65,7 +65,7 @@ type EvCmdSurfaceSendText struct {
 	Text      string
 }
 
-// EvCmdSurfaceSendKey sends a named key to a session's active pane.
+// EvCmdSurfaceSendKey sends a named key to a session's head frame surface.
 type EvCmdSurfaceSendKey struct {
 	ConnID    ConnID
 	ReqID     string
@@ -74,7 +74,7 @@ type EvCmdSurfaceSendKey struct {
 }
 
 // EvCmdSurfaceSubscribe registers ConnID as a streaming subscriber for
-// the named session's pane output. While subscribed, the runtime emits
+// the named session's frame surface output. While subscribed, the runtime emits
 // EvtSurfaceOutput broadcasts addressed to ConnID. Multiple SessionIDs
 // can be subscribed under one ConnID; the per-ConnID cap (see ADR 0007)
 // is enforced by the reducer.
@@ -92,8 +92,8 @@ type EvCmdSurfaceUnsubscribe struct {
 	SessionID SessionID
 }
 
-// EvCmdSurfaceResize requests a logical pane resize to (Cols, Rows) for
-// SessionID. The reducer forwards this to the runtime via EffSurfaceResize;
+// EvCmdSurfaceResize requests a logical frame surface resize to (Cols, Rows)
+// for SessionID. The reducer forwards this to the runtime via EffSurfaceResize;
 // the runtime delegates to the pty backend.
 type EvCmdSurfaceResize struct {
 	ConnID    ConnID
@@ -103,7 +103,7 @@ type EvCmdSurfaceResize struct {
 	Rows      uint16
 }
 
-// EvCmdSurfaceWriteRaw writes uninterpreted bytes to SessionID's pane.
+// EvCmdSurfaceWriteRaw writes uninterpreted bytes to SessionID's head frame surface.
 // Data is the raw byte slice (already base64-decoded by the proto layer).
 // No Enter is appended; key names are not interpreted.
 type EvCmdSurfaceWriteRaw struct {
@@ -175,22 +175,21 @@ type EvJobResult struct {
 	Err    error
 }
 
-// EvFrameVanished is fired by ReconcileWindows when the pane backend's
-// window backing a frame has truly disappeared (the user closed the
-// window via the backend's own kill-window, for instance). The frame is
-// always evicted because there is nothing left to inspect.
+// EvFrameVanished is fired by ReconcileWindows when the frame backend's
+// pty session backing a frame has truly disappeared (e.g. external kill).
+// The frame is always evicted because there is nothing left to inspect.
 type EvFrameVanished struct {
 	FrameID FrameID
 }
 
 // EvFrameCommandExited is fired by ReconcileWindows when a frame's
-// command process has exited but the pane is still around (windows
+// command process has exited but the frame is still around (frames
 // are spawned with remain-on-exit=on so the tail output and exit
 // status can be inspected). The reducer decides:
 //   - ExitCode == 0  → intentional exit, evict the frame and kill
-//     the dead window.
+//     the dead session.
 //   - ExitCode != 0  → abnormal exit, mark the frame status=stopped
-//     and leave the window for the user to inspect.
+//     and leave the frame for the user to inspect.
 //
 // Idempotent: the reducer ignores the event when the frame's driver
 // is already at StatusStopped, so re-detection on subsequent ticks is
@@ -200,14 +199,14 @@ type EvFrameCommandExited struct {
 	ExitCode int
 }
 
-// EvFrameSpawned is the async result of a backend new-window call
+// EvFrameSpawned is the async result of a backend new-frame call
 // initiated by EffSpawnFrame. SubsystemID is the opaque identifier the
 // subsystem factory chose for this frame's backend; the reducer writes
 // it onto the frame for future routing. WorktreeStartDir is non-empty
 // when the subsystem created a managed worktree during BindFrame; the
 // reducer routes DEvWorktreeResolved to the frame's driver so the path
-// is persisted for cold-start reconstruction. There is no separate pane
-// id field: termvt.Manager keys sessions on string(FrameID) directly.
+// is persisted for cold-start reconstruction. There is no separate frame
+// target field: termvt.Manager keys sessions on string(FrameID) directly.
 type EvFrameSpawned struct {
 	SessionID        SessionID
 	FrameID          FrameID
@@ -230,7 +229,7 @@ type EvSpawnFailed struct {
 }
 
 // EvFrameOsc is fired by the FrameTap reader goroutine when an OSC
-// notification is detected in the raw byte stream from a pane.
+// notification is detected in the raw byte stream from a frame.
 // Title and Body are already parsed from the raw payload.
 type EvFrameOsc struct {
 	FrameID FrameID
@@ -252,7 +251,7 @@ const (
 )
 
 // EvFramePrompt is fired by the FrameTap reader goroutine when an OSC 133
-// semantic-prompt sequence is detected in the raw byte stream from a pane.
+// semantic-prompt sequence is detected in the raw byte stream from a frame.
 type EvFramePrompt struct {
 	FrameID  FrameID
 	Phase    PromptPhase

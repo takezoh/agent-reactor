@@ -69,7 +69,7 @@ func AppServerStdioArgs(extra []string, sandboxExternal bool) []string {
 	return args
 }
 
-// RemoteAttachArgs returns the argv for the TUI pane that attaches to the
+// RemoteAttachArgs returns the argv for the TUI frame that attaches to the
 // per-session app-server over its unix domain socket (`codex --remote unix://<sock>`).
 // sock is the container-absolute UDS path the app-server binds; the TUI runs in the
 // same sandbox, so it connects to that socket directly (no TCP routing bridge).

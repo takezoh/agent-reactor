@@ -110,7 +110,7 @@ func TestShellStepNonRootSkipsTick(t *testing.T) {
 	}
 }
 
-func TestShellStepDEvPanePromptInputSetsSawPromptEvent(t *testing.T) {
+func TestShellStepDEvFramePromptInputSetsSawPromptEvent(t *testing.T) {
 	d, s, now := newShellState(t, 5*time.Second)
 	next, _, _ := d.Step(s, state.FrameContext{IsRoot: true}, state.DEvFramePrompt{
 		Phase: state.PromptPhaseInput,
@@ -128,7 +128,7 @@ func TestShellStepDEvPanePromptInputSetsSawPromptEvent(t *testing.T) {
 	}
 }
 
-func TestShellStepDEvPanePromptCommandSetsRunning(t *testing.T) {
+func TestShellStepDEvFramePromptCommandSetsRunning(t *testing.T) {
 	d, s, now := newShellState(t, 5*time.Second)
 	next, _, _ := d.Step(s, state.FrameContext{IsRoot: true}, state.DEvFramePrompt{
 		Phase: state.PromptPhaseCommand,
@@ -143,7 +143,7 @@ func TestShellStepDEvPanePromptCommandSetsRunning(t *testing.T) {
 	}
 }
 
-func TestShellStepDEvPanePromptCompleteSetsLastExitCodeAndWaiting(t *testing.T) {
+func TestShellStepDEvFramePromptCompleteSetsLastExitCodeAndWaiting(t *testing.T) {
 	d, s, now := newShellState(t, 5*time.Second)
 	s.Status = state.StatusRunning
 	s.StatusChangedAt = now
@@ -168,7 +168,7 @@ func TestShellStepDEvPanePromptCompleteSetsLastExitCodeAndWaiting(t *testing.T) 
 	}
 }
 
-func TestShellStepDEvPanePromptInputPreservesStatusChangedAtWhenAlreadyWaiting(t *testing.T) {
+func TestShellStepDEvFramePromptInputPreservesStatusChangedAtWhenAlreadyWaiting(t *testing.T) {
 	d, s, now := newShellState(t, 5*time.Second)
 	next, _, _ := d.Step(s, state.FrameContext{IsRoot: true}, state.DEvFramePrompt{
 		Phase: state.PromptPhaseInput,

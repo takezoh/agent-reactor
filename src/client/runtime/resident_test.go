@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// TestIsMissingPaneErrAcceptsSentinel verifies the shared sentinel path:
+// TestIsMissingFrameErrAcceptsSentinel verifies the shared sentinel path:
 // errors that wrap ErrFrameMissing (as PtyBackend returns) are recognised as
-// missing-pane errors so reconcileWindows evicts the vanished frame instead of
+// missing-frame errors so reconcileWindows evicts the vanished frame instead of
 // treating it as transient.
-func TestIsMissingPaneErrAcceptsSentinel(t *testing.T) {
-	wrapped := fmt.Errorf("runtime: unknown pane %q: %w", "%9", ErrFrameMissing)
+func TestIsMissingFrameErrAcceptsSentinel(t *testing.T) {
+	wrapped := fmt.Errorf("runtime: unknown frame %q: %w", "f9", ErrFrameMissing)
 	if !isMissingFrameErr(wrapped) {
 		t.Fatalf("isMissingFrameErr(wrapped ErrFrameMissing) = false, want true")
 	}
@@ -20,9 +20,9 @@ func TestIsMissingPaneErrAcceptsSentinel(t *testing.T) {
 	}
 }
 
-// TestIsMissingPaneErrIgnoresOther verifies unrelated errors are not classified
-// as missing-pane errors.
-func TestIsMissingPaneErrIgnoresOther(t *testing.T) {
+// TestIsMissingFrameErrIgnoresOther verifies unrelated errors are not classified
+// as missing-frame errors.
+func TestIsMissingFrameErrIgnoresOther(t *testing.T) {
 	if isMissingFrameErr(nil) {
 		t.Fatalf("isMissingFrameErr(nil) = true, want false")
 	}

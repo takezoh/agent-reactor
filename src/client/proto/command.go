@@ -21,7 +21,7 @@ const (
 	CmdNameEvent       = "event"
 	CmdNameSubsystem   = "subsystem-event"
 
-	// surface.* — pane read/write operations
+	// surface.* — frame I/O operations
 	CmdNameSurfaceReadText = "surface.read_text"
 	CmdNameSurfaceSendText = "surface.send_text"
 	CmdNameSurfaceSendKey  = "surface.send_key"
@@ -70,8 +70,9 @@ type CmdSubsystemEvent struct {
 func (CmdSubsystemEvent) isCommand()          {}
 func (CmdSubsystemEvent) CommandName() string { return CmdNameSubsystem }
 
-// CmdSurfaceReadText reads the trailing Lines of a session's pane content.
-// SessionID identifies the target session; Lines=0 uses the server default (30).
+// CmdSurfaceReadText reads the trailing Lines of a session's head frame
+// surface content. SessionID identifies the target session; Lines=0 uses the
+// server default (30).
 type CmdSurfaceReadText struct {
 	SessionID string `json:"session_id"`
 	Lines     int    `json:"lines,omitempty"`
@@ -80,7 +81,8 @@ type CmdSurfaceReadText struct {
 func (CmdSurfaceReadText) isCommand()          {}
 func (CmdSurfaceReadText) CommandName() string { return CmdNameSurfaceReadText }
 
-// CmdSurfaceSendText sends Text followed by Enter to a session's active pane.
+// CmdSurfaceSendText sends Text followed by Enter to a session's head frame
+// surface.
 type CmdSurfaceSendText struct {
 	SessionID string `json:"session_id"`
 	Text      string `json:"text"`
@@ -90,7 +92,7 @@ func (CmdSurfaceSendText) isCommand()          {}
 func (CmdSurfaceSendText) CommandName() string { return CmdNameSurfaceSendText }
 
 // CmdSurfaceSendKey sends a named key (e.g. "Escape", "C-c") to a session's
-// active pane without appending Enter.
+// head frame surface without appending Enter.
 type CmdSurfaceSendKey struct {
 	SessionID string `json:"session_id"`
 	Key       string `json:"key"`

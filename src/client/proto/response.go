@@ -16,13 +16,13 @@ type Response interface {
 
 // RespOK is the empty success response. Used by commands that have
 // nothing to return except "operation accepted" (stop-session,
-// detach, focus-pane, ...).
+// detach, ...).
 type RespOK struct{}
 
 func (RespOK) isResponse() {}
 
 // RespCreateSession is the response to create-session. The runtime
-// fills it in after the pane spawn callback completes.
+// fills it in after the frame spawn callback completes.
 type RespCreateSession struct {
 	SessionID string `json:"session_id"`
 }

@@ -6,11 +6,11 @@ import (
 	"github.com/takezoh/agent-reactor/client/state"
 )
 
-// ErrFrameMissing reports that the requested pane is not known to the backend.
+// ErrFrameMissing reports that the requested frame is not known to the backend.
 // PtyBackend returns errors that wrap this sentinel when the termvt.Manager
-// has no session under target. The runtime distinguishes vanished panes from
+// has no session under target. The runtime distinguishes vanished frames from
 // transient failures via errors.Is(err, ErrFrameMissing).
-var ErrFrameMissing = errors.New("pane missing")
+var ErrFrameMissing = errors.New("frame missing")
 
 // ErrNotImplemented is returned by backend methods that are not implemented
 // on a given backend type.
@@ -20,58 +20,58 @@ var ErrNotImplemented = errors.New("runtime: not implemented on this backend")
 // on concrete backend/persistence/fs/log libraries, so tests can plug in
 // fakes and so the production wiring lives in one place (cmd/main).
 
-// FrameLifecycle covers pane/window creation, destruction, and liveness.
+// FrameLifecycle covers frame (pty session) creation, destruction, and liveness.
 type FrameLifecycle interface {
-	// SpawnFrame creates a new pane window backed by frameID. The pane backend
+	// SpawnFrame creates a new pty session backed by frameID. The frame backend
 	// uses frameID as its termvt.Manager session key, so the runtime can
 	// address every subsequent op by string(FrameID) without an indirection.
 	SpawnFrame(frameID, name, command, startDir string, env map[string]string) error
-	// KillFrame destroys the pane window containing the named pane.
-	KillFrame(paneTarget string) error
-	// RespawnFrame runs respawn-pane against a dead pane.
+	// KillFrame destroys the pty session identified by frameID.
+	KillFrame(frameID string) error
+	// RespawnFrame restarts the command in a dead frame.
 	RespawnFrame(target, command string) error
-	// FrameExitStatus reports the exit code of a dead pane via
-	// #{pane_dead_status}. Returns (true, code) when the pane is
-	// dead and exit status was captured; (false, -1) when the pane
-	// is alive or no exit status is available. Requires the pane to
-	// have been spawned with remain-on-exit=on.
+	// FrameExitStatus reports the exit code of a dead frame.
+	// Returns (true, code) when the frame is dead and exit status was
+	// captured; (false, -1) when the frame is alive or no exit status is
+	// available. Requires the frame to have been spawned with
+	// remain-on-exit=on.
 	FrameExitStatus(target string) (dead bool, code int, err error)
 }
 
-// FrameIO covers key input and buffer operations directed at a pane.
+// FrameIO covers key input and buffer operations directed at a frame.
 type FrameIO interface {
-	// SendKeys writes text into the pane's input followed by Enter.
-	SendKeys(paneTarget, text string) error
-	// SendKey writes a single named key (e.g. "Escape", "q") into the pane
+	// SendKeys writes text into the frame's input followed by Enter.
+	SendKeys(frameID, text string) error
+	// SendKey writes a single named key (e.g. "Escape", "q") into the frame
 	// without an appended Enter.
-	SendKey(paneTarget, key string) error
-	// SendEnter writes a bare Enter into the pane (used to submit a previously
+	SendKey(frameID, key string) error
+	// SendEnter writes a bare Enter into the frame (used to submit a previously
 	// pasted prompt without re-typing it).
 	SendEnter(target string) error
 	// LoadBuffer stores text under a name in a per-backend paste-buffer table.
 	// PasteBuffer later consumes it. The split exists because the backend's
 	// bracketed-paste path expects buffer-then-paste rather than a single write.
 	LoadBuffer(name, text string) error
-	// PasteBuffer writes the named buffer's contents into the target pane and
+	// PasteBuffer writes the named buffer's contents into the target frame and
 	// drops the buffer afterwards. Used by InjectPrompt to deliver multi-line
 	// text without each newline being interpreted as submit by Ink TUIs.
 	PasteBuffer(name, target string) error
-	// PipeFrame attaches a shell command to the pane's output stream so the
+	// PipeFrame attaches a shell command to the frame's output stream so the
 	// runtime can observe raw bytes. An empty command stops a running pipe.
 	// PtyBackend implements this as a no-op because PtyFrameTap subscribes
 	// directly to the termvt.Manager.
-	PipeFrame(paneTarget, command string) error
+	PipeFrame(frameID, command string) error
 }
 
-// FrameInspect covers read-only pane introspection.
+// FrameInspect covers read-only frame introspection.
 type FrameInspect interface {
-	// ResolveID returns the pane id (e.g. "%5") for the target pane.
+	// ResolveID returns the backend's internal id for the target frame.
 	ResolveID(target string) (string, error)
-	// FrameSize returns the visible size of the target pane.
+	// FrameSize returns the visible size of the target frame.
 	FrameSize(target string) (width, height int, err error)
-	// CaptureFrame returns the trailing nLines of a pane's content (no SGR).
-	// Used by polling drivers via the worker pool.
-	CaptureFrame(paneTarget string, nLines int) (string, error)
+	// CaptureFrame returns the trailing nLines of a frame's surface content
+	// (no SGR). Used by polling drivers via the worker pool.
+	CaptureFrame(frameID string, nLines int) (string, error)
 }
 
 // SessionEnv covers session-level environment variable operations.
@@ -85,24 +85,24 @@ type SessionEnv interface {
 	ShowEnvironment() (string, error)
 }
 
-// WindowLayout covers pane/window repositioning operations.
+// WindowLayout covers frame repositioning operations (legacy tmux era).
 type WindowLayout interface {
-	// SwapPane exchanges two pane positions without changing pane ids.
+	// SwapPane exchanges two frame positions without changing frame ids.
 	SwapPane(srcPane, dstPane string) error
-	// BreakPane moves a pane into another window.
+	// BreakPane moves a frame into another window.
 	BreakPane(srcPane, dstWindow string) error
-	// BreakPaneToNewWindow moves a pane into a newly created window and
+	// BreakPaneToNewWindow moves a frame into a newly created window and
 	// returns that window's index.
 	BreakPaneToNewWindow(srcPane, name string) (string, error)
-	// JoinPane moves a pane into another pane slot. sizePct controls
-	// the new pane size; before inserts before the target pane.
+	// JoinPane moves a frame into another frame slot. sizePct controls
+	// the new frame size; before inserts before the target frame.
 	JoinPane(srcPane, dstPane string, before bool, sizePct int) error
-	// SelectPane focuses a backend pane.
+	// SelectPane focuses a backend frame.
 	SelectPane(target string) error
-	// ResizeWindow resizes the pane window containing the target.
+	// ResizeWindow resizes the frame window containing the target.
 	ResizeWindow(target string, width, height int) error
-	// RunChain executes a sequence of swap-pane (or other) commands as
-	// a single backend invocation. Used for the swap-pane preview chain.
+	// RunChain executes a sequence of swap (or other) commands as
+	// a single backend invocation. Used for the swap preview chain.
 	RunChain(ops ...[]string) error
 }
 
@@ -123,7 +123,7 @@ type BackendControl interface {
 	DisplayPopup(width, height, cmd string) error
 }
 
-// FrameBackend is the full set of pane / window operations the runtime
+// FrameBackend is the full set of frame (pty session) operations the runtime
 // needs. PtyBackend is the production implementation; tests use stubs.
 // Methods that return data are synchronous (the runtime calls them
 // from execute() and waits for the result before queueing the
@@ -132,6 +132,9 @@ type BackendControl interface {
 // New code that needs only a subset of these operations should depend on
 // the narrower role interfaces (FrameLifecycle, FrameIO, FrameInspect,
 // SessionEnv, WindowLayout, BackendControl) instead.
+//
+// FrameID identifiers are passed as plain strings (string(FrameID)) at the
+// backend boundary; persistence layer governs the FrameID typedef.
 type FrameBackend interface {
 	FrameLifecycle
 	FrameIO
@@ -157,8 +160,8 @@ type PersistBackend interface {
 
 // SessionSnapshot is the on-disk format for one session in
 // sessions.json. Includes the static metadata + the driver's persisted
-// bag (opaque map of strings). Pane ids are tracked in session env
-// vars (ROOST_SESSION_<sid>); sessions.json stays pane-id free.
+// bag (opaque map of strings). Frame ids are tracked in session env
+// vars (ROOST_SESSION_<sid>); sessions.json stays frame-id free.
 type SessionSnapshot struct {
 	ID          string                 `json:"id"`
 	Project     string                 `json:"project"`

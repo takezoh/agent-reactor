@@ -17,20 +17,20 @@ import (
 // r.state. Driver state is restored via the registered Driver's
 // Restore method.
 //
-// On cold start the pane backend is brand new — any dead panes from
+// On cold start the frame backend is brand new — any dead frames from
 // the previous daemon run have evaporated along with the old server.
 // Frames whose driver was at status=stopped have nothing left to
-// inspect (the tail output lived in the dead pane, which is gone)
+// inspect (the tail output lived in the dead frame, which is gone)
 // and cannot be respawned without overwriting the very state the
 // user wanted to keep. Those frames are dropped here, and snapshots
 // whose every frame was stopped are removed from disk so they do
 // not show up again on the next cold start. The exception is a driver
-// whose durable state outlives the pane (a ColdStartRecoverer such as
+// whose durable state outlives the frame (a ColdStartRecoverer such as
 // codex, which resumes its thread): its stopped frames are kept and
 // relaunched.
 //
-// Warm start keeps everything: stopped frames in a live pane backend
-// still have their dead panes attached for inspection.
+// Warm start keeps everything: stopped frames in a live frame backend
+// still have their dead pty sessions attached for inspection.
 func (r *Runtime) LoadSnapshot(coldStart bool) error {
 	snaps, err := r.cfg.Persist.Load()
 	if err != nil {
@@ -71,12 +71,12 @@ func restoreSession(snap SessionSnapshot, coldStart bool, now time.Time) (state.
 			fsnap.DriverState["status"] = "waiting"
 		}
 		driverState := drv.Restore(fsnap.DriverState, now)
-		// Cold start has no live pane to inherit the dead command's
-		// tail output, so a stopped frame turns into a zombie (no pane
-		// to display, no window to close). Drop it here instead — unless
-		// the driver's durable state survives the pane (codex resumes its
-		// thread against a fresh app-server), in which case it is kept and
-		// relaunched by the cold-start spawn path.
+		// Cold start has no live frame to inherit the dead command's
+		// tail output, so a stopped frame turns into a zombie (no
+		// surface to display, no session to close). Drop it here instead
+		// — unless the driver's durable state survives the frame (codex
+		// resumes its thread against a fresh app-server), in which case
+		// it is kept and relaunched by the cold-start spawn path.
 		if coldStart && drv.Status(driverState) == state.StatusStopped && !coldStartRecoverable(drv, driverState) {
 			continue
 		}
@@ -123,9 +123,10 @@ func restoreSession(snap SessionSnapshot, coldStart bool, now time.Time) (state.
 }
 
 // RecoverActivePaneAtMain previously restored the TUI 0.0/0.1 swap on warm
-// start. Removed: PtyBackend pairs one pane per frame so the main-pane-owner
-// concept no longer exists, and cross-daemon-restart pane recovery is out of
-// scope per ADR 0004 decision 2 (daemon and panes share a lifetime).
+// start. Removed: PtyBackend pairs one pty session per frame so the
+// main-frame-owner concept no longer exists, and cross-daemon-restart frame
+// recovery is out of scope per ADR 0004 decision 2 (daemon and frames share
+// a lifetime).
 
 func (r *Runtime) RecoverWarmStartSessions() {
 	now := time.Now()
@@ -190,14 +191,14 @@ func (r *Runtime) bootstrapSessionEffect(sessID state.SessionID, frameID state.F
 
 // deactivateBeforeExit previously swapped pane 0.1 back to the main TUI on
 // shutdown so the next attach saw a clean layout. Removed alongside the TUI
-// itself; daemon shutdown now closes the IPC socket and tears down panes via
+// itself; daemon shutdown now closes the IPC socket and tears down frames via
 // PtyBackend without any layout repair.
 
 // RecoverSandboxFrames tries to re-attach each persisted frame to its sandbox
 // (e.g. Docker container) before the cold-start spawn path runs. PtyBackend
 // terminal sessions die with the daemon, but devcontainer containers and
 // codex remote threads outlive a daemon restart — adopting them here lets the
-// subsequent fresh pane re-attach to the same running agent instead of losing
+// subsequent fresh frame re-attach to the same running agent instead of losing
 // the container's working state.
 //
 // Returns the set of frame IDs that were successfully adopted so the cold-start
@@ -309,7 +310,7 @@ func (r *Runtime) SetDefaultCommand(cmd string) {
 	r.state.DefaultCommand = cmd
 }
 
-// SetSyncCallbacks installs the optional pane backend sync callbacks.
+// SetSyncCallbacks installs the optional frame backend sync callbacks.
 // Kept as a stable hook for future use.
 func (r *Runtime) SetSyncCallbacks(active, status func(string)) {
 	// Reserved.

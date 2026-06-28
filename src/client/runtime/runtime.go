@@ -1,6 +1,6 @@
 // Package runtime is the imperative shell for the pure state package.
 // It owns the single event loop goroutine, the worker pool, the IPC
-// server, the fsnotify watcher, and the pane backend. Every state
+// server, the fsnotify watcher, and the frame backend. Every state
 // mutation goes through state.Reduce; every side effect is dispatched
 // through the Effect interpreter in interpret.go.
 //
@@ -54,13 +54,13 @@ type Config struct {
 	Watcher  FSWatcher
 	Pool     *worker.Pool
 
-	// TerminalEvict is called with the pane target string whenever a session
-	// pane is unregistered. It should release the VT emulator held for that
-	// pane to prevent unbounded memory growth. May be nil.
-	TerminalEvict func(pane string)
+	// TerminalEvict is called with the frame target string whenever a head
+	// frame is unregistered. It should release the VT emulator held for that
+	// frame to prevent unbounded memory growth. May be nil.
+	TerminalEvict func(frameID string)
 
 	// Tap, if non-nil, is used to attach a raw byte stream reader to each
-	// frame's pane. The reader feeds bytes into a VT emulator that fires
+	// frame's surface. The reader feeds bytes into a VT emulator that fires
 	// callbacks for OSC 9/99/777 notifications, OSC 133 prompt events, and
 	// OSC 0/2 window titles; each callback enqueues the corresponding event.
 	Tap FrameTap
@@ -75,7 +75,7 @@ type Config struct {
 
 	// StreamDispatcher applies sandbox/container wrapping for codex app-server
 	// launches (stdio, non-TTY). Separate from Launcher which uses TTY=true for
-	// interactive backend panes. nil falls back to direct (no-op) dispatch.
+	// interactive backend frames. nil falls back to direct (no-op) dispatch.
 	StreamDispatcher agentlaunch.Dispatcher
 
 	// StreamReadTimeout overrides the codex app-server JSON-RPC read timeout.
@@ -167,8 +167,8 @@ type Runtime struct {
 	// skipped graceful Stop. Nil when no data dir is configured.
 	pgidTracker *procgroup.Tracker
 
-	// terminalRelay fans pane output from TerminalRelay to subscribed ConnIDs.
-	// Nil when cfg.Backend does not implement SurfaceBackend.
+	// terminalRelay fans frame surface output from TerminalRelay to subscribed
+	// ConnIDs. Nil when cfg.Backend does not implement SurfaceBackend.
 	terminalRelay *TerminalRelay
 
 	// internalDrops counts per-event-type drops from enqueueInternal so a future
@@ -428,7 +428,7 @@ func (r *Runtime) SetRelay(fr *FileRelay) {
 	r.internalCh <- internalSetRelay{relay: fr}
 }
 
-// StartTapsForRestoredFrames attaches a pane tap to each frame that was
+// StartTapsForRestoredFrames attaches a frame tap to each frame that was
 // restored from the snapshot. Normal sessions route through EvFrameSpawned →
 // EffRegisterFrame → tapManager.start, but bootstrap paths (warm restart,
 // cold-start RecreateAll) spawn the backend session without emitting that
@@ -512,7 +512,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 
 // dispatch runs Reduce against the current state and executes every
 // resulting effect. Effects may enqueue more events into r.eventCh
-// (e.g. pane spawn → EvFrameSpawned), which are picked up on
+// (e.g. frame spawn → EvFrameSpawned), which are picked up on
 // subsequent loop iterations.
 //
 // After Reduce returns, dispatch reconciles persistence with the
@@ -542,11 +542,11 @@ func eventName(ev state.Event) string {
 	case state.EvSubsystem:
 		return "subsys:" + string(e.FrameID)
 	case state.EvFrameSpawned:
-		return "pane-spawned:" + string(e.FrameID)
+		return "frame-spawned:" + string(e.FrameID)
 	case state.EvSpawnFailed:
 		return "spawn-failed:" + string(e.FrameID)
 	case state.EvFrameVanished:
-		return "pane-vanished:" + string(e.FrameID)
+		return "frame-vanished:" + string(e.FrameID)
 	case state.EvFrameCommandExited:
 		return "cmd-exit:" + string(e.FrameID)
 	case state.EvTick:
@@ -556,9 +556,9 @@ func eventName(ev state.Event) string {
 	case state.EvFileChanged:
 		return "file-changed:" + string(e.FrameID)
 	case state.EvFrameOsc:
-		return "pane-osc:" + string(e.FrameID)
+		return "frame-osc:" + string(e.FrameID)
 	case state.EvFramePrompt:
-		return "pane-prompt:" + string(e.FrameID)
+		return "frame-prompt:" + string(e.FrameID)
 	default:
 		return ""
 	}
@@ -611,11 +611,12 @@ func (r *Runtime) reconcilePersist(prev, next map[state.SessionID]state.Session,
 	}
 }
 
-// sessionPaneForSession returns the pane target for the head frame of the
-// given session. Returns "" if the session has no head frame. After the B2
-// indirection removal termvt keys sessions on string(FrameID) directly, so
-// the lookup collapses to a HeadFrameID string conversion.
-func (r *Runtime) sessionPaneForSession(sid state.SessionID) string {
+// sessionHeadFrameTarget returns the frame target (string(FrameID)) for the
+// head frame of the given session. Returns "" if the session has no head
+// frame. After the B2 indirection removal termvt keys sessions on
+// string(FrameID) directly, so the lookup collapses to a HeadFrameID string
+// conversion.
+func (r *Runtime) sessionHeadFrameTarget(sid state.SessionID) string {
 	sess, ok := r.state.Sessions[sid]
 	if !ok {
 		return ""

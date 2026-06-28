@@ -127,17 +127,17 @@ func (p *PtyBackend) FrameExitStatus(target string) (bool, int, error) {
 
 // === FrameIO ===
 
-// SendKeys writes text followed by a carriage return to the pane.
+// SendKeys writes text followed by a carriage return to the frame.
 func (p *PtyBackend) SendKeys(target, text string) error {
 	return p.write(target, []byte(text+"\r"))
 }
 
-// SendEnter writes a single carriage return to the pane.
+// SendEnter writes a single carriage return to the frame.
 func (p *PtyBackend) SendEnter(target string) error {
 	return p.write(target, []byte("\r"))
 }
 
-// SendKey writes a named key (or the literal key when unknown) to the pane.
+// SendKey writes a named key (or the literal key when unknown) to the frame.
 func (p *PtyBackend) SendKey(target, key string) error {
 	return p.write(target, []byte(keyBytes(key)))
 }
@@ -166,7 +166,7 @@ func (p *PtyBackend) PasteBuffer(name, target string) error {
 
 // PipeFrame is a no-op: output taps are served by PtyFrameTap (see pty_tap.go),
 // which subscribes directly to the termvt.Session and bypasses the legacy
-// pipe-pane bridge. Tap teardown is driven by tap_manager.stop, which cancels
+// tmux pipe bridge. Tap teardown is driven by tap_manager.stop, which cancels
 // its own per-frame tapCtx (propagating to the forwarder via the context
 // chain) and then calls PtyFrameTap.Stop to cancel the inner sub-ctx; whichever
 // fires first triggers the forwarder's ctx.Done branch and Session.Unsubscribe.
@@ -194,8 +194,8 @@ func (p *PtyBackend) FrameSize(target string) (int, int, error) {
 	return cols, rows, nil
 }
 
-// CaptureFrame returns the trailing nLines of the pane's rendered screen with SGR
-// escapes stripped.
+// CaptureFrame returns the trailing nLines of the frame's rendered surface with
+// SGR escapes stripped.
 func (p *PtyBackend) CaptureFrame(target string, nLines int) (string, error) {
 	sess, ok := p.mgr.Get(target)
 	if !ok {
@@ -208,7 +208,7 @@ func (p *PtyBackend) CaptureFrame(target string, nLines int) (string, error) {
 //
 // The session-env store is in-process only: it lives in p.env and dies with the
 // process. It is NOT a persistence layer — values do not survive a daemon
-// restart and are not injected into spawned children. Cross-restart pane
+// restart and are not injected into spawned children. Cross-restart frame
 // recovery is out of scope for B1 (ADR 0004) and belongs to a later phase.
 
 // SetEnv writes a session-level env var into the in-process store.
@@ -276,7 +276,7 @@ func (p *PtyBackend) RunChain(ops ...[]string) error { return nil }
 // SubscribeSurface, UnsubscribeSurface, WriteSurface, and ResizeSurface are
 // the bridge between the web-facing terminal_relay and the termvt sessions
 // managed by PtyBackend. They look the frame up via mgr.Get directly — the
-// caller addresses panes by the same FrameID string the runtime uses.
+// caller addresses frames by the same FrameID string the runtime uses.
 
 // SubscribeSurface registers a subscriber on the termvt.Session for target
 // and returns the subscriber id and its event channel. The first event on the

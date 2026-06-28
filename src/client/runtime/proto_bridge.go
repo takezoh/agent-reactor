@@ -159,7 +159,7 @@ func (r *Runtime) broadcastGenericEvent(e state.EffBroadcastEvent) {
 }
 
 // broadcastAgentNotification encodes and broadcasts an OSC notification
-// captured from an agent pane.
+// captured from an agent frame.
 func (r *Runtime) broadcastAgentNotification(e state.EffRecordNotification) {
 	ev := proto.EvtAgentNotification{
 		SessionID: string(e.SessionID),
@@ -309,14 +309,14 @@ func (r *Runtime) buildFeatureList() []string {
 	return list
 }
 
-// buildSurfaceText calls CaptureFrame against the session's pane and returns
-// the result as a RespSurfaceText.
+// buildSurfaceText calls CaptureFrame against the session's head frame and
+// returns the result as a RespSurfaceText.
 func (r *Runtime) buildSurfaceText(b state.SurfaceReadTextReply) proto.Response {
-	pane := r.sessionPaneForSession(b.SessionID)
-	if pane == "" {
+	frameID := r.sessionHeadFrameTarget(b.SessionID)
+	if frameID == "" {
 		return proto.RespSurfaceText{}
 	}
-	text, err := r.cfg.Backend.CaptureFrame(pane, b.Lines)
+	text, err := r.cfg.Backend.CaptureFrame(frameID, b.Lines)
 	if err != nil {
 		slog.Warn("runtime: surface.read_text capture failed", "session", b.SessionID, "err", err)
 		return proto.RespSurfaceText{}

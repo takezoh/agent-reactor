@@ -1,7 +1,7 @@
 package state
 
 // SurfaceReadTextReply is the marker passed to EffSendResponseSync.Body for
-// surface.read_text. The runtime resolves the pane target from the session's
+// surface.read_text. The runtime resolves the frame target from the session's
 // head frame (string(HeadFrameID)) and calls CaptureFrame to fill in the text.
 type SurfaceReadTextReply struct {
 	SessionID SessionID

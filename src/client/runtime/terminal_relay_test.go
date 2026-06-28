@@ -23,12 +23,12 @@ type fakeSurfaceBackend struct {
 }
 
 type writeCall struct {
-	paneID string
+	frameID string
 	data   []byte
 }
 
 type resizeCall struct {
-	paneID string
+	frameID string
 	cols   int
 	rows   int
 }
@@ -37,7 +37,7 @@ func newFakeSurfaceBackend() *fakeSurfaceBackend {
 	return &fakeSurfaceBackend{subs: make(map[int]chan termvt.Event)}
 }
 
-func (f *fakeSurfaceBackend) SubscribeSurface(paneID string) (int, <-chan termvt.Event, error) {
+func (f *fakeSurfaceBackend) SubscribeSurface(frameID string) (int, <-chan termvt.Event, error) {
 	id := int(f.nextID.Add(1))
 	ch := make(chan termvt.Event, 32)
 	f.mu.Lock()
@@ -46,23 +46,23 @@ func (f *fakeSurfaceBackend) SubscribeSurface(paneID string) (int, <-chan termvt
 	return id, ch, nil
 }
 
-func (f *fakeSurfaceBackend) UnsubscribeSurface(paneID string, id int) error {
+func (f *fakeSurfaceBackend) UnsubscribeSurface(frameID string, id int) error {
 	f.mu.Lock()
 	delete(f.subs, id)
 	f.mu.Unlock()
 	return nil
 }
 
-func (f *fakeSurfaceBackend) WriteSurface(paneID string, data []byte) error {
+func (f *fakeSurfaceBackend) WriteSurface(frameID string, data []byte) error {
 	f.mu.Lock()
-	f.written = append(f.written, writeCall{paneID: paneID, data: data})
+	f.written = append(f.written, writeCall{frameID: frameID, data: data})
 	f.mu.Unlock()
 	return nil
 }
 
-func (f *fakeSurfaceBackend) ResizeSurface(paneID string, cols, rows int) error {
+func (f *fakeSurfaceBackend) ResizeSurface(frameID string, cols, rows int) error {
 	f.mu.Lock()
-	f.resized = append(f.resized, resizeCall{paneID: paneID, cols: cols, rows: rows})
+	f.resized = append(f.resized, resizeCall{frameID: frameID, cols: cols, rows: rows})
 	f.mu.Unlock()
 	return nil
 }
@@ -284,8 +284,8 @@ func TestTerminalRelay_Write(t *testing.T) {
 	if len(b.written) != 1 {
 		t.Fatalf("expected 1 WriteSurface call, got %d", len(b.written))
 	}
-	if b.written[0].paneID != "%1" {
-		t.Errorf("paneID = %q, want %%1", b.written[0].paneID)
+	if b.written[0].frameID != "%1" {
+		t.Errorf("frameID = %q, want %%1", b.written[0].frameID)
 	}
 	if string(b.written[0].data) != string(data) {
 		t.Errorf("data = %q, want %q", b.written[0].data, data)
@@ -308,8 +308,8 @@ func TestTerminalRelay_Resize(t *testing.T) {
 		t.Fatalf("expected 1 ResizeSurface call, got %d", len(b.resized))
 	}
 	rc := b.resized[0]
-	if rc.paneID != "%1" || rc.cols != 80 || rc.rows != 24 {
-		t.Errorf("resize = {%q, %d, %d}, want {%%1, 80, 24}", rc.paneID, rc.cols, rc.rows)
+	if rc.frameID != "%1" || rc.cols != 80 || rc.rows != 24 {
+		t.Errorf("resize = {%q, %d, %d}, want {%%1, 80, 24}", rc.frameID, rc.cols, rc.rows)
 	}
 }
 
@@ -329,7 +329,7 @@ func TestTerminalRelay_UnsubscribeIdempotent(t *testing.T) {
 }
 
 // TestTerminalRelay_TwoConnsIndependent: two ConnIDs subscribing to the same
-// paneID get independent termvt subscriber ids and independent Sequence counters.
+// frameID get independent termvt subscriber ids and independent Sequence counters.
 func TestTerminalRelay_TwoConnsIndependent(t *testing.T) {
 	b := newFakeSurfaceBackend()
 	tr, events := newTestTerminalRelay(t, b)

@@ -303,7 +303,7 @@ func (d ClaudeDriver) handleUserPromptSubmit(cs ClaudeState, hp hookPayload, now
 	return cs, effs
 }
 
-// handleWindowTitle interprets an OSC 0 window-title update from the pane.
+// handleWindowTitle interprets an OSC 0 window-title update from the frame.
 // Claude Code uses the title to advertise its working state:
 //   - ✳ (U+2733) prefix → agent is idle, waiting for user input
 //   - Braille spinner (U+2800–U+28FF) prefix → agent is working

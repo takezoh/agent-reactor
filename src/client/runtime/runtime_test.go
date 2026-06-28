@@ -38,7 +38,7 @@ type fakeBackend struct {
 	spawnFrameIDs    []string
 	killCalls        int
 	sessionKillCalls int
-	killedPanes      []string
+	killedFrames      []string
 	breakCalls       int
 	breakTargets     []string
 	breakNewCalls    int
@@ -59,16 +59,16 @@ type fakeBackend struct {
 	envs             map[string]string
 	popups           []string
 	alive            map[string]bool
-	exitStatusErr    map[string]error // pane target → error from FrameExitStatus
-	exitStatus       map[string]int   // pane target → exit code (when dead)
+	exitStatusErr    map[string]error // frame target → error from FrameExitStatus
+	exitStatus       map[string]int   // frame target → exit code (when dead)
 	captured         string
 	breakNewWID      string
 	spawnErr         error
 	swapErr          error
 	envOutput        string
-	paneWidth        int
-	paneHeight       int
-	paneIDs          map[string]string
+	frameWidth        int
+	frameHeight       int
+	frameIDs          map[string]string
 }
 
 func newFakeBackend() *fakeBackend {
@@ -77,10 +77,10 @@ func newFakeBackend() *fakeBackend {
 		exitStatusErr: map[string]error{},
 		exitStatus:    map[string]int{},
 		envs:          map[string]string{},
-		paneIDs:       map[string]string{},
+		frameIDs:       map[string]string{},
 		breakNewWID:   "9",
-		paneWidth:     120,
-		paneHeight:    40,
+		frameWidth:     120,
+		frameHeight:    40,
 	}
 }
 
@@ -100,11 +100,11 @@ func (f *fakeBackend) ShowEnvironment() (string, error) {
 	return f.envOutput, nil
 }
 
-func (f *fakeBackend) KillFrame(paneID string) error {
+func (f *fakeBackend) KillFrame(frameID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.killCalls++
-	f.killedPanes = append(f.killedPanes, paneID)
+	f.killedFrames = append(f.killedFrames, frameID)
 	f.callLog = append(f.callLog, "kill")
 	return nil
 }
@@ -147,7 +147,7 @@ func (f *fakeBackend) ResolveID(target string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	lookup := strings.Replace(target, ":=", ":", 1)
-	if id, ok := f.paneIDs[lookup]; ok {
+	if id, ok := f.frameIDs[lookup]; ok {
 		if id == "error" {
 			return "", fmt.Errorf("backend error for %s", target)
 		}
@@ -158,7 +158,7 @@ func (f *fakeBackend) ResolveID(target string) (string, error) {
 func (f *fakeBackend) FrameSize(string) (int, int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.paneWidth, f.paneHeight, nil
+	return f.frameWidth, f.frameHeight, nil
 }
 func (f *fakeBackend) SelectPane(string) error { return nil }
 func (f *fakeBackend) ResizeWindow(target string, width, height int) error {
@@ -383,11 +383,11 @@ func TestRuntimeCreateSessionFlow(t *testing.T) {
 	if backend.spawnCalls != 1 {
 		t.Errorf("spawnCalls = %d, want 1", backend.spawnCalls)
 	}
-	// With the TUI gone there is no "main pane" to resize new spawns to;
-	// spawnDeps no longer carries a paneSize provider, so ResizeWindow stays
+	// With the TUI gone there is no "main frame" to resize new spawns to;
+	// spawnDeps no longer carries a frameSize provider, so ResizeWindow stays
 	// at zero calls on this path.
 	if backend.resizeCalls != 0 {
-		t.Errorf("resizeCalls = %d, want 0 (no main pane to size to)", backend.resizeCalls)
+		t.Errorf("resizeCalls = %d, want 0 (no main frame to size to)", backend.resizeCalls)
 	}
 	persist.mu.Lock()
 	defer persist.mu.Unlock()
@@ -476,7 +476,7 @@ func TestRuntimeStopSession(t *testing.T) {
 	}
 }
 
-// reconcileWindows must distinguish a vanished pane from a transient query
+// reconcileWindows must distinguish a vanished frame from a transient query
 // failure: only errors that wrap ErrFrameMissing should evict a frame.
 func TestReconcileWindowsTransientErrorKeepsFrame(t *testing.T) {
 	backend := newFakeBackend()
@@ -499,7 +499,7 @@ func TestReconcileWindowsTransientErrorKeepsFrame(t *testing.T) {
 	}
 }
 
-func TestReconcileWindowsMissingPaneVanishesFrame(t *testing.T) {
+func TestReconcileWindowsMissingFrameVanishesFrame(t *testing.T) {
 	backend := newFakeBackend()
 	backend.exitStatusErr["inactive-frame"] = fmt.Errorf("runtime: unknown frame %q: %w", "inactive-frame", ErrFrameMissing)
 	r := New(Config{
@@ -522,7 +522,7 @@ func TestReconcileWindowsMissingPaneVanishesFrame(t *testing.T) {
 			t.Errorf("FrameID = %q, want inactive-frame", vanished.FrameID)
 		}
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("expected EvFrameVanished for a genuinely missing pane")
+		t.Fatal("expected EvFrameVanished for a genuinely missing frame")
 	}
 }
 
@@ -582,15 +582,15 @@ func TestRecreateAllUsesPrepareLaunch(t *testing.T) {
 	t.Skip("shared codex backend is runtime-managed; helper command assertions are obsolete")
 }
 
-func TestSpawnPaneWindowAsyncUsesPrepareLaunch(t *testing.T) {
+func TestSpawnFrameWindowAsyncUsesPrepareLaunch(t *testing.T) {
 	t.Skip("shared codex backend is runtime-managed; direct remote command is covered by codex backend tests")
 }
 
-func TestSpawnPaneWindowAsyncInjectsStreamPolicyEnv(t *testing.T) {
+func TestSpawnFrameWindowAsyncInjectsStreamPolicyEnv(t *testing.T) {
 	t.Skip("stream policy is applied via runtime-owned codex backend, not helper env")
 }
 
-func TestReconcileDetectsVanishedPane(t *testing.T) {
+func TestReconcileDetectsVanishedFrame(t *testing.T) {
 	fbackend := newFakeBackend()
 	fbackend.exitStatusErr["tracked1"] = fmt.Errorf("runtime: unknown frame %q: %w", "tracked1", ErrFrameMissing)
 	r := New(Config{
@@ -616,11 +616,11 @@ func TestReconcileDetectsVanishedPane(t *testing.T) {
 			t.Errorf("FrameID = %q, want tracked1", vanished.FrameID)
 		}
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("expected EvFrameVanished for the missing pane")
+		t.Fatal("expected EvFrameVanished for the missing frame")
 	}
 }
 
-func TestReconcileSkipsWithoutTrackedPanes(t *testing.T) {
+func TestReconcileSkipsWithoutTrackedFrames(t *testing.T) {
 	fbackend := newFakeBackend()
 	r := New(Config{
 		TickInterval: 20 * time.Millisecond,

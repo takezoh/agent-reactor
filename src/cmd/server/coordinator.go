@@ -234,7 +234,7 @@ func buildRuntime(ctx context.Context, cfg *config.Config, loginShell string, da
 
 // startSession registers the shell driver and runs the boot bootstrap.
 // PtyBackend's termvt sessions die with the daemon, so each boot creates fresh
-// panes from the persisted snapshot. Devcontainer containers and codex remote
+// frames from the persisted snapshot. Devcontainer containers and codex remote
 // threads can outlive a daemon restart, so the boot sequence first asks the
 // sandbox to adopt surviving frames (RecoverSandboxFrames) and asks durable
 // drivers to resume their state (RecoverWarmStartSessions) before falling back
@@ -259,7 +259,7 @@ func bootSession(ctx context.Context, rt *runtime.Runtime, shellDriver statedriv
 
 	// Try to adopt sandbox containers / codex threads that outlived the previous
 	// daemon. Adopted frames carry their cleanup callback + container mounts
-	// forward so the subsequent fresh-pane spawn re-attaches to the same agent.
+	// forward so the subsequent fresh-frame spawn re-attaches to the same agent.
 	// Failures are silent: the frame just goes through the normal cold-spawn
 	// path in RecreateAll.
 	adoptCtx, adoptCancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -388,7 +388,7 @@ func runAndWait(ctx context.Context, cancel context.CancelFunc, rt *runtime.Runt
 	return nil
 }
 
-// newAgentLauncher returns the AgentLauncher (TTY, for backend panes) and
+// newAgentLauncher returns the AgentLauncher (TTY, for backend frames) and
 // StreamDispatcher (non-TTY, for codex app-server stdio) for the configured
 // sandbox mode. Both dispatchers share the same devcontainer manager so
 // container provisioning is consistent. namePrefix is propagated to the
@@ -455,7 +455,7 @@ func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, reso
 				tty,
 			)
 		}
-		// d is for interactive backend panes (TTY=true); sd is the stream
+		// d is for interactive backend frames (TTY=true); sd is the stream
 		// dispatcher used by codex app-server stdio (TTY=false).
 		d.Devcontainer = newDC(true)
 		sd.Devcontainer = newDC(false)

@@ -47,7 +47,7 @@ func waitForEvent(t *testing.T, sink *eventSink, pred func(state.Event) bool, bu
 	}
 }
 
-func TestPtyTapWiring_OSC0TitleReachesEvPaneOsc(t *testing.T) {
+func TestPtyTapWiring_OSC0TitleReachesEvFrameOsc(t *testing.T) {
 	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
@@ -58,7 +58,7 @@ func TestPtyTapWiring_OSC0TitleReachesEvPaneOsc(t *testing.T) {
 	// has already absorbed the OSC does NOT replay it, so the subscriber must
 	// register before printf fires. 500ms is enough headroom for `go test
 	// -race` on contended CI runners.
-	pane := spawnPane(t, backend, `sleep 0.5; printf '\033]0;Braille\a'; sleep 1`)
+	frameID := spawnFrame(t, backend, `sleep 0.5; printf '\033]0;Braille\a'; sleep 1`)
 	tap := NewPtyFrameTap(backend)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -68,7 +68,7 @@ func TestPtyTapWiring_OSC0TitleReachesEvPaneOsc(t *testing.T) {
 	t.Cleanup(mgr.stopAll)
 
 	sink := &eventSink{}
-	mgr.start(state.FrameID("frame-osc0"), pane, sink.push)
+	mgr.start(state.FrameID("frame-osc0"), frameID, sink.push)
 
 	ev := waitForEvent(t, sink, func(ev state.Event) bool {
 		osc, ok := ev.(state.EvFrameOsc)
@@ -81,7 +81,7 @@ func TestPtyTapWiring_OSC0TitleReachesEvPaneOsc(t *testing.T) {
 	}
 }
 
-func TestPtyTapWiring_OSC133ReachesEvPanePrompt(t *testing.T) {
+func TestPtyTapWiring_OSC133ReachesEvFramePrompt(t *testing.T) {
 	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
@@ -91,7 +91,7 @@ func TestPtyTapWiring_OSC133ReachesEvPanePrompt(t *testing.T) {
 	// leading sleep matches the OSC 0 test rationale: Subscribe must register
 	// before printf fires, or the server-side emulator absorbs the OSC into
 	// its state and snapshot Render() does NOT replay it.
-	pane := spawnPane(t, backend, `sleep 0.5; printf '\033]133;C\a'; printf '\033]133;D;0\a'; sleep 1`)
+	frameID := spawnFrame(t, backend, `sleep 0.5; printf '\033]133;C\a'; printf '\033]133;D;0\a'; sleep 1`)
 	tap := NewPtyFrameTap(backend)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -101,7 +101,7 @@ func TestPtyTapWiring_OSC133ReachesEvPanePrompt(t *testing.T) {
 	t.Cleanup(mgr.stopAll)
 
 	sink := &eventSink{}
-	mgr.start(state.FrameID("frame-osc133"), pane, sink.push)
+	mgr.start(state.FrameID("frame-osc133"), frameID, sink.push)
 
 	// Wait for the Command phase first…
 	waitForEvent(t, sink, func(ev state.Event) bool {

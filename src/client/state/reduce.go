@@ -24,7 +24,7 @@ func Reduce(s State, ev Event) (State, []Effect) {
 	case EvSubsystem:
 		return reduceSubsystem(s, e)
 
-	// pane backend feedback
+	// frame backend feedback
 	case EvFrameSpawned:
 		return reduceFrameSpawned(s, e)
 	case EvSpawnFailed:
@@ -46,7 +46,7 @@ func Reduce(s State, ev Event) (State, []Effect) {
 	case EvFileChanged:
 		return reduceFileChanged(s, e)
 
-	// pane tap
+	// frame tap
 	case EvFrameOsc:
 		return reduceFrameOsc(s, e)
 	case EvFramePrompt:

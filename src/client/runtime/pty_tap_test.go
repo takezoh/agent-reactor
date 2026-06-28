@@ -66,51 +66,51 @@ func waitChannelClosed(t *testing.T, ch <-chan []byte, budget time.Duration) {
 	}
 }
 
-// spawnPaneSeq lets each spawnPane invocation pick a unique frame id so
+// spawnFrameSeq lets each spawnFrame invocation pick a unique frame id so
 // multiple tests in the same test binary cannot collide on the Manager.
-var spawnPaneSeq int
+var spawnFrameSeq int
 
-// spawnPane spawns a frame under backend and returns its pane id. The
+// spawnFrame spawns a frame under backend and returns its frameID id. The
 // caller is responsible for backend.KillFrame on cleanup.
-func spawnPane(t *testing.T, backend *PtyBackend, command string) string {
+func spawnFrame(t *testing.T, backend *PtyBackend, command string) string {
 	t.Helper()
-	spawnPaneSeq++
-	paneID := "tap-frame-" + string(rune('a'+spawnPaneSeq%26))
-	if err := backend.SpawnFrame(paneID, "test", command, "", nil); err != nil {
+	spawnFrameSeq++
+	frameID := "tap-frame-" + string(rune('a'+spawnFrameSeq%26))
+	if err := backend.SpawnFrame(frameID, "test", command, "", nil); err != nil {
 		t.Fatalf("SpawnFrame: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = backend.KillFrame(paneID)
+		_ = backend.KillFrame(frameID)
 	})
-	return paneID
+	return frameID
 }
 
-func TestPtyPaneTap_Start_UnknownPaneReturnsMissing(t *testing.T) {
+func TestPtyFrameTap_Start_UnknownFrameReturnsMissing(t *testing.T) {
 	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 	tap := NewPtyFrameTap(backend)
 
 	_, err := tap.Start(context.Background(), "unknown-frame")
 	if err == nil {
-		t.Fatal("expected error for unknown pane")
+		t.Fatal("expected error for unknown frameID")
 	}
 	if !errors.Is(err, ErrFrameMissing) {
 		t.Fatalf("err = %v, want errors.Is ErrFrameMissing", err)
 	}
 }
 
-func TestPtyPaneTap_Start_DeliversSnapshotFirst(t *testing.T) {
+func TestPtyFrameTap_Start_DeliversSnapshotFirst(t *testing.T) {
 	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
-	pane := spawnPane(t, backend, "sleep 1")
+	frameID := spawnFrame(t, backend, "sleep 1")
 	tap := NewPtyFrameTap(backend)
 
-	ch, err := tap.Start(context.Background(), pane)
+	ch, err := tap.Start(context.Background(), frameID)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	t.Cleanup(func() { _ = tap.Stop(pane) })
+	t.Cleanup(func() { _ = tap.Stop(frameID) })
 
 	// Subscribe always seeds the channel with a snapshot EventOutput, so the
 	// first chunk must be non-nil bytes (possibly empty if the screen is
@@ -125,7 +125,7 @@ func TestPtyPaneTap_Start_DeliversSnapshotFirst(t *testing.T) {
 	}
 }
 
-func TestPtyPaneTap_ForwardsOutputChunks(t *testing.T) {
+func TestPtyFrameTap_ForwardsOutputChunks(t *testing.T) {
 	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
@@ -133,53 +133,53 @@ func TestPtyPaneTap_ForwardsOutputChunks(t *testing.T) {
 	// EventOutput in addition to surfacing the structured Control. PtyFrameTap
 	// drops the Control side and forwards the raw bytes, which is exactly what
 	// tap_manager's vt.Terminal then re-parses to fire EvFrameOsc.
-	pane := spawnPane(t, backend, `printf '\033]9;tap-test\a'; sleep 0.5`)
+	frameID := spawnFrame(t, backend, `printf '\033]9;tap-test\a'; sleep 0.5`)
 	tap := NewPtyFrameTap(backend)
 
-	ch, err := tap.Start(context.Background(), pane)
+	ch, err := tap.Start(context.Background(), frameID)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	t.Cleanup(func() { _ = tap.Stop(pane) })
+	t.Cleanup(func() { _ = tap.Stop(frameID) })
 
 	waitForChunkContaining(t, ch, []byte("\x1b]9;tap-test"), 2*time.Second)
 }
 
-func TestPtyPaneTap_Stop_ClosesChannel(t *testing.T) {
+func TestPtyFrameTap_Stop_ClosesChannel(t *testing.T) {
 	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
-	pane := spawnPane(t, backend, "sleep 5")
+	frameID := spawnFrame(t, backend, "sleep 5")
 	tap := NewPtyFrameTap(backend)
 
-	ch, err := tap.Start(context.Background(), pane)
+	ch, err := tap.Start(context.Background(), frameID)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	if err := tap.Stop(pane); err != nil {
+	if err := tap.Stop(frameID); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 
 	waitChannelClosed(t, ch, time.Second)
 
 	tap.mu.Lock()
-	_, stillThere := tap.subs[pane]
+	_, stillThere := tap.subs[frameID]
 	tap.mu.Unlock()
 	if stillThere {
 		t.Fatal("subs entry was not removed after Stop")
 	}
 }
 
-func TestPtyPaneTap_ContextCancelClosesChannel(t *testing.T) {
+func TestPtyFrameTap_ContextCancelClosesChannel(t *testing.T) {
 	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
-	pane := spawnPane(t, backend, "sleep 5")
+	frameID := spawnFrame(t, backend, "sleep 5")
 	tap := NewPtyFrameTap(backend)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	ch, err := tap.Start(ctx, pane)
+	ch, err := tap.Start(ctx, frameID)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -188,23 +188,23 @@ func TestPtyPaneTap_ContextCancelClosesChannel(t *testing.T) {
 	waitChannelClosed(t, ch, time.Second)
 }
 
-func TestPtyPaneTap_SessionExitClosesChannel(t *testing.T) {
+func TestPtyFrameTap_SessionExitClosesChannel(t *testing.T) {
 	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
 	// printf + a short sleep keeps the session alive long enough for Start to
 	// subscribe before the process exits. The Start-side ExitCode guard turns
 	// an already-reaped Session into ErrFrameMissing, so a bare `echo bye`
-	// would race the reaper and intermittently exercise the missing-pane
+	// would race the reaper and intermittently exercise the missing-frameID
 	// path instead of the EventExit → channel-close path this test pins.
-	pane := spawnPane(t, backend, `printf 'bye'; sleep 0.3`)
+	frameID := spawnFrame(t, backend, `printf 'bye'; sleep 0.3`)
 	tap := NewPtyFrameTap(backend)
 
-	ch, err := tap.Start(context.Background(), pane)
+	ch, err := tap.Start(context.Background(), frameID)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	t.Cleanup(func() { _ = tap.Stop(pane) })
+	t.Cleanup(func() { _ = tap.Stop(frameID) })
 
 	chunks := readUntilClose(t, ch, 3*time.Second)
 	if len(chunks) == 0 {
@@ -212,30 +212,30 @@ func TestPtyPaneTap_SessionExitClosesChannel(t *testing.T) {
 	}
 }
 
-func TestPtyPaneTap_RespawnSamePane(t *testing.T) {
+func TestPtyFrameTap_RespawnSameFrame(t *testing.T) {
 	backend := NewPtyBackend(0)
 	t.Cleanup(func() { backend.mgr.CloseAll() })
 
-	pane := spawnPane(t, backend, "sleep 5")
+	frameID := spawnFrame(t, backend, "sleep 5")
 	tap := NewPtyFrameTap(backend)
 
-	firstCh, err := tap.Start(context.Background(), pane)
+	firstCh, err := tap.Start(context.Background(), frameID)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
 	// RespawnFrame closes the previous session, which closes firstCh through
 	// EventExit. A subsequent Start must subscribe to the new session.
-	if err := backend.RespawnFrame(pane, `printf 'after-respawn'; sleep 0.5`); err != nil {
+	if err := backend.RespawnFrame(frameID, `printf 'after-respawn'; sleep 0.5`); err != nil {
 		t.Fatalf("RespawnFrame: %v", err)
 	}
 	waitChannelClosed(t, firstCh, 2*time.Second)
 
-	secondCh, err := tap.Start(context.Background(), pane)
+	secondCh, err := tap.Start(context.Background(), frameID)
 	if err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
-	t.Cleanup(func() { _ = tap.Stop(pane) })
+	t.Cleanup(func() { _ = tap.Stop(frameID) })
 
 	waitForChunkContaining(t, secondCh, []byte("after-respawn"), 2*time.Second)
 }

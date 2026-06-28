@@ -197,7 +197,7 @@ func (s *Session) Size() (cols, rows int) {
 // false while the process is still running (code is then meaningless and 0).
 //
 // Lock-free by design: the runtime's single dispatch goroutine polls this
-// every tick via PaneAlive; routing it through cmdCh would let any caller
+// every tick via FrameAlive; routing it through cmdCh would let any caller
 // that monopolises mainLoop (e.g. a slow chunk parse) freeze the entire
 // IPC. The atomic load on `exited` synchronizes-with the matching store in
 // handleExit, so a reader who observes exited == true is guaranteed to see
@@ -209,7 +209,7 @@ func (s *Session) ExitCode() (code int, exited bool) {
 }
 
 // CaptureTail returns the trailing n rendered lines of the session's screen
-// with terminal escape sequences stripped. PtyBackend.CapturePane uses this to
+// with terminal escape sequences stripped. PtyBackend.CaptureFrame uses this to
 // read plain text out of the emulator grid.
 func CaptureTail(s *Session, n int) string {
 	return stripSGRTail(string(s.Snapshot()), n)
