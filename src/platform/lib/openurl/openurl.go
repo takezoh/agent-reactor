@@ -16,7 +16,7 @@ import (
 
 // Open launches the host handler for target (file path or URL) and
 // returns without waiting for the child to exit. The child is detached
-// so it does not block the TUI.
+// so it does not block the caller.
 func Open(target string) error {
 	return openWith(currentEnv(), target)
 }

@@ -200,7 +200,7 @@ type JobInput interface {
 }
 
 // EffRecordNotification broadcasts an OSC-sourced in-frame notification
-// to TUI subscribers and logs it to the session event log.
+// to event subscribers and logs it to the session event log.
 // SessionID and FrameID are filled by postProcessEffect when blank.
 type EffRecordNotification struct {
 	SessionID SessionID

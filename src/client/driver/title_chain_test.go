@@ -26,8 +26,8 @@ func TestCardTitleChain(t *testing.T) {
 		{"all empty → web client owns New Session placeholder", "", "", "", "", ""},
 		// Legacy multi-line summary: not a Title candidate (Title slot has no
 		// per-line splitter, partial promotion would create dedup misses in
-		// both the TUI and Web subtitle renderers). Title stays empty so the
-		// Web "New Session" placeholder takes over; Subtitle keeps the full
+		// the Web subtitle renderer). Title stays empty so the Web
+		// "New Session" placeholder takes over; Subtitle keeps the full
 		// multi-line value for the legacy multi-line render path.
 		{"multi-line summary: not a title candidate, full string stays in subtitle", "", "line1\nline2", "", "", "line1\nline2"},
 		{"multi-line summary with AI title: title from AI, subtitle keeps full multi-line", "ai", "line1\nline2", "", "ai", "line1\nline2"},
@@ -59,7 +59,7 @@ func TestClaudeViewWiresTitleChain(t *testing.T) {
 		t.Errorf("Title = %q, want the summary (Summary should promote when AI title empty)", v.Card.Title)
 	}
 	// Subtitle stays = Summary even though Title now equals it; UI layer
-	// (SessionList.subtitleText / TUI sessionCardLines) hides the duplicate row.
+	// (SessionList.subtitleText) hides the duplicate row.
 	if v.Card.Subtitle != "the summary" {
 		t.Errorf("Subtitle = %q, want the summary (data layer keeps it; UI dedups)", v.Card.Subtitle)
 	}

@@ -55,15 +55,14 @@ func TestShellDisplayName(t *testing.T) {
 }
 
 // SIGHUP must not kill the daemon. Regression test for the failure mode
-// where the daemon process vanished after `attaching to the backend session`,
-// leaving every TUI frame dead and the user staring at a broken session.
+// where the daemon process vanished after taking a controlling terminal,
+// leaving every frame dead and the user staring at a broken session.
 //
-// Historically a backend `attach-session` ran as a child of the daemon; once it
-// took the TTY the parent terminal could deliver a spurious SIGHUP (terminal
-// closed in WSL/Windows Terminal, controlling-tty races, etc.). The default
-// action for SIGHUP is process termination, which would kill the daemon
-// while the backend session itself stays up — exactly the "all 4 TUI frames
-// EOFed simultaneously, daemon gone, no shutdown log" pattern.
+// A child holding the TTY can let the parent terminal deliver a spurious
+// SIGHUP (terminal closed in WSL/Windows Terminal, controlling-tty races,
+// etc.). The default action for SIGHUP is process termination, which would
+// kill the daemon while the backend session itself stays up — exactly the
+// "all frames EOFed simultaneously, daemon gone, no shutdown log" pattern.
 //
 // installSignalHandlers must log the signal and ignore it, leaving the
 // context live so the daemon keeps serving the backend session.
@@ -129,11 +128,10 @@ func TestInstallSignalHandlers_StopUnblocksWithNoSignals(t *testing.T) {
 
 // A panic inside the runtime goroutine must not kill the daemon process.
 // It must (a) land on errCh as an error, (b) cancel the supervisor
-// context so the rest of the daemon shuts down cleanly. Before this
-// guard a state.Reduce panic took the entire daemon down without any
-// log line beyond "proto: read loop ended" from the orphaned TUI
-// subprocesses — the symptom users kept reporting as "TUI suddenly
-// broken, daemon vanished".
+// context so the rest of the daemon shuts down cleanly. Without this
+// guard a state.Reduce panic would take the entire daemon down without
+// any log line beyond "proto: read loop ended" from the orphaned
+// subprocesses.
 func TestSuperviseRun_PanicSurfacesErrorAndCancels(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

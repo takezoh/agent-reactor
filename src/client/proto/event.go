@@ -35,8 +35,8 @@ type EvtProjectSelected struct {
 func (EvtProjectSelected) isEvent()          {}
 func (EvtProjectSelected) EventName() string { return EvtNameProjectSelected }
 
-// EvtLogLine pushes one new line of the global daemon log to TUI
-// subscribers (Phase 7).
+// EvtLogLine pushes one new line of the global daemon log to event
+// subscribers.
 type EvtLogLine struct {
 	Path string `json:"path"`
 	Line string `json:"line"`
@@ -46,7 +46,7 @@ func (EvtLogLine) isEvent()          {}
 func (EvtLogLine) EventName() string { return EvtNameLogLine }
 
 // EvtSessionFileLine pushes one new line from a session's log/transcript
-// file to TUI subscribers.
+// file to event subscribers.
 type EvtSessionFileLine struct {
 	SessionID string `json:"session_id"`
 	Kind      string `json:"kind"`

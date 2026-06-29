@@ -13,7 +13,7 @@ Related ADRs:
 - [ADR 0072 — Coachmark dismiss (tap or 5s) + hintSeen 冪等書込](../../adr/0072-coachmark-dismiss-and-once.md)
 - [ADR 0073 — AriaLive debounce + JumpFAB seed-gating](../../adr/0073-arialive-debounce-and-jump-fab-seed-stability.md)
 - [ADR 0074 — Migration: PC-only → PC + Mobile (baseline test + gate rollback)](../../adr/0074-migration-pc-only-to-pc-plus-mobile.md)
-- [ADR 0075 — Pattern adoption (tmux / Termius / Slack / Material / iOS / WAI-ARIA + IconButton)](../../adr/0075-pattern-adoption-mode-affordances.md)
+- [ADR 0075 — Pattern adoption (modal editor / Termius / Slack / Material / iOS / WAI-ARIA + IconButton)](../../adr/0075-pattern-adoption-mode-affordances.md)
 
 ## Goal
 
@@ -29,7 +29,7 @@ ATDD は **vitest + happy-dom + @testing-library/react** を harness とし、Pl
 - `src/client/web/src/css/app.css` と `view.css` の mobile gate scope 内 CSS 追加 (`touch-action:pan-y` / `.terminal-fab-layer` / `.xterm-helper-textarea font-size:16px !important` / FAB overlay layout / CSS custom property `--terminal-fab-offset` / ADR 0064 reduced-motion guard 末尾追記)
 - 新規 hook (10 個): `useMobileGate` / `useInputMode` / `useHostPointerInterceptor` / `useTerminalTouchGestures` / `useFontSize` / `useJumpToLatest` / `useVisualViewportLift` / `useCoachmarkOnce` / `usePersistedValue` / `useAnnouncer`
 - 新規 component (6 個): `IconButton` primitive / `KeyboardFAB` / `JumpToLatestFAB` / `FontSizeControl` + disclosure popover / `Coachmark` / `AriaLiveStatus` (ADR 0077 で `PinchIndicator` 撤去)
-- localStorage 永続化 (`arc.web.term.fontSize` / `arc.web.term.hintSeen`) を `usePersistedValue` adapter で集約
+- localStorage 永続化 (`web.term.fontSize` / `web.term.hintSeen`) を `usePersistedValue` adapter で集約
 - vitest + happy-dom + @testing-library/react ベースの UAC test suite (TouchEvent / Pointer / matchMedia / visualViewport の合成 harness を chunk-01 で確立)
 - 実機 iOS Safari 17+ / iPadOS 17+ / Android Chrome 最新の手動検証チェックリスト (visualViewport-lift / iOS focus-zoom / OS keyboard blur / long-press OS feedback / VoiceOver / TalkBack)
 - 新規 ADR 9 件 (ADR 0067 〜 0075)
@@ -173,11 +173,11 @@ EARS 件数: 39 件 (State-driven 15 / Event-driven 19 / Unwanted 5 / Ubiquitous
 >
 > *Rationale*: pinch 撤去で 2-finger touch を完全無視。ADR 0071 にあった『1→2 finger 遷移で swipe を中断する arbitration』の edge は構造的に消滅。
 
-> **FR-MOB-PERSIST-001** (`event_driven`) — FontSizeControl ステッパー (`+ / − / reset`) 操作で fontSize が確定する時、システムは usePersistedValue adapter を介して localStorage キー arc.web.term.fontSize に整数値を文字列で書き込まなければならない (try/catch で例外を握りつぶし、書込失敗時もメモリ上の state は更新)。 (ADR 0070 から ADR 0077 が継承、pinch touchend 経路は撤去)
+> **FR-MOB-PERSIST-001** (`event_driven`) — FontSizeControl ステッパー (`+ / − / reset`) 操作で fontSize が確定する時、システムは usePersistedValue adapter を介して localStorage キー web.term.fontSize に整数値を文字列で書き込まなければならない (try/catch で例外を握りつぶし、書込失敗時もメモリ上の state は更新)。 (ADR 0070 から ADR 0077 が継承、pinch touchend 経路は撤去)
 >
 > *Rationale*: UAC-018 + ux edge case『private mode で degrade のみ』対応。pinch 撤去で writer 経路はステッパー単独に集約。
 
-> **FR-MOB-PERSIST-002** (`event_driven`) — セッション初期 mount で localStorage キー arc.web.term.fontSize を読む時、システムは parseInt の結果が NaN なら default 14px へ fallback し、parseInt 成功かつ Number.isFinite が真なら値を [8,28] に clamp して採用しなければならない (例: '999' は parse 成功 + finite で 28 に clamp / '' / 'foo' / null は NaN で 14 へ fallback)。
+> **FR-MOB-PERSIST-002** (`event_driven`) — セッション初期 mount で localStorage キー web.term.fontSize を読む時、システムは parseInt の結果が NaN なら default 14px へ fallback し、parseInt 成功かつ Number.isFinite が真なら値を [8,28] に clamp して採用しなければならない (例: '999' は parse 成功 + finite で 28 に clamp / '' / 'foo' / null は NaN で 14 へ fallback)。
 >
 > *Rationale*: UAC-019 counterexample『999 が 28 に clamp されない』を排除。否定役指摘で『parse 失敗 → 14 / parse 成功 + 範囲外 → clamp』を分離して厳密化。
 
@@ -185,7 +185,7 @@ EARS 件数: 39 件 (State-driven 15 / Event-driven 19 / Unwanted 5 / Ubiquitous
 >
 > *Rationale*: 否定役指摘『listener leak の余地』対応 — unsubscribe 順序を契約化。
 
-> **FR-MOB-COACH-001** (`event_driven`) — gate true で初回閲覧モード突入時に usePersistedValue<boolean>('arc.web.term.hintSeen') が null/false を返す時、システムは Coachmark を 1 回 render し、同時に hintSeen='1' を localStorage に書き込まなければならない (tap/auto dismiss を待たない冪等性確保)。
+> **FR-MOB-COACH-001** (`event_driven`) — gate true で初回閲覧モード突入時に usePersistedValue<boolean>('web.term.hintSeen') が null/false を返す時、システムは Coachmark を 1 回 render し、同時に hintSeen='1' を localStorage に書き込まなければならない (tap/auto dismiss を待たない冪等性確保)。
 >
 > *Rationale*: ux edge case + ADR-coachmark-dismiss-and-once 決定 — 起動直後離脱時の未閲覧トレードオフを承認した上で冪等性優先。
 
@@ -199,7 +199,7 @@ EARS 件数: 39 件 (State-driven 15 / Event-driven 19 / Unwanted 5 / Ubiquitous
 >
 > *Rationale*: UAC-003 counterexample (B)『FAB が pointerdown で focus を奪い blur-exit listener が発火して enter/exit race』を排除する load-bearing 機構を独立 EARS 化 (否定役 blocker)。
 
-> **FR-MOB-JUMP-005** (`unwanted`) — もし ADR 0066 (tmux-style scrollback) の 2 段 seed frame flush が完了する前なら、システムは JumpToLatestFAB を強制的に DOM 不在 (shouldShowFab=false) に保ち、seed 完了後の初回 scroll イベントが届くまで suppress しなければならない。
+> **FR-MOB-JUMP-005** (`unwanted`) — もし ADR 0066 (scrollback-snapshot seed) の 2 段 seed frame flush が完了する前なら、システムは JumpToLatestFAB を強制的に DOM 不在 (shouldShowFab=false) に保ち、seed 完了後の初回 scroll イベントが届くまで suppress しなければならない。
 >
 > *Rationale*: 否定役指摘『seed 完了前後で scrollHeight 動的変化により FAB が即出現→即 unmount のちらつき』対応。
 

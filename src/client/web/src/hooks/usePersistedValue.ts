@@ -27,7 +27,7 @@ export interface StorageLike {
 }
 
 export interface PersistedValueConfig<T> {
-  /** localStorage key, e.g. `arc.web.term.fontSize`. */
+  /** localStorage key, e.g. `web.term.fontSize`. */
   key: string;
   /** Raw string → T. May produce an invalid value (e.g. NaN) — `validate` filters it. */
   parse: (raw: string) => T;

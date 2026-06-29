@@ -22,9 +22,7 @@ func reduceTick(s State, e EvTick) (State, []Effect) {
 
 	// Frame liveness reconcile: every 5 ticks the runtime walks its live frame
 	// set and emits EvFrameCommandExited / EvFrameVanished per dead frame.
-	// reconcileWindows is the sole frame-death detection path now — the legacy
-	// per-tick aliveness emissions targeted tmux control frames
-	// (0.0/0.1/0.2/__hidden__.0) that no longer exist under PtyBackend.
+	// reconcileWindows is the sole frame-death detection path under PtyBackend.
 	if e.N%5 == 0 {
 		effs = append(effs, EffReconcileWindows{})
 	}

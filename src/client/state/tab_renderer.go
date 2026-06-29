@@ -2,9 +2,9 @@ package state
 
 import "encoding/json"
 
-// TabRenderer is the interface TUI uses to render tab content without
+// TabRenderer is the interface clients use to render tab content without
 // knowing the driver-specific format. Drivers register a factory via
-// RegisterTabRenderer at init time; the TUI creates renderers via
+// RegisterTabRenderer at init time; callers create renderers via
 // NewTabRenderer using the LogTab's Kind and RendererCfg.
 type TabRenderer interface {
 	Append(data []byte) string

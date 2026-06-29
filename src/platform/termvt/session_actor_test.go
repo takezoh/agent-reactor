@@ -227,13 +227,13 @@ func TestActor_SubscribeSeedPinsCursorWithCUP(t *testing.T) {
 }
 
 // TestActor_SubscribeSeedClearsStaleInputTail is the end-to-end regression
-// for the Web UI bug: when a TUI (e.g. claude code's prompt component)
+// for the Web UI bug: when an agent CLI (e.g. claude code's prompt component)
 // redraws the input row by writing only "\r❯ " — moving the cursor to col 0
 // then overwriting cols 0..1 without an explicit EL — the emulator's
 // underlying buffer keeps the previous prompt's tail at the cells past
 // col 2. Render() at Subscribe faithfully re-emits that residue; without the
 // trailing EL the user sees stale text on the input row immediately after a
-// session switch, until the TUI's next repaint masks it.
+// session switch, until the next repaint masks it.
 //
 // We drive a Session with the real *vt.Emulator (no fake mock) so we exercise
 // the actual cell-tracking behavior, then replay the seed bytes into a

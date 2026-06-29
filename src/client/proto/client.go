@@ -12,10 +12,11 @@ import (
 	"time"
 )
 
-// Client is the typed IPC client used by the TUI processes and the
-// hook bridge. Each instance owns one Unix socket connection, runs a
-// reader goroutine that demuxes responses (matched by req_id) and
-// events (pushed onto an events channel), and exposes Send / Events.
+// Client is the typed IPC client used by IPC callers (HTTP/WS gateway
+// in the same binary, plus the hook bridge). Each instance owns one
+// Unix socket connection, runs a reader goroutine that demuxes
+// responses (matched by req_id) and events (pushed onto an events
+// channel), and exposes Send / Events.
 type Client struct {
 	conn    net.Conn
 	writer  *bufio.Writer

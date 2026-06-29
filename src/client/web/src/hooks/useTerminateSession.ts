@@ -43,7 +43,7 @@ export function useTerminateSession(api?: SessionsApi): UseTerminateSessionResul
       // 独立に到着するので await 後に getState() すると sessions から既に
       // deletedId が消えている race がある — その場合
       // selectNextActiveAfterDelete は first guard で null を返し、せっかく
-      // 残っていた sibling sessions に遷移できず空白 pane になる.
+      // 残っていた sibling sessions に遷移できず空白画面になる.
       const preSessions = useDaemonStore.getState().sessions;
       const preActiveId = useDaemonStore.getState().activeSessionID;
       setPending(true);

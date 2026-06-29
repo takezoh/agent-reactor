@@ -43,16 +43,16 @@ func firstNonEmpty(candidates ...string) string {
 // AI title or a user-prompt summary qualifies). Subtitle is intentionally
 // NOT deduped against Title here — non-rendering consumers may read
 // Card.Subtitle as the human-context source and need it populated even when
-// Summary was hoisted into Title. The web SessionList row and the TUI session
-// card render the dedup so the same string never appears twice on screen.
+// Summary was hoisted into Title. The web SessionList row renders the dedup
+// so the same string never appears twice on screen.
 func resolveCardTitleSubtitle(aiTitle, summary, lastPrompt string) (string, string) {
 	// Multi-line summaries (legacy persisted, pre-single-line constraint)
 	// are NOT Title candidates. The Title row has no per-line splitter, and
 	// promoting only the first line would leave the same line in the
-	// Subtitle row's multi-line splitter (tui/view.go sessionCardLines /
-	// SessionList.subtitleText), defeating dedup. For those sessions Title
-	// stays empty (placeholder "New Session" in the web client) and the
-	// multi-line Subtitle row keeps the legacy rendering path.
+	// Subtitle row's multi-line splitter (SessionList.subtitleText),
+	// defeating dedup. For those sessions Title stays empty (placeholder
+	// "New Session" in the web client) and the multi-line Subtitle row
+	// keeps the legacy rendering path.
 	summaryAsTitle := summary
 	if strings.ContainsRune(summaryAsTitle, '\n') {
 		summaryAsTitle = ""

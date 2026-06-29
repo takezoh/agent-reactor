@@ -13,8 +13,7 @@ import (
 // PtyBackend implements the FrameBackend role interfaces over platform/termvt,
 // driving pty-backed sessions directly (ADR 0004). All four role surfaces
 // (FrameLifecycle, FrameIO, FrameInspect, SessionEnv) are implemented for
-// real; layout composition that used to live on the backend in the tmux era
-// moves client-side in the backend-replacement phase.
+// real; layout composition is client-side.
 //
 // Targets are FrameID strings: termvt.Manager keys every session on
 // string(FrameID), so the live session is always resolved via mgr.Get(target).

@@ -187,10 +187,10 @@ func TestHandleProtoError_ProtoErrorBodyPreserved(t *testing.T) {
 }
 
 // TestHandleProtoError_ExhaustiveCodeMapping pins every proto.ErrCode to its
-// HTTP status. The user's original 500 from POST /api/sessions was a daemon
-// "pane spawn failed" wrapped in ErrInternal; the pre-fix gateway mapped
-// ErrInternal to 500, hiding the upstream-attribution. This table now
-// requires every code to have a dedicated status and prevents that drift.
+// HTTP status. ErrInternal in particular must map to 502 (Bad Gateway), not
+// 500, so an upstream daemon failure is attributed to the daemon rather than
+// the gateway. This table requires every code to have a dedicated status and
+// prevents that drift.
 //
 // Adding a new proto.ErrCode? Add the entry here and to protoCodeToHTTP.
 func TestHandleProtoError_ExhaustiveCodeMapping(t *testing.T) {

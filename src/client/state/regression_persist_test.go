@@ -71,7 +71,7 @@ func newExitSession(id SessionID) Session {
 
 // Intentional exit codes (clean exit + standard termination signals)
 // must evict the frame from state and tear down the dead backend window
-// via EffKillFrame. Many TUI agents return a non-zero code on
+// via EffKillFrame. Many agent CLIs return a non-zero code on
 // /quit or Ctrl-C, so eviction must not be limited to ExitCode == 0
 // or those user-driven terminations linger as Stopped entries that
 // the next cold start would restore.

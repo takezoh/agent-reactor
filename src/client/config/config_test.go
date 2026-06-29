@@ -10,9 +10,6 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.Tmux.SessionName != "arc" {
-		t.Errorf("SessionName = %q, want %q", cfg.Tmux.SessionName, "arc")
-	}
 	if cfg.Monitor.PollIntervalMs != 1000 {
 		t.Errorf("PollIntervalMs = %d, want 1000", cfg.Monitor.PollIntervalMs)
 	}
@@ -195,27 +192,30 @@ func TestLoadFrom_Missing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Tmux.SessionName != "arc" {
-		t.Fatalf("expected defaults, got session_name=%s", cfg.Tmux.SessionName)
+	if cfg.Monitor.PollIntervalMs != 1000 {
+		t.Fatalf("expected defaults, got PollIntervalMs=%d", cfg.Monitor.PollIntervalMs)
+	}
+	if cfg.Session.DefaultCommand != "shell" {
+		t.Fatalf("expected defaults, got DefaultCommand=%s", cfg.Session.DefaultCommand)
 	}
 }
 
 func TestLoadFrom_Valid(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.toml")
-	os.WriteFile(path, []byte(`[tmux]
-session_name = "custom"
+	os.WriteFile(path, []byte(`[monitor]
+poll_interval_ms = 5000
 `), 0o644)
 
 	cfg, err := LoadFrom(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Tmux.SessionName != "custom" {
-		t.Fatalf("expected custom, got %s", cfg.Tmux.SessionName)
+	if cfg.Monitor.PollIntervalMs != 5000 {
+		t.Fatalf("expected 5000, got %d", cfg.Monitor.PollIntervalMs)
 	}
-	if cfg.Monitor.PollIntervalMs != 1000 {
-		t.Fatalf("expected default 1000, got %d", cfg.Monitor.PollIntervalMs)
+	if cfg.Session.DefaultCommand != "shell" {
+		t.Fatalf("expected default 'shell', got %s", cfg.Session.DefaultCommand)
 	}
 }
 
@@ -262,8 +262,8 @@ another = false
 func TestLoadFrom_FeaturesEmpty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.toml")
-	os.WriteFile(path, []byte(`[tmux]
-session_name = "test"
+	os.WriteFile(path, []byte(`[log]
+level = "info"
 `), 0o644)
 
 	cfg, err := LoadFrom(path)
@@ -278,8 +278,8 @@ session_name = "test"
 func TestLoadFrom_DriversEmpty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.toml")
-	os.WriteFile(path, []byte(`[tmux]
-session_name = "test"
+	os.WriteFile(path, []byte(`[log]
+level = "info"
 `), 0o644)
 
 	cfg, err := LoadFrom(path)
@@ -432,7 +432,7 @@ func TestSandboxConfig_Validate_Isolation(t *testing.T) {
 
 // TestResolveDevcontainerPrefix pins the resolution order env →
 // sandbox.devcontainer.name_prefix → "" so scripts/run-dev.sh can isolate its
-// docker namespace from the user's TUI daemon purely via env, while a config
+// docker namespace from a primary daemon purely via env, while a config
 // override is honored when env is unset.
 func TestResolveDevcontainerPrefix(t *testing.T) {
 	const envVar = "ROOST_DEVCONTAINER_PREFIX"

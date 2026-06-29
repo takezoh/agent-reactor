@@ -95,6 +95,6 @@ github.com/takezoh/agent-reactor/platform/secretenv                  34
 github.com/takezoh/agent-reactor/platform/shellalias                  90
 github.com/takezoh/agent-reactor/platform/termvt                     85
 
-# server/ — tmux-free web client⇄server (pty multiplexer + web gateway)
+# server/ — pty session daemon + co-resident web gateway
 github.com/takezoh/agent-reactor/server/session                      78
 github.com/takezoh/agent-reactor/server/web                          90

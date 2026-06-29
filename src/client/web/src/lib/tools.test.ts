@@ -222,8 +222,8 @@ describe("ParamDef discriminated union shape", () => {
 
   it("newSessionTool.params[1] is a dynamic-options ParamDef with materializeKey 'commands'", () => {
     // web-ui-fixes 2026-06-24: the command field is now a curated picker
-    // sourced from /api/session-config's [session].commands list (same
-    // entries the TUI palette uses), not free-form text.
+    // sourced from /api/session-config's [session].commands list, not
+    // free-form text.
     const tools = listTools(makeDaemonSnapshot(), []);
     const newSession = findTool(tools, "new-session");
     const params = newSession.params;

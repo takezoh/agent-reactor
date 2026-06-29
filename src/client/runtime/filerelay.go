@@ -15,8 +15,8 @@ import (
 
 // FileRelay watches log and session files via fsnotify, reads new
 // bytes when they change, and broadcasts them as EvtLogLine or
-// EvtSessionFileLine events to IPC subscribers. This replaces the
-// TUI's 200ms polling loop — the TUI just receives and renders.
+// EvtSessionFileLine events to IPC subscribers. Push-based delivery
+// lets clients receive and render without a polling loop.
 //
 // FileRelay owns its own fsnotify watcher (separate from the
 // runtime's transcript watcher, which feeds the driver state
@@ -115,8 +115,8 @@ func (fr *FileRelay) add(path string, frameID state.FrameID, kind string) {
 	if _, ok := fr.files[path]; ok {
 		return
 	}
-	// Seek to end — we don't backfill from the relay. The TUI does
-	// its own backfill on tab switch via direct file reads.
+	// Seek to end — we don't backfill from the relay. Clients do their
+	// own backfill via direct file reads.
 	var offset int64
 	info, statErr := os.Stat(path)
 	if statErr == nil {

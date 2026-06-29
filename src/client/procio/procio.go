@@ -1,7 +1,7 @@
 // Package procio holds the process-wide stdout/stderr writers for library and
 // subprocess use. main initializes these once based on commandKind so that
 // library code never needs to know whether it runs under a CLI, coordinator,
-// or TUI child process.
+// or child process.
 package procio
 
 import (

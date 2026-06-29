@@ -14,7 +14,6 @@ type Config struct {
 	DataDir  string                        `toml:"data_dir"`
 	Theme    string                        `toml:"theme"`
 	Log      LogConfig                     `toml:"log"`
-	Tmux     TmuxConfig                    `toml:"tmux"`
 	Monitor  MonitorConfig                 `toml:"monitor"`
 	Session  SessionConfig                 `toml:"session"`
 	Terminal TerminalConfig                `toml:"terminal"`
@@ -58,15 +57,6 @@ type FeaturesConfig struct {
 // LogConfig controls slog handler verbosity.
 type LogConfig struct {
 	Level string `toml:"level"`
-}
-
-// TmuxConfig holds the legacy tmux backend's session-level settings. Only
-// SessionName remains live (used by coordinator startup log). The `tmux` TOML
-// table key is kept purely for back-compat with existing
-// ~/.agent-reactor/config.toml files. Deprecated tmux-era TOML keys are
-// silently ignored by BurntSushi/toml when present in user files.
-type TmuxConfig struct {
-	SessionName string `toml:"session_name"`
 }
 
 type MonitorConfig struct {
@@ -124,13 +114,6 @@ func DefaultConfig() *Config {
 	return &Config{
 		Theme: "default",
 		Log:   LogConfig{Level: "info"},
-		Tmux: TmuxConfig{
-			// Literal "arc" preserved for back-compat with existing user
-			// settings.toml that pin the legacy backend session name; phase F-F
-			// dropped appid.SessionName because the TUI (which consumed it) is
-			// gone, but the TOML key is still parsed silently for now.
-			SessionName: "arc",
-		},
 		Monitor: MonitorConfig{
 			PollIntervalMs:     1000,
 			FastPollIntervalMs: 100,
@@ -185,7 +168,7 @@ func (c *Config) ResolveDataDir() string {
 // sandbox.devcontainer.name_prefix → "" (the devcontainer package falls back
 // to its DefaultNamePrefix). Use this when constructing the devcontainer
 // Manager so a peer daemon (e.g. scripts/run-dev.sh) can isolate its docker
-// namespace from the user's TUI daemon without editing the TOML.
+// namespace from a primary daemon without editing the TOML.
 func (c *Config) ResolveDevcontainerPrefix() string {
 	if v := os.Getenv("ROOST_DEVCONTAINER_PREFIX"); v != "" {
 		return v

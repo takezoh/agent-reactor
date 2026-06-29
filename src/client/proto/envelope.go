@@ -5,8 +5,9 @@
 // in their own files without one giant union.
 //
 // The package is dependency-free apart from state (for SessionID type
-// re-use). Importing into the daemon, TUI, and hook bridge gives all
-// three a typed view of the IPC contract.
+// re-use). Importing into the daemon, the in-process HTTP/WS gateway,
+// and the hook bridge gives every caller a typed view of the IPC
+// contract.
 package proto
 
 import "encoding/json"

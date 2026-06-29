@@ -1,6 +1,6 @@
 // Package sessions extends proto.Client with session/frame/occupant management
 // methods that reference state-package types. Bridge code should use
-// proto.Client directly; TUI and daemon-side code uses sessions.Client.
+// proto.Client directly; daemon-side and gateway code uses sessions.Client.
 package sessions
 
 import (

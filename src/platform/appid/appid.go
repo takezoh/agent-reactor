@@ -19,9 +19,6 @@ const (
 	Name = "agent-reactor"
 
 	// ClientBin is the backend daemon binary and command name.
-	// (The historical "arc" TUI command was removed in phase F-E; the
-	// identifier is kept to minimise caller churn, but its literal now
-	// matches the cmd/server binary.)
 	ClientBin = "server"
 
 	// BridgeBin is the in-container helper binary name (agent-reactor bridge).

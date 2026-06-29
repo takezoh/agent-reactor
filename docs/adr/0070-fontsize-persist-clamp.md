@@ -16,7 +16,7 @@ Related spec: [Web Terminal Mobile UX spec.md](../specs/web-terminal-mobile-ux/s
 
 (1) **`createPersistedValue<T>(key, {parse, serialize, fallback, validate})` adapter を 1 個新設**し、`try/catch` / `parseInt` / `Number.isFinite` / clamp / serialize の責務を 1 箇所に集約。テスト時は in-memory `Map` を inject 可能 (DI)。
 
-(2) localStorage key `arc.web.term.fontSize` (number) と `arc.web.term.hintSeen` (boolean) を同 adapter で扱う。
+(2) localStorage key `web.term.fontSize` (number) と `web.term.hintSeen` (boolean) を同 adapter で扱う。
 
 (3) **読み出し経路の厳密化**:
 - `parseInt` が `NaN` の場合は default 14 へフォールバック

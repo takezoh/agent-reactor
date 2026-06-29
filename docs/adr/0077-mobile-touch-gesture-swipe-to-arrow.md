@@ -9,9 +9,9 @@ Related spec: [Web Terminal Mobile UX spec.md](../specs/web-terminal-mobile-ux/s
 
 ## Context
 
-web UI のターミナル中身は `src/platform/termvt/session.go` の `exec.Command(spec.Argv[0], ...)` で起動された agent CLI (claude / codex 等) そのもので、agent-reactor は PTY を中継する dumb pipe にすぎない。これら CLI は mouse reporting を有効化していないため、xterm.js の SGR mouse encoding を流しても TUI 側で解釈されず、タップでカーソル直接ジャンプは原理的に不可能。
+web UI のターミナル中身は `src/platform/termvt/session.go` の `exec.Command(spec.Argv[0], ...)` で起動された agent CLI (claude / codex 等) そのもので、agent-reactor は PTY を中継する dumb pipe にすぎない。これら CLI は mouse reporting を有効化していないため、xterm.js の SGR mouse encoding を流しても CLI 側で解釈されず、タップでカーソル直接ジャンプは原理的に不可能。
 
-ADR 0071 で実装した pinch → fontSize は、表面的な可視性は高いが core UX (履歴呼び出し / カーソル左右移動) には寄与しない。一方、Termius モバイル流の『水平 swipe → arrow key 連射』は agent CLI の readline 互換入力欄 (Ink `<TextInput>`, bubbletea textinput 等) に対して TUI 改変ゼロで通る最も leverage の高いジェスチャ。
+ADR 0071 で実装した pinch → fontSize は、表面的な可視性は高いが core UX (履歴呼び出し / カーソル左右移動) には寄与しない。一方、Termius モバイル流の『水平 swipe → arrow key 連射』は agent CLI の readline 互換入力欄 (Ink `<TextInput>`, bubbletea textinput 等) に対して CLI 改変ゼロで通る最も leverage の高いジェスチャ。
 
 ユーザー要件:
 - pinch 操作は不要 (撤去対象)
@@ -44,7 +44,7 @@ ADR 0071 で実装した pinch → fontSize は、表面的な可視性は高い
 (8) **long-press selection / FontSizeControl ステッパー / persist 契約は不変**:
   - dwell (500ms 静止) → longpress-drag → `term.select()` の経路は ADR 0071 (3) を継承
   - `useFontSize` の `applyPinch` / `beginPinch` / `pinchBaseRef` は dead code として削除、stepper API (`increase` / `decrease` / `reset`) は維持
-  - localStorage key `arc.web.term.fontSize` の persist / clamp 契約は ADR 0070 から継承 (writer 経路がステッパーのみに減るが invariant は同一)
+  - localStorage key `web.term.fontSize` の persist / clamp 契約は ADR 0070 から継承 (writer 経路がステッパーのみに減るが invariant は同一)
 
 (9) **削除対象**:
   - `src/client/web/src/components/PinchIndicator.tsx` / `PinchIndicator.test.tsx`
@@ -78,13 +78,13 @@ VT100 byte 形成が reducer effect 型に漏れ、Layer 1 テストが文字列
 ## Consequences
 
 - モバイルユーザーは input mode で水平 swipe による Termius 流の cursor / 履歴ナビゲーションを獲得 (claude code の長文プロンプト編集など最大級のユースケースに直撃)
-- TUI 側 (agent CLI) に一切の変更を要求しない → claude / codex / 将来の他 agent でも一律で動く
+- agent CLI 側に一切の変更を要求しない → claude / codex / 将来の他 agent でも一律で動く
 - vertical swipe と long-press 選択は ADR 0071 の契約をそのまま継承 (regression なし)
 - DOM / CSS / hook の表面積が縮む: `PinchIndicator` / `useMobilePinch` / pinch CSS / 1 reducer phase + 2 effect 種別が消滅
 - reducer purity を維持 (input mode gate は impure hook 層に隔離)
 - `useFontSize` の persist / clamp 契約は ADR 0070 から継承し、書込経路がステッパーのみに集約される
 - 1 touchmove frame = 1 wire frame の規律で WS フラッディングなし
-- 将来 mouse-aware な TUI に切り替える場合も hook の `onArrowKey` を別 effect に差し替えるだけで対応可能
+- 将来 mouse-aware な agent CLI に切り替える場合も hook の `onArrowKey` を別 effect に差し替えるだけで対応可能
 
 ## Related Requirements
 

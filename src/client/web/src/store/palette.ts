@@ -229,7 +229,7 @@ export const usePaletteStore = create<
     // FR-019: IME composition pre-empts all input writes. We honor it here so
     // the CommandPalette can wire input.onChange → setQuery without a
     // per-event composition check. cursor resets to 0 so the new top result
-    // of the freshly-filtered list is highlighted (matches TUI palette UX).
+    // of the freshly-filtered list is highlighted.
     if (get().composing) return;
     set({ query, paramCursor: 0 });
   },

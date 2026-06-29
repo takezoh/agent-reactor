@@ -42,8 +42,8 @@ func (RespSessions) isResponse() {}
 // state.Session + the driver's View output. Carried inside
 // RespSessions and EvtSessionsChanged. State and StateChangedAt are
 // duplicated from View.Status / View.StatusChangedAt for client-side
-// convenience (the TUI renders status colors and elapsed time
-// without unwrapping the View).
+// convenience (clients render status colors and elapsed time without
+// unwrapping the View).
 type SessionInfo struct {
 	ID                 string           `json:"id"`
 	Project            string           `json:"project"`

@@ -56,8 +56,8 @@ type subscribeCmd struct {
 // positioning, no clear sequences — so a client that writes them in order
 // builds the same scrollback its xterm.js would have accumulated had it been
 // attached from the start. An empty scrollback (fresh session, or an
-// alt-screen TUI whose draws never spilled to history) elides the first
-// frame entirely; the screen frame is unconditional.
+// alt-screen full-screen program whose draws never spilled to history)
+// elides the first frame entirely; the screen frame is unconditional.
 //
 // The trailing CUP keeps typed input rendering at the correct position
 // after a session switch. Without it, xterm.js's cursor settles at the
@@ -66,14 +66,14 @@ type subscribeCmd struct {
 // next echoed character would then be painted at the wrong screen cell.
 //
 // The trailing EL (\x1b[K) clears stale cells past the cursor on the input
-// row. Some TUIs (notably claude code's prompt component) redraw the input
-// row by writing only "\r❯ " without explicit EL, so the emulator's
+// row. Some agent CLIs (notably claude code's prompt component) redraw the
+// input row by writing only "\r❯ " without explicit EL, so the emulator's
 // underlying buffer keeps the previous prompt's tail (e.g. "業確認") at
 // columns past col 2 even though the live xterm view is masked by the very
 // next frame. Render() at subscribe captures that stale state verbatim;
-// without EL the user sees the residue on switch-back until the TUI's next
-// repaint. Cursor sits at the end of the TUI's intended input, so cells
-// past it are by definition "should be empty" — EL is safe to issue.
+// without EL the user sees the residue on switch-back until the next repaint.
+// The cursor sits at the end of the intended input, so cells past it are
+// by definition "should be empty" — EL is safe to issue.
 //
 // IDs are allocated starting from 1 so 0 stays reserved as the post-shutdown
 // sentinel that Session.Subscribe returns when mainLoop has exited; any

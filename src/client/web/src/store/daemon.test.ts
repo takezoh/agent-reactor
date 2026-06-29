@@ -287,7 +287,7 @@ describe("daemonStore", () => {
     expect(useDaemonStore.getState().sessionConfig).toBeNull();
   });
 
-  // ─── Workspace + fold state (TUI parity) ───────────────────────────────
+  // ─── Workspace + fold state ─────────────────────────────────────────────
 
   it("DEFAULT_WORKSPACE matches the Go config.DefaultWorkspaceName sentinel", () => {
     expect(DEFAULT_WORKSPACE).toBe("default");
@@ -317,7 +317,7 @@ describe("daemonStore", () => {
     expect(useDaemonStore.getState().foldedProjects.has("alpha")).toBe(false);
   });
 
-  it("selectSession follows the picked session's workspace (TUI parity)", () => {
+  it("selectSession follows the picked session's workspace", () => {
     useDaemonStore.setState({
       sessions: [mkSession("s1", { workspace: "default" }), mkSession("s2", { workspace: "prod" })],
     });

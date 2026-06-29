@@ -95,13 +95,12 @@ type apiProjectMeta struct {
 
 // apiSessionConfig is the REST wire shape for GET /api/session-config. It
 // surfaces the subset of the user's settings.toml the create-session form
-// and the web UI palette need to render: the curated [session].commands list
-// (the same picker the TUI palette uses), the [session].default_command, the
-// resolved [projects] list (project_roots fan-out + project_paths) annotated
-// with isGit/isSandboxed flags, and the [session].push_commands list used by
-// the palette's push scope. Sourcing these from config rather than hardcoding
-// driver names in the UI keeps web and TUI on the same source of truth and
-// lets the user customize both without rebuilding.
+// and the web UI palette need to render: the curated [session].commands list,
+// the [session].default_command, the resolved [projects] list
+// (project_roots fan-out + project_paths) annotated with isGit/isSandboxed
+// flags, and the [session].push_commands list used by the palette's push
+// scope. Sourcing these from config rather than hardcoding driver names in
+// the UI lets the user customize behaviour without rebuilding.
 //
 // ProjectRoots and ProjectPaths are surfaced verbatim from settings.toml for
 // forward-compat with future UI hints; Projects is the resolved (existence-
@@ -121,8 +120,7 @@ type apiSessionConfig struct {
 // apiCreateReq is the POST /api/sessions body. Required: project (absolute
 // path) and command. Optional: terminal cols/rows hint, worktree (create a
 // git worktree before launch), and sandbox ("" / "auto" → follow project
-// config, "host" → force direct/host launch, same vocabulary the TUI
-// palette uses).
+// config, "host" → force direct/host launch).
 type apiCreateReq struct {
 	Project  string `json:"project"`
 	Command  string `json:"command"`
@@ -134,9 +132,9 @@ type apiCreateReq struct {
 
 // parseSandbox maps the apiCreateReq sandbox field to the daemon's
 // SandboxOverride enum. "" and "auto" both mean "follow project config"
-// (SandboxOverrideAuto). "host" forces SandboxOverrideHost (the TUI
-// palette's "host" / sandbox=direct toggle). Anything else returns ok=false
-// so the gateway can 400 the request rather than silently degrading.
+// (SandboxOverrideAuto). "host" forces SandboxOverrideHost. Anything else
+// returns ok=false so the gateway can 400 the request rather than silently
+// degrading.
 func parseSandbox(v string) (state.SandboxOverride, bool) {
 	switch v {
 	case "", "auto":
@@ -234,8 +232,8 @@ func withSessionConfigLoader(loader func() (*config.Config, error)) func() {
 
 // handleSessionConfig exposes the config-derived inputs the create-session
 // form needs: default_command (initial select value), commands (the
-// [session].commands picker entries — same source the TUI palette uses), and
-// projects (the resolved [projects] list for the project directory datalist).
+// [session].commands picker entries), and projects (the resolved
+// [projects] list for the project directory datalist).
 //
 // Reads config on every request so the user can edit settings.toml and see
 // updates without restarting either the daemon or the gateway. The config
@@ -624,11 +622,9 @@ func protoCodeToHTTP(code proto.ErrCode) (int, string) {
 	case proto.ErrFrameNotReady:
 		return http.StatusServiceUnavailable, "frame_not_ready"
 	case proto.ErrInternal:
-		// Upstream daemon error (typically "pane spawn failed: …").
+		// Upstream daemon error (typically "frame spawn failed: …").
 		// 502 Bad Gateway is the precise status — the gateway is healthy,
-		// the upstream daemon's operation failed. The user's original
-		// "POST /api/sessions returned 500" complaint was this code: a
-		// daemon-side spawn failure being miscategorized as a gateway bug.
+		// the upstream daemon's operation failed.
 		return http.StatusBadGateway, "daemon_internal"
 	case proto.ErrUnknown:
 		return http.StatusBadGateway, "daemon_unknown"

@@ -74,8 +74,8 @@ export type ParamDef =
       label: string;
       // 'projects' → daemon.projects (path listing for new-session "Project").
       // 'commands' → daemon.commands (curated [session].commands list for the
-      // new-session "Command" picker; sourced from /api/session-config so the
-      // web UI and TUI share the same picker entries — see ADR-0041).
+      // new-session "Command" picker; sourced from /api/session-config — see
+      // ADR-0041).
       materializeKey: "projects" | "commands";
       required?: boolean;
     };
@@ -88,11 +88,11 @@ export type ParamDef =
 // `pushCommands` without touching the store shape. ADR-0036 keeps store
 // pure; ctx.daemon is the projection palette-store hands to submit().
 // DaemonOccupant is the tool-layer alias for the wire-level ActiveOccupant
-// ('main' | 'log' | 'frame'): what currently occupies pane 0.1 in the TUI.
+// ('main' | 'log' | 'frame'): which buffer is active on the daemon.
 // Aliasing (Y2) keeps the literal union single-sourced at the wire boundary
 // so a future scope ('chat' / 'scratch' / ...) widens in exactly one place.
 // Web UI only cares about this to gate push scope (push targets the active
-// session's frame pane); see FR-004 (initial scope selection) and FR-006
+// session's frame buffer); see FR-004 (initial scope selection) and FR-006
 // (push-segment disabled state). Optional on DaemonSnapshot because not all
 // callers (older tests, stub snapshots) provide it; `undefined` is treated
 // as "no frame" for scope purposes.
@@ -103,9 +103,9 @@ export interface DaemonSnapshot {
   activeSessionID: string | null;
   activeOccupant?: DaemonOccupant;
   projects: SessionConfigProject[];
-  // Curated [session].commands list from /api/session-config — the same
-  // picker the TUI palette uses. new-session's "Command" param materializes
-  // its dynamic-options listbox from this field via materializeKey:'commands'.
+  // Curated [session].commands list from /api/session-config.
+  // new-session's "Command" param materializes its dynamic-options listbox
+  // from this field via materializeKey:'commands'.
   commands: string[];
   pushCommands: string[];
 }
@@ -304,10 +304,9 @@ export function projectOptions(daemon: DaemonSnapshot): ParamOption[] {
 
 // commandOptions is the materialize implementation for
 // `materializeKey === 'commands'`. The curated [session].commands list lives
-// on the daemon snapshot (sourced from /api/session-config — same picker the
-// TUI palette uses). value === label since the command string IS what we
-// send on the wire AND what we show to the user (FR/UAC for new-session
-// "Command" picker, web-ui-fixes 2026-06-24).
+// on the daemon snapshot (sourced from /api/session-config). value === label
+// since the command string IS what we send on the wire AND what we show to
+// the user (FR/UAC for new-session "Command" picker, web-ui-fixes 2026-06-24).
 export function commandOptions(daemon: DaemonSnapshot): ParamOption[] {
   return daemon.commands.map((c) => ({
     value: c,
@@ -332,7 +331,7 @@ export function commandOptions(daemon: DaemonSnapshot): ParamOption[] {
 //   (FR-005, FR-006). occupant is optional on the snapshot because the wire
 //   may not yet populate it; treat undefined as "no frame" — failing closed
 //   keeps push disabled in the worst case rather than letting a stale push
-//   fire against a session whose pane just shifted to the main/log buffer.
+//   fire against a session whose active buffer just shifted to main/log.
 export function scopeDisabledReason(scope: ToolScope, daemon: DaemonSnapshot): string | null {
   if (scope === "standard") return null;
   if (!daemon.activeSessionID) return "No active session";

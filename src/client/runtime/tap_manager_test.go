@@ -156,7 +156,7 @@ func TestReadTapCancelStops(t *testing.T) {
 // when certain ESC sequences (e.g. CSI M / DECRC / ESC M) drive
 // Screen.InsertLineArea past the buffer bounds. The panic was raised in
 // the per-frame readTap goroutine and, with no recovery, terminated the
-// whole daemon — closing every IPC socket and leaving every TUI frame
+// whole daemon — closing every IPC socket and leaving every frame
 // dead. feedSafe must absorb the panic, log it, and let the reader move
 // on to the next chunk so a single rogue codex frame can't take down
 // the daemon.

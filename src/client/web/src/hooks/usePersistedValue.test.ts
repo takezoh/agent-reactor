@@ -26,7 +26,7 @@ function mapStorage(initial?: Record<string, string>): StorageLike & { map: Map<
   };
 }
 
-const KEY = "arc.web.term.fontSize";
+const KEY = "web.term.fontSize";
 
 /** The fontSize-shaped config exercised throughout (parseInt + finite + clamp[8,28]). */
 function fontSizeConfig(storage: StorageLike | null) {

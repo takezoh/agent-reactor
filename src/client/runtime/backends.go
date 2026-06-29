@@ -54,7 +54,7 @@ type FrameIO interface {
 	LoadBuffer(name, text string) error
 	// PasteBuffer writes the named buffer's contents into the target frame and
 	// drops the buffer afterwards. Used by InjectPrompt to deliver multi-line
-	// text without each newline being interpreted as submit by Ink TUIs.
+	// text without each newline being interpreted as submit by Ink-based CLIs.
 	PasteBuffer(name, target string) error
 }
 

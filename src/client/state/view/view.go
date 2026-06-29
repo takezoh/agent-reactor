@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// View is the complete TUI payload for one session, produced by its
+// View is the complete view payload for one session, produced by its
 // Driver.Step. JSON tags allow the proto layer to ship View values
 // directly across the wire without a parallel type hierarchy.
 type View struct {
@@ -45,7 +45,7 @@ func HostTag() Tag {
 	return Tag{Text: "host", Background: "#7C5CBF", Foreground: "#FFFFFF"}
 }
 
-// LogTab declares an additional log tab the driver wants the TUI to display.
+// LogTab declares an additional log tab the driver wants clients to display.
 type LogTab struct {
 	Label       string          `json:"label"`
 	Path        string          `json:"path"`
@@ -53,7 +53,7 @@ type LogTab struct {
 	RendererCfg json.RawMessage `json:"renderer_cfg,omitempty"`
 }
 
-// TabKind selects the renderer the TUI applies to a tab's contents.
+// TabKind selects the renderer a client applies to a tab's contents.
 type TabKind string
 
 // TabKindText is the built-in plain-text kind.

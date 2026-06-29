@@ -43,7 +43,7 @@ func runDaemon(df *daemonFlagSet) error {
 	if err := cfg.Sandbox.Validate(); err != nil {
 		return err
 	}
-	slog.Info("starting coordinator", "session", cfg.Tmux.SessionName)
+	slog.Info("starting coordinator")
 
 	dataDir := cfg.ResolveDataDir()
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
@@ -240,7 +240,7 @@ func buildRuntime(ctx context.Context, cfg *config.Config, loginShell string, da
 // drivers to resume their state (RecoverWarmStartSessions) before falling back
 // to fresh container provisioning for un-adoptable frames (RecreateAll).
 //
-// References: ADR 0004 (decision 2), plans/arc-server-client-split.md §6 items 1/2/3.
+// References: ADR 0004 (decision 2).
 func startSession(ctx context.Context, rt *runtime.Runtime, loginShell string, idleThreshold time.Duration) error {
 	shellDriver := statedriver.NewShellDriver(statedriver.ShellDriverName, shellDisplayName(loginShell), idleThreshold)
 	if err := bootSession(ctx, rt, shellDriver); err != nil {
@@ -393,8 +393,8 @@ func runAndWait(ctx context.Context, cancel context.CancelFunc, rt *runtime.Runt
 // sandbox mode. Both dispatchers share the same devcontainer manager so
 // container provisioning is consistent. namePrefix is propagated to the
 // devcontainer Manager and ultimately to ContainerName + label keys, so two
-// peer daemons (TUI vs. run-dev gateway) under distinct prefixes never compete
-// for the same docker container name.
+// peer daemons (primary vs. run-dev gateway) under distinct prefixes never
+// compete for the same docker container name.
 func newAgentLauncher(ctx context.Context, sb platformconfig.SandboxConfig, resolver *platformconfig.SandboxResolver, projects platformconfig.ProjectsConfig, dataDir, sockPath, namePrefix string) (runtime.AgentLauncher, agentlaunch.Dispatcher, error) {
 	newDispatcher := func() *agentlaunch.SandboxDispatcher {
 		return &agentlaunch.SandboxDispatcher{

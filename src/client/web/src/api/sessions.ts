@@ -58,10 +58,9 @@ export interface CreateSessionPayload {
   command: string;
   worktree?: boolean;
   // ADR-0042: palette new-session payload wire mirror. "" / undefined / "auto"
-  // all mean "follow project config"; "host" forces direct/host launch (same
-  // vocabulary as the TUI palette). We expose only the "host" override on the
-  // type because palette UI never sends explicit "auto" — omitting the field
-  // is the same thing on the wire.
+  // all mean "follow project config"; "host" forces direct/host launch.
+  // We expose only the "host" override on the type because palette UI never
+  // sends explicit "auto" — omitting the field is the same thing on the wire.
   sandbox?: "host";
 }
 

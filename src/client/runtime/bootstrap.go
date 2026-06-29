@@ -122,10 +122,9 @@ func restoreSession(snap SessionSnapshot, coldStart bool, now time.Time) (state.
 	return sess, true
 }
 
-// Warm-start layout recovery was removed alongside the TUI: PtyBackend pairs
-// one pty session per frame so the main-frame-owner concept no longer exists,
-// and cross-daemon-restart frame recovery is out of scope per ADR 0004
-// decision 2 (daemon and frames share a lifetime).
+// PtyBackend pairs one pty session per frame so a main-frame-owner concept
+// does not exist; cross-daemon-restart frame recovery is out of scope per
+// ADR 0004 decision 2 (daemon and frames share a lifetime).
 
 func (r *Runtime) RecoverWarmStartSessions() {
 	now := time.Now()
@@ -188,9 +187,8 @@ func (r *Runtime) bootstrapSessionEffect(sessID state.SessionID, frameID state.F
 	}
 }
 
-// Shutdown layout repair was removed alongside the TUI: daemon shutdown now
-// closes the IPC socket and tears down frames via PtyBackend without any
-// layout fix-up.
+// Daemon shutdown closes the IPC socket and tears down frames via
+// PtyBackend without any layout fix-up.
 
 // RecoverSandboxFrames tries to re-attach each persisted frame to its sandbox
 // (e.g. Docker container) before the cold-start spawn path runs. PtyBackend

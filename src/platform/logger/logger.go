@@ -114,8 +114,8 @@ func Close() {
 
 // RedirectStderr redirects OS file descriptor 2 (stderr) to the log
 // file so that unexpected writes (panics, library output) do not
-// corrupt the Bubble Tea TUI rendering. Also redirects Go's standard
-// log package. Must be called after Init/InitWithDataDir.
+// corrupt downstream rendering. Also redirects Go's standard log
+// package. Must be called after Init/InitWithDataDir.
 func RedirectStderr() {
 	if logFile == nil {
 		return

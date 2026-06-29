@@ -33,7 +33,7 @@ export type InfoLine = {
   value: string;
 };
 
-// View mirrors view.View — complete TUI payload for one session.
+// View mirrors view.View — complete view payload for one session.
 export type View = {
   card: Card;
   display_name?: string;
@@ -78,8 +78,8 @@ export type ControlFrame = {
   data?: string; // omitempty
 };
 
-// ActiveOccupant mirrors the daemon-side OccupantKind: which buffer occupies
-// pane 0.1 in the TUI ("main" | "log" | "frame"). Carried daemon-globally
+// ActiveOccupant mirrors the daemon-side OccupantKind: which buffer is
+// active on the daemon ("main" | "log" | "frame"). Carried daemon-globally
 // (NOT per session — ADR-0044) so the web palette can gate the push scope
 // (FR-005/FR-006). Optional / omitempty on the Go side: an absent value
 // reads as "no frame" via the existing fail-closed path.

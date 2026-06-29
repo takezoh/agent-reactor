@@ -317,8 +317,7 @@ func TestMux_CreateForwardsCmdEvent(t *testing.T) {
 
 // TestMux_CreateForwardsWorktreeAndSandbox verifies that worktree=true and
 // sandbox="host" in the REST body reach the daemon as
-// CreateSessionParams.Options.Worktree.Enabled and Sandbox=SandboxOverrideHost
-// (the same vocabulary the TUI palette's worktree/host toggles use).
+// CreateSessionParams.Options.Worktree.Enabled and Sandbox=SandboxOverrideHost.
 func TestMux_CreateForwardsWorktreeAndSandbox(t *testing.T) {
 	t.Parallel()
 	d, daemon := newDaemonPair(t)

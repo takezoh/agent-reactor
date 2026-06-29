@@ -17,7 +17,7 @@ primary_flows:
     steps:
       - "[pointer-touch|screen-reader] モバイル gate (matchMedia (max-width: 767px) and (pointer: coarse) が true) でセッションを開くと、terminal-host ラッパは data-input-active=\"false\" (閲覧モード) で起動し、helper textarea は readonly 属性を持ち focus されていない"
       - "[pointer-touch] 閲覧モードで xterm 表示領域を tap しても helper textarea へ focus が移らず (activeElement は変わらない)、仮想キーボードは出ない (focus 移動のブロックが keyboard 抑止の load-bearing 機構、readonly は defense-in-depth)"
-      - "[pointer-touch] 初回の閲覧モード突入時のみ、キーボード FAB 隣に dismissible な coachmark (タップで入力 / 2 本指で文字サイズ) を出す。tap または数秒で消え、以後は localStorage キー arc.web.term.hintSeen で再表示しない"
+      - "[pointer-touch] 初回の閲覧モード突入時のみ、キーボード FAB 隣に dismissible な coachmark (タップで入力 / 2 本指で文字サイズ) を出す。tap または数秒で消え、以後は localStorage キー web.term.hintSeen で再表示しない"
       - "[pointer-touch|screen-reader] キーボード FAB (キーボード glyph, aria-label=\"キーボードを開く\", aria-pressed=\"false\") を tap すると data-input-active=\"true\" に遷移し、helper textarea の readonly が外れ focus され仮想キーボードが立ち上がる。FAB は pointerdown を抑止して focus を奪わないため、enter と同時の blur-exit は起きない"
       - "[keyboard] 入力モードで文字を打つと従来経路 (term.onData → conn.send k:i) でセッションへ送信される (入力経路は legacy 踏襲)"
       - "[pointer-touch|screen-reader] 入力モードで同じ FAB (aria-label=\"キーボードを閉じる\", aria-pressed=\"true\") を再 tap すると data-input-active=\"false\" に戻り helper textarea が blur + readonly 再付与"
@@ -54,7 +54,7 @@ primary_flows:
       - "[pointer-touch] pinch 中、画面中央に現在 fontSize の transient indicator (例 16px) を表示し touchend 約 800ms 後に fade させる (既存 Toast primitive を再利用)。indicator の tap で default 14px へ reset する"
       - "[pointer-touch] fontSize 変更ごとに ADR-0034 の scheduleFit (rAF coalesce) 経由で fit() を呼び cols/rows を再計算し refit する"
       - "[pointer-touch|screen-reader] pinch 不能/支援技術ユーザー向けに、font-size 制御ボタン (aria-label=\"文字サイズ\") から ＋ / － / リセット(14px) を選べる非 pinch の代替経路を提供する (各 44px, role=button)"
-      - "[pointer-touch] pinch 終了時の確定 fontSize を device-scoped localStorage キー arc.web.term.fontSize に保存し、次回起動時に [8,28] へ clamp 検証してから復元する (不正値/範囲外は default 14px)"
+      - "[pointer-touch] pinch 終了時の確定 fontSize を device-scoped localStorage キー web.term.fontSize に保存し、次回起動時に [8,28] へ clamp 検証してから復元する (不正値/範囲外は default 14px)"
   - id: F-006
     name: "PC 非影響 — pointer:fine 環境で legacy 挙動を完全維持 (narrow-width AND coarse 判別)"
     steps:
@@ -195,12 +195,12 @@ acceptance_scenarios:
     flow_ref: F-005
     given: "モバイル gate true・pinch out で fontSize を 20px に変更し touchend 済み"
     when: "ページをリロードして同セッションを再描画する"
-    then: "localStorage の arc.web.term.fontSize が \"20\" で、再描画後の .xterm .xterm-rows の computed font-size が 20px"
+    then: "localStorage の web.term.fontSize が \"20\" で、再描画後の .xterm .xterm-rows の computed font-size が 20px"
     vs_legacy: irrelevant
     counterexample: "誤実装: fontSize を React state のみ保持し localStorage に書かない。リロードで default 14px に戻り localStorage 値が null なので、永続値 assertion と復元 font-size assertion の両方で fail する。"
   - id: UAC-019
     flow_ref: F-005
-    given: "モバイル gate true・localStorage の arc.web.term.fontSize に範囲外/破損値 (例 \"999\") を仕込んでリロード"
+    given: "モバイル gate true・localStorage の web.term.fontSize に範囲外/破損値 (例 \"999\") を仕込んでリロード"
     when: "セッションが再描画される"
     then: "復元後の .xterm .xterm-rows の computed font-size が 28px (max にクランプ) で、NaN cols や極大 font にならない"
     vs_legacy: irrelevant
@@ -255,7 +255,7 @@ acceptance_scenarios:
     vs_legacy: irrelevant
     counterexample: "誤実装: aria-pressed を初期 render 時しか設定せず state 変化に同期しない。入力→閲覧後も aria-pressed=\"true\" が残り、screen reader が誤った状態を読むため false 同期 assertion で fail する。"
 reference_ux:
-  - name: "tmux copy-mode/scroll-mode と insert-mode の分離"
+  - name: "modal editor 流の閲覧/挿入 mode separation"
     stance: modeled_on
     aspects:
       - "閲覧 (copy/scroll) と入力 (insert) を別モードにし、デフォルトは閲覧で入力は明示遷移が必要"
@@ -324,11 +324,11 @@ states:
   - "↓最新 FAB 非表示 (scrollTop=末尾 ±2px): DOM 不在 or hidden"
   - "↓最新 FAB 表示 (scrollTop≠末尾, 閲覧/入力どちらでも scrollback 中): aria-label=最新へスクロール button 可視"
   - "pinch 操作中: term.options.fontSize を 8–28px clamp で連続変更 + scheduleFit 経由 refit + 中央に transient fontSize indicator 表示"
-  - "fontSize 永続化済み: localStorage arc.web.term.fontSize に確定値、次回 device で clamp 検証して復元"
+  - "fontSize 永続化済み: localStorage web.term.fontSize に確定値、次回 device で clamp 検証して復元"
   - "FAB スタック: 下=キーボード FAB → 上=↓最新 FAB を 8px gap、font-size 制御は別位置、既存 .notification-toast と z-index/位置を分離"
   - "aria-live status: 非ジェスチャ起点の状態変化 (blur→閲覧復帰 / ↓最新 FAB 出現) を polite に読み上げ"
 edge_cases:
-  - "alt-screen TUI (vim/less) 中: ADR-0066 で scrollback が空のため ↓最新 FAB は出ない (scrollTop=末尾固定)。閲覧の swipe も移動量 0。alt-screen 終了後は scrollback 復活で FAB/swipe が機能する"
+  - "alt-screen 全画面プログラム (vim/less) 中: ADR-0066 で scrollback が空のため ↓最新 FAB は出ない (scrollTop=末尾固定)。閲覧の swipe も移動量 0。alt-screen 終了後は scrollback 復活で FAB/swipe が機能する"
   - "セッション未選択 (sessionId=null): TerminalPane は host を出すが入力経路 drop。入力モード FAB tap で focus しても term.onData が sid 無しで drop する (legacy 踏襲) — FAB は表示してよいが no-op"
   - "iPadOS Safari が pointer:fine を報告するケース: gate が false になり desktop 扱い。幅 AND coarse の AND 条件で意図通り (タッチ iPad でも外付けキーボード/トラックパッド時は desktop UX)"
   - "デバイス回転で 767px 境界をまたぐ: matchMedia の change を購読し mode を再評価。入力モード中に desktop へ移ったら入力モード state を破棄し readonly を解除 (desktop は readonly 無し)"
@@ -342,13 +342,13 @@ edge_cases:
   - "localStorage が無効/容量超過 (private mode): fontSize 永続化が失敗しても default 14px で動作継続 (try/catch で握りつぶし、UX は degrade のみ)"
   - "localStorage の不正/範囲外 fontSize 値: 復元時に [8,28] へ clamp 検証し、parse 不能/範囲外は default 14px にフォールバックする (NaN cols / 読めない font の起動時再現を防ぐ)"
   - "1 本指 + 後から 2 本目で pinch 開始: touchstart の touches.length 遷移を扱う。1 指 swipe (scroll) と 2 指 pinch を touches.length で分岐し誤判定でモード遷移しない"
-  - "coachmark の抑止: 初回閲覧モード突入でのみ表示し、tap または数秒で dismiss。localStorage arc.web.term.hintSeen で 2 回目以降は出さない (認知ノイズを足さない)"
+  - "coachmark の抑止: 初回閲覧モード突入でのみ表示し、tap または数秒で dismiss。localStorage web.term.hintSeen で 2 回目以降は出さない (認知ノイズを足さない)"
 assumptions:
   - "モバイル gate の確定値: matchMedia (max-width: 767px) and (pointer: coarse) が true のときのみモバイル UX を有効化する。既存 app.css の @media (max-width:767px) と幅境界を一致させ、pointer:coarse の AND で narrow desktop window (pointer:fine) を除外して PC 非影響を保証する"
   - "pointer media は CSS の @media (pointer:coarse) と JS の matchMedia の両輪で判定し、JS 側 (FAB の render 有無) を真実源にする (CSS display 切替ではなく条件 render で a11y tree から除外)"
   - "閲覧モードで tap がキーボードを出さない load-bearing 機構は helper textarea への focus 移動をブロックすること。readonly 属性は defense-in-depth (万一 focus されても無キーボード) として閲覧モードで付与し、入力モードで外す。両者は矛盾しない (未 focus の readonly textarea は無キーボードで整合)。focus-block の実装手段は plan-how が確定する"
   - "ピンチズーム font size の確定値: default=14px, min=8px, max=28px, 比率連続追従 (整数 px 丸め)。default 14 は既存 desktop の体感に近く、min 8 で全体俯瞰、max 28 で確認応答時の可読性を確保"
-  - "fontSize 永続化方針の確定: device-scoped (per-browser) で localStorage キー arc.web.term.fontSize に保存。per-session ではない (同一デバイスの好みは全セッション共通が自然、web-active-session-ownership の教訓どおり session に紐付けない)。復元時は [8,28] clamp 検証"
+  - "fontSize 永続化方針の確定: device-scoped (per-browser) で localStorage キー web.term.fontSize に保存。per-session ではない (同一デバイスの好みは全セッション共通が自然、web-active-session-ownership の教訓どおり session に紐付けない)。復元時は [8,28] clamp 検証"
   - "入力モード退出条件の確定: (1) キーボード FAB 再 tap (aria-pressed toggle), (2) helper textarea の blur (OS のキーボード非表示), (3) hardware keyboard の Esc keydown, (4) terminal コンテンツ部の tap (領域外タップ)。この 4 つで data-input-active=false へ同期し aria-live で告知する"
   - "helper textarea の font-size は grid の term.options.fontSize と独立に常時 16px 以上へ固定し、iOS の focus-zoom を抑止する (グリッド表示は .xterm-rows 側で別系統)"
   - "FAB は terminal-slot の absolute overlay 子として配置し、env(safe-area-inset) を再加算せず親 inset 内 16px offset で置く (ADR-0065 overlay 原則 + FR-LAYOUT-004 single-source safe-area)。複数 FAB は固定スタック順 (下:キーボード FAB → 上:↓最新 FAB, 8px gap)、既存 .notification-toast と z-index/位置を分離する"
@@ -374,7 +374,7 @@ Web UI のターミナルタブ (`src/client/web/src/components/TerminalPane.tsx
 本 UX 再設計は**モバイル (スマホ・タブレット) のみ**を対象に、閲覧モード (デフォルト) と入力モードを明示分離する。閲覧モードでは tap でキーボードを出さず、指スワイプで scrollback をスクロールし、long-press で文字選択を維持する。入力モードはキーボード FAB の明示 tap でのみ立ち上がり、FAB 再 tap / OS のキーボード非表示 (blur) / Esc / 領域外タップの 4 経路で退出する。scrollback 中だけ ↓最新 FAB を出し、2 本指ピンチ (+ 支援技術向けのステッパ代替) で fontSize を変えて refit する。PC (pointer:fine) は keyboard 入力 / mouse wheel / ドラッグ選択コピーを含めて**完全に現状維持**で、モバイル UX は `matchMedia('(max-width: 767px) and (pointer: coarse)')` という幅 AND pointer:coarse の gate 内に限定する。FAB は terminal-slot の absolute overlay 子として配置し、terminal-host の flex layout (ADR-0029) と box サイズに干渉しない。ADR-0030 (keyed remount) / ADR-0034 (refit rAF coalesce) / ADR-0059 (theme) / ADR-0064 (reduced-motion 単一 guard) / ADR-0065 (terminal-slot overlay) / ADR-0066 (scrollback) はすべて維持する。
 
 **Reference UX**:
-- *Modeled on*: tmux の copy/scroll-mode と insert-mode の分離 (デフォルト閲覧・入力は明示遷移)、Termius / a-Shell のキーボード toggle ボタン (表示領域半減をユーザーが選ぶ)、Slack / Telegram の jump-to-latest FAB (末尾でないときだけ出現し到達後消える)、Material Design FAB primitive (overlay 浮遊・44px・固定スタック順)、iOS inputAccessoryView / keyboard-aware sticky toolbar (入力モード中 FAB を visualViewport 上端より上へ追従)、WAI-ARIA live region (非ジェスチャ起点の状態変化を polite に通知)。
+- *Modeled on*: modal editor 流の閲覧/挿入 mode separation (デフォルト閲覧・入力は明示遷移)、Termius / a-Shell のキーボード toggle ボタン (表示領域半減をユーザーが選ぶ)、Slack / Telegram の jump-to-latest FAB (末尾でないときだけ出現し到達後消える)、Material Design FAB primitive (overlay 浮遊・44px・固定スタック順)、iOS inputAccessoryView / keyboard-aware sticky toolbar (入力モード中 FAB を visualViewport 上端より上へ追従)、WAI-ARIA live region (非ジェスチャ起点の状態変化を polite に通知)。
 - *Rejected*: desktop xterm の tap=即キーボード挙動 (モバイルでは表示領域半減で主ユースを壊す。PC では従来どおり採用し不採用はモバイル gate 内に限定)、専用モバイルビュー (要件の方針 c、非ゴール。既存構造を保ち overlay + touch-action だけで実現)、OS ブラウザズームへの委譲 (xterm グリッドが refit されず文字がぼやけ折り返しが狂う。fontSize + refit でグリッドを保つ)。
 
 **Migration Context** (refactor: 現状 PC 専用 TerminalPane.tsx のモバイル UX 再設計):
@@ -386,7 +386,7 @@ Web UI のターミナルタブ (`src/client/web/src/components/TerminalPane.tsx
 
 - **スマホから既存セッションに late-join して状況確認したい運用者** — 主ユースは scrollback で過去出力を遡ること。tap で毎回キーボードが出て表示が半減するのが最大の障害。主要 modality は pointer-touch (swipe / long-press)。
 - **スマホ/タブレットから確認応答・short input だけ軽く打ちたい運用者** — y/n や 1 行コマンドを「打ちたいときだけ」打つ。フル CLI 操作は Termius/Blink 前提で本タスク対象外。主要 modality は pointer-touch + 入力モード時の software keyboard。
-- **PC で keyboard / mouse wheel / ドラッグ選択コピーを使う既存ユーザー** — TUI 業界標準の体験で問題なし。**現状維持が要件**。modality は keyboard + pointer-mouse。narrow な desktop window (≤767px 幅) でも pointer:fine なら desktop 扱いであること。
+- **PC で keyboard / mouse wheel / ドラッグ選択コピーを使う既存ユーザー** — デスクトップ端末の業界標準体験で問題なし。**現状維持が要件**。modality は keyboard + pointer-mouse。narrow な desktop window (≤767px 幅) でも pointer:fine なら desktop 扱いであること。
 - **VoiceOver/TalkBack を使うモバイル支援技術ユーザー** — FAB は 44px + aria-label 必須。2 指ピンチは支援技術が自前ジェスチャに奪うため、fontSize 変更には非 pinch の代替 (ステッパ) が必要。非ジェスチャ起点の mode 変化は aria-live で受け取りたい。modality は screen-reader。
 
 ## Primary Flows
@@ -560,12 +560,12 @@ Web UI のターミナルタブ (`src/client/web/src/components/TerminalPane.tsx
 **UAC-018**
 - Given: モバイル gate true・pinch out で fontSize を 20px に変更し touchend 済み
 - When: ページをリロードして同セッションを再描画する
-- Then: localStorage の `arc.web.term.fontSize` が `"20"` で、再描画後の `.xterm .xterm-rows` の computed font-size が 20px
+- Then: localStorage の `web.term.fontSize` が `"20"` で、再描画後の `.xterm .xterm-rows` の computed font-size が 20px
 - **Counterexample**: fontSize を React state のみ保持し localStorage に書かないとリロードで default 14px に戻り localStorage が null なので永続値 assertion と復元 font-size assertion の両方で fail する。
 - **vs Legacy**: irrelevant
 
 **UAC-019**
-- Given: モバイル gate true・localStorage の `arc.web.term.fontSize` に範囲外/破損値 (例 `"999"`) を仕込んでリロード
+- Given: モバイル gate true・localStorage の `web.term.fontSize` に範囲外/破損値 (例 `"999"`) を仕込んでリロード
 - When: セッションが再描画される
 - Then: 復元後の `.xterm .xterm-rows` の computed font-size が 28px (max にクランプ) で、NaN cols や極大 font にならない
 - **Counterexample**: 読み出し値を `[8,28]` に clamp/検証せず `term.options.fontSize` に直流すると 999px で描画されグリッドが破綻するため、28px クランプ assertion で fail する。
@@ -626,7 +626,7 @@ Web UI のターミナルタブ (`src/client/web/src/components/TerminalPane.tsx
 
 ## Edge Cases
 
-- **alt-screen TUI (vim/less) 中**: ADR-0066 で scrollback が空のため ↓最新 FAB は出ない (scrollTop=末尾固定)。閲覧 swipe も移動量 0。alt-screen 終了後は scrollback 復活で FAB/swipe が機能する。
+- **alt-screen 全画面プログラム (vim/less) 中**: ADR-0066 で scrollback が空のため ↓最新 FAB は出ない (scrollTop=末尾固定)。閲覧 swipe も移動量 0。alt-screen 終了後は scrollback 復活で FAB/swipe が機能する。
 - **セッション未選択 (sessionId=null)**: host は出るが入力経路 drop。入力モード FAB tap で focus しても term.onData が sid 無しで drop (legacy 踏襲)。FAB は表示してよいが no-op。
 - **iPadOS Safari が pointer:fine を報告**: gate false で desktop 扱い。幅 AND coarse の AND 条件で意図通り (外付けキーボード/トラックパッド iPad は desktop UX)。
 - **デバイス回転で 767px 境界をまたぐ**: matchMedia の change を購読し mode を再評価。入力モード中に desktop へ移ったら入力モード state を破棄し readonly 解除。
@@ -641,12 +641,12 @@ Web UI のターミナルタブ (`src/client/web/src/components/TerminalPane.tsx
 - **localStorage 無効/容量超過 (private mode)**: 永続化失敗でも default 14px で動作継続 (try/catch、UX は degrade のみ)。
 - **localStorage の不正/範囲外 fontSize**: 復元時に `[8,28]` clamp 検証、parse 不能/範囲外は default 14px フォールバック。
 - **1 指→2 指の pinch 開始**: touchstart の touches.length 遷移で 1 指 swipe (scroll) と 2 指 pinch を分岐し誤判定でモード遷移しない。
-- **coachmark 抑止**: 初回閲覧モード突入のみ表示、tap/数秒で dismiss、localStorage `arc.web.term.hintSeen` で 2 回目以降は出さない。
+- **coachmark 抑止**: 初回閲覧モード突入のみ表示、tap/数秒で dismiss、localStorage `web.term.hintSeen` で 2 回目以降は出さない。
 
 ## Open Questions
 
 - **long-press 文字選択の標準 API 成立可否**: touch-action:pan-y 下で long-press 起点の xterm 文字選択が標準 API のみで成立するか、plan-how で addon 追加やカスタム selection handler が必要か (依存追加せず標準 API 優先の方針との整合)。F-003 の観察契約 (long-press→選択, swipe→scroll) は固定だが実現手段は plan-how が確定する。
 - **iOS soft keyboard の visualViewport 連動の harness 限界**: Playwright (宣言した ATDD harness) は実 soft keyboard を表示せず visualViewport が縮まないため、入力モード中の FAB-lift と入力行可視は自動テストで判別できない。実機 iOS Safari での手動検証ステップを spec/plan 側で別途用意する必要がある。
 - **font-size 制御の正確な配置と pinch との優先関係**: ＋/－/リセットを常時表示するか disclosure (アイコン → popover) にするか、視覚クラッタとの兼ね合い。SR 到達可能性 (role=button/44px/aria-label) は固定、視覚配置は plan-how/デザイン側で確定。
-- **coachmark の表示時間/dismiss タイミング**: 「数秒で自動 dismiss」か「初回 tap で dismiss」か、または両方かの最終確定。localStorage 抑止キー (`arc.web.term.hintSeen`) は固定。
+- **coachmark の表示時間/dismiss タイミング**: 「数秒で自動 dismiss」か「初回 tap で dismiss」か、または両方かの最終確定。localStorage 抑止キー (`web.term.hintSeen`) は固定。
 - **F-006 の vs_legacy が全 must-pass である点の確認**: F-006 は PC 挙動の保護フローであり、vs_legacy semantics 上すべて `must-pass` (legacy 挙動を意図的に維持) が正しい。§8 の「各 flow に must-fail 1 件」は新規/変更フローの現状追認を排除する規則であり、保護フローはその例外とする (他の全フロー F-001〜F-005, F-007 は must-fail を 1 件以上保持)。この扱いをレビューで承認するか。

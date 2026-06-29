@@ -10,7 +10,7 @@ Related spec: [Web Terminal Mobile UX spec.md](../specs/web-terminal-mobile-ux/s
 
 `FR-MOB-MODE-006` と `FR-MOB-JUMP-004` は『1 回 setText』を契約化したが、慣性 scroll / kinetic swipe で `JumpToLatestFAB` が mount / unmount を繰り返し `aria-live polite` 連続 emit が SR ユーザーで ear-fatigue を起こす。
 
-[ADR 0066](./0066-terminal-scrollback-via-vt-buffer.md) (tmux-style scrollback seed) で server-side VT buffer の 2 段 seed が完了する前後で `scrollHeight` が動的に変化するため、seed 完了前の `scrollTop=0` を末尾不在と誤判定して FAB が即出現 → seed 完了で末尾追従して即 unmount / remount する『**late-join 初期 FAB ちらつき**』が起きる。
+[ADR 0066](./0066-terminal-scrollback-via-vt-buffer.md) (scrollback-snapshot seed) で server-side VT buffer の 2 段 seed が完了する前後で `scrollHeight` が動的に変化するため、seed 完了前の `scrollTop=0` を末尾不在と誤判定して FAB が即出現 → seed 完了で末尾追従して即 unmount / remount する『**late-join 初期 FAB ちらつき**』が起きる。
 
 `AriaLiveStatus` の所有 (TerminalPane local vs App-level `useAnnouncer`) と [ADR 0057](./0057-palette-single-aria-live.md) (palette single `aria-live`) の関係も未確定だった。
 

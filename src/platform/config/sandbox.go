@@ -45,10 +45,10 @@ type DevcontainerConfig struct {
 	Path string `toml:"path"`
 
 	// NamePrefix is the docker container name & label prefix used by this daemon.
-	// Empty falls back to the legacy "reactor" prefix. Daemons running side-by-side
-	// against the same docker host (e.g. a TUI daemon and a dev gateway started
-	// via scripts/run-dev.sh) MUST configure a distinct prefix here; the prefix
-	// scopes both ContainerName ("<prefix>-shared" / "<prefix>-<projectHash>")
+	// Empty falls back to the default "reactor" prefix. Daemons running side-by-side
+	// against the same docker host (e.g. a primary daemon and a dev gateway
+	// started via scripts/run-dev.sh) MUST configure a distinct prefix here; the
+	// prefix scopes both ContainerName ("<prefix>-shared" / "<prefix>-<projectHash>")
 	// AND the docker ps --filter label keys, so peer daemons become invisible to
 	// each other and the mount-hash recreate path no longer rm's foreign containers.
 	NamePrefix string `toml:"name_prefix"`

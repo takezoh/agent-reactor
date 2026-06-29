@@ -1,8 +1,8 @@
 // Package tools is the user-facing palette tool registry. Each tool
 // describes a high-level operation (create session, stop session,
 // detach, ...) the palette can drive. Tools are decoupled from the
-// daemon by going through proto.Client — the same interface the TUI
-// processes use to talk to the daemon.
+// daemon by going through proto.Client — the same IPC contract every
+// caller uses to talk to the daemon.
 package tools
 
 import (

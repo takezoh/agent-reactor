@@ -1,4 +1,4 @@
-# ADR 0075 — tmux mode 分離 + Termius/a-Shell キーボード toggle + Slack jump-to-latest + Material FAB + iOS sticky toolbar + WAI-ARIA live region パターンを採用し `IconButton` primitive で a11y 仕様を集約する
+# ADR 0075 — modal editor 流の mode 分離 + Termius/a-Shell キーボード toggle + Slack jump-to-latest + Material FAB + iOS sticky toolbar + WAI-ARIA live region パターンを採用し `IconButton` primitive で a11y 仕様を集約する
 
 Status: Accepted
 
@@ -9,13 +9,13 @@ Related ux: [Web Terminal Mobile UX ux.md](../specs/web-terminal-mobile-ux/ux.md
 
 ## Context
 
-`ux.md` `reference_ux[].stance:modeled_on` で **6 つの業界パターン** (tmux copy/insert mode separation / Termius・a-Shell keyboard toggle / Slack・Telegram jump-to-latest FAB / Material Design FAB primitive / iOS `inputAccessoryView` via `visualViewport` / WAI-ARIA live region polite status) が採用候補として指定された。`reference_ux[].stance:rejected` で **3 つの代替** (desktop xterm `tap=focus` 全環境継承 / 専用モバイルビュー / OS browser zoom 委譲) が却下理由付きで指定された。
+`ux.md` `reference_ux[].stance:modeled_on` で **6 つの業界パターン** (modal editor 流の閲覧/挿入 mode separation / Termius・a-Shell keyboard toggle / Slack・Telegram jump-to-latest FAB / Material Design FAB primitive / iOS `inputAccessoryView` via `visualViewport` / WAI-ARIA live region polite status) が採用候補として指定された。`reference_ux[].stance:rejected` で **3 つの代替** (desktop xterm `tap=focus` 全環境継承 / 専用モバイルビュー / OS browser zoom 委譲) が却下理由付きで指定された。
 
 各 FAB component を独立実装すると `aria-pressed` / 44×44 / focus-block / theme token が重複実装される。本 ADR でパターン採用の根拠と取り込む aspect を 1 箇所に集約する。
 
 ## Decision
 
-(1) **tmux copy/insert mode separation** を採用 — 閲覧モード既定 + 入力モードは明示遷移 + 閲覧中の scroll が入力に吸われない (F-001 〜 F-003 の中核 metaphor)。
+(1) **modal editor 流の閲覧/挿入 mode separation** を採用 — 閲覧モード既定 + 入力モードは明示遷移 + 閲覧中の scroll が入力に吸われない (F-001 〜 F-003 の中核 metaphor)。
 
 (2) **Termius / a-Shell keyboard toggle button** を採用 — `aria-pressed` トグル + 専用ボタンでの明示制御 + 表示領域半減をユーザーが選ぶ (F-001 step 4 〜 7)。
 
@@ -55,7 +55,7 @@ Related ux: [Web Terminal Mobile UX ux.md](../specs/web-terminal-mobile-ux/ux.md
 
 ## Consequences
 
-- 既存業界慣習に整合し学習コスト最小 (tmux user / Termius user / Slack user が体験を transfer 可能)
+- 既存業界慣習に整合し学習コスト最小 (modal editor user / Termius user / Slack user が体験を transfer 可能)
 - `IconButton` primitive で a11y 仕様 (44px / `aria-pressed` / `aria-label` / `pointerdown.preventDefault`) が 1 箇所に集約され `FR-A11Y-001` / `FR-MOB-FAB-001` の regression が primitive のテストで担保
 - 各 FAB component が 20-30 行に縮小し AGENTS.md の関数 80 行制約に余裕
 - 浮遊要素が disclosure (`FontSizeControl`) により 3 個に抑制 (`KeyboardFAB` / `JumpToLatestFAB` / `FontSizeControl` disclosure trigger) + Coachmark 1 個 (一時)

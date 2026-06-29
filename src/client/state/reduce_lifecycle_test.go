@@ -7,8 +7,7 @@ import (
 // TestReduceShutdownEffects verifies the shutdown reducer persists state,
 // acks the caller synchronously, and asks the runtime to release sandbox
 // resources. Daemon termination itself is driven by the signal handler in
-// the process entrypoint — the reducer no longer asks a backend to tear
-// down a TUI session.
+// the process entrypoint.
 func TestReduceShutdownEffects(t *testing.T) {
 	s := New()
 	_, effects := reduceShutdown(s, 1, "req-1", struct{}{})

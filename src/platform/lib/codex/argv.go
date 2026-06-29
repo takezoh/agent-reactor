@@ -69,15 +69,16 @@ func AppServerStdioArgs(extra []string, sandboxExternal bool) []string {
 	return args
 }
 
-// RemoteAttachArgs returns the argv for the TUI frame that attaches to the
-// per-session app-server over its unix domain socket (`codex --remote unix://<sock>`).
-// sock is the container-absolute UDS path the app-server binds; the TUI runs in the
-// same sandbox, so it connects to that socket directly (no TCP routing bridge).
+// RemoteAttachArgs returns the argv for the codex CLI frame that attaches to
+// the per-session app-server over its unix domain socket
+// (`codex --remote unix://<sock>`). sock is the container-absolute UDS path
+// the app-server binds; the codex CLI runs in the same sandbox, so it
+// connects to that socket directly (no TCP routing bridge).
 //
-// Thread selection belongs to the app-server/backend. The foreground TUI only
-// connects to the remote endpoint; passing `resume <id>` here would route
-// through Codex's saved-session CLI path instead of the already-bound remote
-// thread.
+// Thread selection belongs to the app-server/backend. The foreground codex
+// CLI only connects to the remote endpoint; passing `resume <id>` here would
+// route through Codex's saved-session CLI path instead of the already-bound
+// remote thread.
 func RemoteAttachArgs(sock, startDir string) []string {
 	args := []string{DriverName}
 	args = append(args, "--remote", "unix://"+sock, "--dangerously-bypass-approvals-and-sandbox")

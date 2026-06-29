@@ -290,9 +290,9 @@ func TestE2E_CreateRejectsRelativeProject(t *testing.T) {
 
 	mux := withRealDaemonMux(t)
 
-	// "bash" is exactly what the user typed when their TUI session was
-	// killed by the resulting devcontainer error — pin that specific input
-	// so a regression that re-allows relative paths surfaces here first.
+	// "bash" is exactly what the user typed when a session was killed by
+	// the resulting devcontainer error — pin that specific input so a
+	// regression that re-allows relative paths surfaces here first.
 	for _, p := range []string{"bash", "claude", "myproject", "./relative", "foo/bar"} {
 		t.Run(p, func(t *testing.T) {
 			body := `{"project":"` + p + `","command":"shell"}`

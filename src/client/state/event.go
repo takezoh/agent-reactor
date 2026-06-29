@@ -41,7 +41,7 @@ type EvCmdUnsubscribe struct {
 }
 
 // EvEvent is a registered command event (create-session, stop-session, etc.)
-// dispatched from TUI/tools/keybindings via the registry.
+// dispatched from tools / keybindings via the registry.
 type EvEvent struct {
 	ConnID  ConnID
 	ReqID   string

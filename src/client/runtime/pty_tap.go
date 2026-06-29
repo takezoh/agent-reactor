@@ -15,8 +15,8 @@ import (
 //
 // EventControl is intentionally dropped here — tap_manager re-parses the same
 // OSC sequences out of the raw bytes via its vt.Terminal, so feeding structured
-// events would double-count. The structured fast path will be wired in plan
-// A 5c, once the web view shares the same pure-core consumers as the TUI.
+// events would double-count. A structured fast path can be wired once a
+// consumer needs the parsed events instead of the raw stream.
 //
 // EventExit and slow-subscriber disconnects are both surfaced by termvt as
 // channel close; the forwarder treats both the same way (return on !ok) and the

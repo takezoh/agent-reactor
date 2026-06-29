@@ -4,7 +4,7 @@ Status: Accepted
 
 ## Context
 
-`platform/termvt` is the tmux-free multiplexer primitive behind the web
+`platform/termvt` is the pty-multiplexer primitive behind the web
 client⇄server: one pty-backed `Session` parses its program's output through a
 server-side VT emulator and fans typed `Event`s out to N subscribers (browser
 tabs attached over WebSocket); a `Manager` holds many such sessions.

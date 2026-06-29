@@ -5,7 +5,7 @@
 // to the KeyboardFAB. ADR 0072 nails two contracts that this hook owns:
 //
 //   1. Idempotent write (FR-MOB-COACH-001): the localStorage key
-//      `arc.web.term.hintSeen` is written to `'1'` AT FIRST RENDER, not on
+//      `web.term.hintSeen` is written to `'1'` AT FIRST RENDER, not on
 //      dismiss. Writing on dismiss leaves a window where a crash / navigation
 //      before the user taps re-shows the hint forever (the "coachmark keeps reappearing" bug).
 //      Persisting up-front makes "seen once" mechanically true even if the user
@@ -22,7 +22,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type StorageLike, usePersistedValue } from "./usePersistedValue";
 
 /** Device-scoped key marking the coachmark as already shown (ADR 0072). */
-export const HINT_SEEN_KEY = "arc.web.term.hintSeen";
+export const HINT_SEEN_KEY = "web.term.hintSeen";
 /** Auto-dismiss delay; the tap path can end the coachmark sooner. */
 export const COACHMARK_AUTO_DISMISS_MS = 5000;
 

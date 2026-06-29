@@ -258,9 +258,9 @@ type DEvCommandExited struct {
 func (DEvCommandExited) isDriverEvent() {}
 
 // ViewProvider is an optional capability for drivers that provide a
-// custom TUI view.
+// custom view payload.
 type ViewProvider interface {
-	// View is a pure getter for the current TUI payload. Same View
+	// View is a pure getter for the current view payload. Same View
 	// that Step returns, but callable without an event — used by the
 	// runtime when serializing SessionInfo for broadcasts and when
 	// flushing the active session's status line to the backend.

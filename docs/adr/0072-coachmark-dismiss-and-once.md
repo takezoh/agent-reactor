@@ -16,7 +16,7 @@ Related spec: [Web Terminal Mobile UX spec.md](../specs/web-terminal-mobile-ux/s
 
 (1) **dismiss 経路は (a) tap (b) 5 秒経過 のどちらか早い方** で fade-out + unmount (Option C 採用)。
 
-(2) localStorage `arc.web.term.hintSeen='1'` の書込は **初回 render 時に 1 回限り** (tap / auto を待たない)、冪等性確保のため。これにより『起動直後にユーザーが離脱してもセッション 2 回目以降は再表示しない』を機構的に保証する (再表示する経路を残すと『何度も出る coachmark バグ』の温床)。
+(2) localStorage `web.term.hintSeen='1'` の書込は **初回 render 時に 1 回限り** (tap / auto を待たない)、冪等性確保のため。これにより『起動直後にユーザーが離脱してもセッション 2 回目以降は再表示しない』を機構的に保証する (再表示する経路を残すと『何度も出る coachmark バグ』の温床)。
 
 (3) Coachmark の DOM は通常 `<div role='status'>` (`aria-live` は使わず popup として SR にも自然に読まれる) — `aria-live` は `AriaLiveStatus` single slot 専用 ([ADR 0073](./0073-arialive-debounce-and-jump-fab-seed-stability.md))。
 

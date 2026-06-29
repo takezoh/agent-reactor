@@ -1,7 +1,7 @@
 # Spec — Web UI Fixes (EVENTS タブ / stale terminal / fit / spinner / session label)
 
 - **作成日**: 2026-06-24
-- **ブランチ**: `feat/tmux-free-web-server`
+- **ブランチ**: `feat/web-ui-fixes`
 - **plan**: [plan.md](./plan.md)
 - **ADRs**: [0029](../../adr/0029-terminal-host-flex-height.md), [0030](../../adr/0030-terminal-keyed-remount.md), [0031](../../adr/0031-kindoftab-server-symmetry.md), [0032](../../adr/0032-runstate-spinner-additive.md), [0033](../../adr/0033-display-label-empty-policy.md), [0034](../../adr/0034-refit-raf-coalesce-and-test-infra.md)
 

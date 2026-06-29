@@ -9,7 +9,7 @@
 //
 // Two write paths converge here and all go through one `set`:
 //   - +/-/Reset       : increase()/decrease()/reset() from FontSizeControl.
-//   - restore on boot : usePersistedValue reads `arc.web.term.fontSize`.
+//   - restore on boot : usePersistedValue reads `web.term.fontSize`.
 //
 // Every mutation clamps to [8,28] (FR-MOB-FONT-CLAMP-001 — below 8px the font
 // is unreadable and `fit()` can emit NaN cols), persists through the adapter,
@@ -21,7 +21,7 @@ import { useCallback, useRef } from "react";
 import { type StorageLike, usePersistedValue } from "./usePersistedValue";
 
 /** localStorage key — device-scoped, independent of theme (ADR 0059 / 0070). */
-export const FONT_SIZE_KEY = "arc.web.term.fontSize";
+export const FONT_SIZE_KEY = "web.term.fontSize";
 export const FONT_SIZE_MIN = 8;
 export const FONT_SIZE_MAX = 28;
 export const FONT_SIZE_DEFAULT = 14;

@@ -61,9 +61,8 @@ export function useNow1Hz(): number {
 }
 
 /**
- * Formats elapsed time (milliseconds) as "Ns" / "Nm Ns" / "Nh Nm" — the same
- * style the TUI sidebar uses for status_changed_at deltas. Negative or NaN
- * input returns an empty string.
+ * Formats elapsed time (milliseconds) as "Ns" / "Nm Ns" / "Nh Nm" for
+ * status_changed_at deltas. Negative or NaN input returns an empty string.
  */
 export function formatElapsed(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return "";
