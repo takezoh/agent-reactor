@@ -132,6 +132,7 @@ type SubsystemMessage struct {
 
 type SubsystemPayload struct {
 	SessionID            string             `json:"session_id"`
+	ColdStartSessionID   string             `json:"cold_start_session_id,omitempty"`
 	TurnID               string             `json:"turn_id"`
 	TargetID             string             `json:"target_id"`
 	RequestedTargetID    string             `json:"requested_target_id"`
@@ -329,10 +330,18 @@ const (
 	StreamApprovalPolicyAutoApprove StreamApprovalPolicy = "auto_approve"
 )
 
+// ResumeTarget is the canonical recovery locator for tools that distinguish
+// between a live routing identity and a durable resume artifact.
+type ResumeTarget struct {
+	ThreadID    string `json:"thread_id,omitempty"`
+	RolloutPath string `json:"rollout_path,omitempty"`
+}
+
 type StreamLaunchOptions struct {
-	SandboxPolicy  StreamSandboxPolicy  `json:"sandbox_policy,omitempty"`
-	ApprovalPolicy StreamApprovalPolicy `json:"approval_policy,omitempty"`
-	ResumeThreadID string               `json:"resume_thread_id,omitempty"`
+	SandboxPolicy      StreamSandboxPolicy  `json:"sandbox_policy,omitempty"`
+	ApprovalPolicy     StreamApprovalPolicy `json:"approval_policy,omitempty"`
+	ResumeTarget       ResumeTarget         `json:"resume_target,omitempty"`
+	ColdStartSessionID string               `json:"cold_start_session_id,omitempty"`
 }
 
 type LaunchPlan struct {

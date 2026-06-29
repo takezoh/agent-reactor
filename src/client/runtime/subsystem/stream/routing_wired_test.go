@@ -52,18 +52,20 @@ func newWired(t *testing.T) *wired {
 // synchronously-bound id) and returns that thread id.
 func (w *wired) bindCold(frame state.FrameID, dir string) string {
 	w.t.Helper()
-	res, err := w.b.BindFrame(context.Background(), subsystem.BindRequest{
+	_, err := w.b.BindFrame(context.Background(), subsystem.BindRequest{
 		FrameID: frame,
 		Plan:    state.LaunchPlan{StartDir: dir},
 	})
 	if err != nil {
 		w.t.Fatalf("BindFrame(%s): %v", frame, err)
 	}
-	tid := res.Plan.Stream.ResumeThreadID
-	if tid == "" {
+	w.b.mu.Lock()
+	binding := w.b.frames[frame]
+	w.b.mu.Unlock()
+	if binding == nil || binding.threadID == "" {
 		w.t.Fatalf("BindFrame(%s) did not bind a thread id", frame)
 	}
-	return tid
+	return binding.threadID
 }
 
 func (w *wired) emitMessage(threadID, delta string) {

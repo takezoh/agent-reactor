@@ -16,6 +16,12 @@ func (CodexDriver) Persist(s state.DriverState) map[string]string {
 	if cs.ThreadID != "" {
 		out[codexKeyThreadID] = cs.ThreadID
 	}
+	if cs.SessionID != "" {
+		out[codexKeySessionID] = cs.SessionID
+	}
+	if cs.RolloutPath != "" {
+		out[codexKeyRolloutPath] = cs.RolloutPath
+	}
 	if cs.RequestedThreadID != "" {
 		out[codexKeyRequestedThreadID] = cs.RequestedThreadID
 	}
@@ -40,8 +46,16 @@ func (d CodexDriver) Restore(bag map[string]string, now time.Time) state.DriverS
 	}
 	cs.RestoreCommon(bag)
 	cs.ThreadID = bag[codexKeyThreadID]
+	cs.SessionID = bag[codexKeySessionID]
+	cs.RolloutPath = bag[codexKeyRolloutPath]
+	if cs.RolloutPath == "" && cs.TranscriptPath != "" {
+		cs.RolloutPath = cs.TranscriptPath
+	}
 	cs.RequestedThreadID = bag[codexKeyRequestedThreadID]
 	cs.ObservedThreadID = bag[codexKeyObservedThreadID]
 	cs.ResumePhase = bag[codexKeyResumePhase]
+	if cs.TranscriptPath == "" && cs.RolloutPath != "" {
+		cs.TranscriptPath = cs.RolloutPath
+	}
 	return cs
 }

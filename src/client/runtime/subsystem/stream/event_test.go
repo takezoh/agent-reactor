@@ -169,13 +169,14 @@ func TestPayloadFromBinding(t *testing.T) {
 	b.frames["f1"] = &frameBinding{
 		frameID:     "f1",
 		threadID:    "t1",
+		sessionID:   "sess-1",
 		requestedID: "req",
 		observedID:  "obs",
 		resumePhase: "phase",
 	}
 	b.mu.Unlock()
 	p := b.payload("f1")
-	if p.SessionID != "t1" || p.RequestedTargetID != "req" || p.ResumePhase != "phase" {
+	if p.SessionID != "t1" || p.ColdStartSessionID != "sess-1" || p.RequestedTargetID != "req" || p.ResumePhase != "phase" {
 		t.Errorf("payload = %+v", p)
 	}
 	// Unknown frame: empty payload

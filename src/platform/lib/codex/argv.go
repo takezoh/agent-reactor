@@ -31,7 +31,7 @@ func ParseCommand(argv []string) (CommandConfig, error) {
 		arg := argv[i]
 		switch arg {
 		case "resume":
-			i++ // skip thread ID; resume target comes from plan.Stream.ResumeThreadID
+			i++ // skip resume target; actual locator comes from the launch plan
 		case "-m", "--model":
 			if i+1 < len(argv) {
 				cfg.Model = argv[i+1]
@@ -74,13 +74,12 @@ func AppServerStdioArgs(extra []string, sandboxExternal bool) []string {
 // sock is the container-absolute UDS path the app-server binds; the TUI runs in the
 // same sandbox, so it connects to that socket directly (no TCP routing bridge).
 //
-// Cold start (threadID == ""): `codex --remote ...` so the TUI creates the thread.
-// Warm start uses `codex resume <id> --remote ...`.
-func RemoteAttachArgs(sock, threadID, startDir string) []string {
+// Thread selection belongs to the app-server/backend. The foreground TUI only
+// connects to the remote endpoint; passing `resume <id>` here would route
+// through Codex's saved-session CLI path instead of the already-bound remote
+// thread.
+func RemoteAttachArgs(sock, startDir string) []string {
 	args := []string{DriverName}
-	if threadID != "" {
-		args = append(args, "resume", threadID)
-	}
 	args = append(args, "--remote", "unix://"+sock, "--dangerously-bypass-approvals-and-sandbox")
 	if startDir != "" {
 		args = append(args, "-C", startDir)

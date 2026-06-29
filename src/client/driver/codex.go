@@ -17,6 +17,8 @@ const (
 	CodexAppServerSockSuffix = ".sock"
 
 	codexKeyThreadID          = "thread_id"
+	codexKeySessionID         = "session_id"
+	codexKeyRolloutPath       = "rollout_path"
 	codexKeyRequestedThreadID = "requested_thread_id"
 	codexKeyObservedThreadID  = "observed_thread_id"
 	codexKeyResumePhase       = "resume_phase"
@@ -26,6 +28,8 @@ type CodexState struct {
 	CommonState
 
 	ThreadID           string
+	SessionID          string
+	RolloutPath        string
 	RequestedThreadID  string
 	ObservedThreadID   string
 	ResumePhase        string
@@ -126,7 +130,10 @@ func (d CodexDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, p
 		stream.SandboxPolicy = state.StreamSandboxPolicyExternal
 		stream.ApprovalPolicy = state.StreamApprovalPolicyAutoApprove
 	}
-	if mode != state.LaunchModeColdStart || cs.ThreadID == "" || !isAlphanumHyphen(cs.ThreadID) || hasResumeToken(base) {
+	if mode != state.LaunchModeColdStart || hasResumeToken(base) {
+		if mode == state.LaunchModeColdStart && hasResumeToken(base) {
+			logCodexResumeSkip(project, cs.ThreadID, cs.resolvedRolloutPath(), "already_has_resume")
+		}
 		return state.LaunchPlan{
 			Command:   base,
 			StartDir:  startDir,
@@ -136,7 +143,15 @@ func (d CodexDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, p
 			Stdin:     options.InitialInput,
 		}, nil
 	}
-	stream.ResumeThreadID = cs.ThreadID
+	resume, sessionID, ok, err := cs.coldStartResumePlan()
+	if err != nil {
+		logCodexResumeSkip(project, cs.ThreadID, cs.RolloutPath, "invalid_resume_locator")
+		return state.LaunchPlan{}, err
+	}
+	if ok {
+		stream.ResumeTarget = resume
+		stream.ColdStartSessionID = sessionID
+	}
 	return state.LaunchPlan{
 		Command:   base,
 		StartDir:  startDir,
@@ -199,18 +214,14 @@ func (d CodexDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 }
 
 // RecoverableOnColdStart reports whether a stopped codex frame can be restored
-// on cold start. The conversation lives in the codex thread (a host-mounted
-// session store that survives container recreation), not in the dead frame, so a
-// frame with a resumable thread is worth keeping and relaunching rather than
-// dropping. This is the keep/drop decision only; the actual resume vs. fresh
-// launch is decided by PrepareLaunch (which additionally declines to auto-resume
-// when the command itself carries a `resume` token).
+// on cold start. A valid thread id is sufficient; rollout_path/session_id are
+// optional locators that improve attach fidelity when they are available.
 func (CodexDriver) RecoverableOnColdStart(s state.DriverState) bool {
 	cs, ok := s.(CodexState)
 	if !ok {
 		return false
 	}
-	return cs.ThreadID != "" && isAlphanumHyphen(cs.ThreadID)
+	return isAlphanumHyphen(cs.ThreadID)
 }
 
 func (d CodexDriver) WarmStartRecover(s state.DriverState, now time.Time) (state.DriverState, []state.Effect) {

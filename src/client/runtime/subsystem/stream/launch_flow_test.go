@@ -21,6 +21,7 @@ import (
 	"github.com/takezoh/agent-reactor/platform/agent/codexclient"
 	"github.com/takezoh/agent-reactor/platform/agent/codexschema"
 	libcodex "github.com/takezoh/agent-reactor/platform/lib/codex"
+	"github.com/takezoh/agent-reactor/platform/pathmap"
 )
 
 // Stream subsystem launch-flow tests: the codex app-server is faked so no real
@@ -117,26 +118,65 @@ func streamPipe() (codexclient.Transport, codexclient.Transport) {
 // synchronously) and to thread/resume with an empty result (backend keeps the
 // requested id).
 type bindServer struct {
-	conn      *codexclient.Conn
-	mu        sync.Mutex
-	threadSeq int
+	conn       *codexclient.Conn
+	mu         sync.Mutex
+	threadSeq  int
+	lastResume map[string]any
+	omitPath   bool
+	customPath string
 }
 
 func (s *bindServer) OnNotification(string, json.RawMessage) {}
 
-func (s *bindServer) OnServerRequest(id int64, method string, _ json.RawMessage) {
+func (s *bindServer) OnServerRequest(id int64, method string, params json.RawMessage) {
 	if method == codexschema.MethodThreadStart {
 		s.mu.Lock()
 		s.threadSeq++
 		tid := fmt.Sprintf("thread-%d", s.threadSeq)
+		path := s.customPath
+		omitPath := s.omitPath
 		s.mu.Unlock()
-		_ = s.conn.Reply(id, map[string]any{"thread": map[string]any{"id": tid}})
+		thread := map[string]any{"id": tid, "sessionId": "sess-" + tid}
+		if !omitPath {
+			if path == "" {
+				path = "/repo/.codex/rollout.jsonl"
+			}
+			thread["path"] = path
+		}
+		_ = s.conn.Reply(id, map[string]any{"thread": thread})
+		return
+	}
+	if method == codexschema.MethodThreadResume {
+		var decoded map[string]any
+		_ = json.Unmarshal(params, &decoded)
+		s.mu.Lock()
+		s.lastResume = decoded
+		path := s.customPath
+		omitPath := s.omitPath
+		s.mu.Unlock()
+		thread := map[string]any{"id": "thread-resumed", "sessionId": "sess-resumed"}
+		if !omitPath {
+			if path == "" {
+				if p, ok := decoded["path"].(string); ok {
+					path = p
+				}
+			}
+			if path != "" {
+				thread["path"] = path
+			}
+		}
+		_ = s.conn.Reply(id, map[string]any{"thread": thread})
 		return
 	}
 	_ = s.conn.Reply(id, map[string]any{})
 }
 
-func newBoundBackend(t *testing.T, listenSock string) *Backend {
+type boundHarness struct {
+	backend *Backend
+	server  *bindServer
+}
+
+func newBoundBackend(t *testing.T, listenSock string) *boundHarness {
 	t.Helper()
 	b := New(&fakeRuntime{}, nil, "sid", "sess1", "/p", "codex", nil, "", false, false,
 		listenSock, time.Second)
@@ -148,14 +188,41 @@ func newBoundBackend(t *testing.T, listenSock string) *Backend {
 	t.Cleanup(cancel)
 	go b.conn.Run(ctx, b)     //nolint:errcheck
 	go srv.conn.Run(ctx, srv) //nolint:errcheck
-	return b
+	return &boundHarness{backend: b, server: srv}
+}
+
+func newBoundBackendNoPath(t *testing.T, listenSock string) *boundHarness {
+	t.Helper()
+	h := newBoundBackend(t, listenSock)
+	h.server.mu.Lock()
+	h.server.omitPath = true
+	h.server.mu.Unlock()
+	return h
+}
+
+func newBoundBackendCustomPath(t *testing.T, listenSock, path string) *boundHarness {
+	t.Helper()
+	h := newBoundBackend(t, listenSock)
+	h.server.mu.Lock()
+	h.server.customPath = path
+	h.server.mu.Unlock()
+	return h
+}
+
+func writeRollout(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestBackendBindFrameColdStartRemoteCommand(t *testing.T) {
 	const listen = "/opt/agent-reactor/run/codex-sess1.sock"
-	b := newBoundBackend(t, listen)
+	h := newBoundBackend(t, listen)
 
-	res, err := b.BindFrame(context.Background(), subsystem.BindRequest{
+	res, err := h.backend.BindFrame(context.Background(), subsystem.BindRequest{
 		FrameID: "f1",
 		Plan:    state.LaunchPlan{StartDir: "/repo"},
 	})
@@ -165,53 +232,111 @@ func TestBackendBindFrameColdStartRemoteCommand(t *testing.T) {
 
 	// Cold start now creates the thread synchronously (thread/start) and binds
 	// it, so the frame resumes that id — same command shape as a warm start.
-	threadID := res.Plan.Stream.ResumeThreadID
-	if threadID == "" {
+	h.backend.mu.Lock()
+	binding := h.backend.frames["f1"]
+	h.backend.mu.Unlock()
+	if binding == nil || binding.threadID == "" {
 		t.Fatal("cold start must bind a synchronously-created thread id")
 	}
-	want := strings.Join(libcodex.RemoteAttachArgs(listen, threadID, "/repo"), " ")
+	want := strings.Join(libcodex.RemoteAttachArgs(listen, "/repo"), " ")
 	if res.Plan.Command != want {
 		t.Fatalf("Command = %q, want %q", res.Plan.Command, want)
 	}
-	if !strings.Contains(res.Plan.Command, "resume "+threadID) {
-		t.Errorf("command must resume the bound thread id: %q", res.Plan.Command)
+	if strings.Contains(res.Plan.Command, "resume ") {
+		t.Errorf("cold start command must not route through codex resume: %q", res.Plan.Command)
 	}
-	if !strings.Contains(res.Plan.Command, "--remote unix://"+listen) {
-		t.Errorf("command must attach to the container-absolute socket unix://%s: %q", listen, res.Plan.Command)
+	if res.Plan.Stream.ColdStartSessionID != "sess-"+binding.threadID {
+		t.Fatalf("ColdStartSessionID = %q, want stable session id %q", res.Plan.Stream.ColdStartSessionID, "sess-"+binding.threadID)
 	}
-	b.mu.Lock()
-	binding := b.frames["f1"]
-	b.mu.Unlock()
-	if binding == nil || binding.threadID != threadID || binding.resumePhase != resumePhaseAttached {
+	if binding.rolloutPath != "/repo/.codex/rollout.jsonl" {
+		t.Fatalf("binding.rolloutPath = %q", binding.rolloutPath)
+	}
+	if binding.resumePhase != resumePhaseAttached {
 		t.Errorf("cold start must bind+attach the frame, got %+v", binding)
 	}
 }
 
-func TestBackendBindFrameResumeRemoteCommand(t *testing.T) {
+func TestBackendBindFrameResumeUsesRolloutPathForRPCAndCLI(t *testing.T) {
 	const listen = "/opt/agent-reactor/run/codex-sess2.sock"
-	const thread = "thread-abc"
-	b := newBoundBackend(t, listen)
+	h := newBoundBackend(t, listen)
+	rollout := writeRollout(t)
 
-	res, err := b.BindFrame(context.Background(), subsystem.BindRequest{
+	res, err := h.backend.BindFrame(context.Background(), subsystem.BindRequest{
 		FrameID: "f1",
-		Plan:    state.LaunchPlan{StartDir: "/repo", Stream: state.StreamLaunchOptions{ResumeThreadID: thread}},
+		Plan: state.LaunchPlan{StartDir: "/repo", Stream: state.StreamLaunchOptions{
+			ResumeTarget:       state.ResumeTarget{ThreadID: "thread-abc", RolloutPath: rollout},
+			ColdStartSessionID: "019e727e-fde4-7432-9036-ae6604ce1b27",
+		}},
 	})
 	if err != nil {
 		t.Fatalf("BindFrame: %v", err)
 	}
 
-	want := strings.Join(libcodex.RemoteAttachArgs(listen, thread, "/repo"), " ")
+	want := strings.Join(libcodex.RemoteAttachArgs(listen, "/repo"), " ")
 	if res.Plan.Command != want {
 		t.Fatalf("Command = %q, want %q", res.Plan.Command, want)
 	}
-	if res.Plan.Stream.ResumeThreadID != thread {
-		t.Errorf("ResumeThreadID = %q, want %q", res.Plan.Stream.ResumeThreadID, thread)
+	if res.Plan.Stream.ColdStartSessionID != "019e727e-fde4-7432-9036-ae6604ce1b27" {
+		t.Fatalf("ColdStartSessionID = %q", res.Plan.Stream.ColdStartSessionID)
 	}
-	b.mu.Lock()
-	binding := b.frames["f1"]
-	b.mu.Unlock()
-	if binding == nil || binding.resumePhase != resumePhasePending {
-		t.Errorf("resume must register a pending binding, got %+v", binding)
+	if res.Plan.Stream.ResumeTarget != (state.ResumeTarget{ThreadID: "thread-resumed", RolloutPath: rollout}) {
+		t.Fatalf("ResumeTarget = %+v", res.Plan.Stream.ResumeTarget)
+	}
+	h.server.mu.Lock()
+	defer h.server.mu.Unlock()
+	if h.server.lastResume["path"] != rollout {
+		t.Fatalf("thread/resume path = %v, want %q", h.server.lastResume["path"], rollout)
+	}
+}
+
+func TestBackendBindFrameResumeAllowsThreadIDOnly(t *testing.T) {
+	const listen = "/opt/agent-reactor/run/codex-sess3.sock"
+	h := newBoundBackend(t, listen)
+
+	res, err := h.backend.BindFrame(context.Background(), subsystem.BindRequest{
+		FrameID: "f1",
+		Plan: state.LaunchPlan{StartDir: "/repo", Stream: state.StreamLaunchOptions{
+			ResumeTarget: state.ResumeTarget{ThreadID: "thread-abc"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("BindFrame: %v", err)
+	}
+	if strings.Contains(res.Plan.Command, "resume ") {
+		t.Fatalf("Command = %q, want plain remote attach", res.Plan.Command)
+	}
+}
+
+func TestBackendBindFrameResumeTranslatesHostRolloutPathForSandboxedRPC(t *testing.T) {
+	const listen = "/opt/agent-reactor/run/codex-sess4.sock"
+	h := newBoundBackend(t, listen)
+	h.backend.mounts = pathmap.Mounts{{Host: "/host/work", Container: "/work"}}
+	h.backend.sandboxed = true
+	rollout := "/host/work/.codex/rollout.jsonl"
+
+	res, err := h.backend.BindFrame(context.Background(), subsystem.BindRequest{
+		FrameID: "f1",
+		Plan: state.LaunchPlan{StartDir: "/repo", Stream: state.StreamLaunchOptions{
+			ResumeTarget:       state.ResumeTarget{ThreadID: "thread-abc", RolloutPath: rollout},
+			ColdStartSessionID: "019e727e-fde4-7432-9036-ae6604ce1b27",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("BindFrame: %v", err)
+	}
+	h.server.mu.Lock()
+	defer h.server.mu.Unlock()
+	if h.server.lastResume["path"] != "/work/.codex/rollout.jsonl" {
+		t.Fatalf("thread/resume path = %v, want translated container path", h.server.lastResume["path"])
+	}
+	if strings.Contains(res.Plan.Command, "resume ") {
+		t.Fatalf("remote attach must not use codex resume, got %q", res.Plan.Command)
+	}
+	h.backend.mu.Lock()
+	binding := h.backend.frames["f1"]
+	h.backend.mu.Unlock()
+	if binding == nil || binding.rolloutPath != rollout {
+		t.Fatalf("binding rolloutPath = %v, want host path %q", binding, rollout)
 	}
 }
 

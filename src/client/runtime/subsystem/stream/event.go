@@ -83,9 +83,19 @@ func (b *Backend) handleThreadStarted(raw json.RawMessage) {
 	b.mu.Lock()
 	if binding := b.frames[frameID]; binding != nil {
 		binding.threadID = threadID
-		binding.requestedID = threadID
+		if sessionID := extractThreadSessionID(raw); sessionID != "" {
+			binding.sessionID = sessionID
+		}
+		if binding.requestedID == "" {
+			binding.requestedID = threadID
+		}
 		binding.observedID = threadID
 		binding.resumePhase = resumePhaseAttached
+		if threadPath := extractThreadPath(raw); threadPath != "" {
+			if _, hostPath, err := translateRolloutPath(threadPath, b.mounts); err == nil {
+				binding.rolloutPath = hostPath
+			}
+		}
 	}
 	b.mu.Unlock()
 	b.emit(frameID, state.SubsystemSessionReady, b.payload(frameID))
@@ -207,11 +217,13 @@ func (b *Backend) payloadWith(frameID state.FrameID, mutate func(*state.Subsyste
 	payload := state.SubsystemPayload{}
 	if binding != nil {
 		payload = state.SubsystemPayload{
-			SessionID:         binding.threadID,
-			TargetID:          binding.threadID,
-			RequestedTargetID: binding.requestedID,
-			ObservedTargetID:  binding.observedID,
-			ResumePhase:       binding.resumePhase,
+			SessionID:          binding.threadID,
+			ColdStartSessionID: binding.sessionID,
+			TargetID:           binding.threadID,
+			RequestedTargetID:  binding.requestedID,
+			ObservedTargetID:   binding.observedID,
+			ResumePhase:        binding.resumePhase,
+			TranscriptPath:     binding.rolloutPath,
 		}
 	}
 	b.mu.Unlock()
@@ -225,6 +237,9 @@ func (b *Backend) withTracking(frameID state.FrameID, payload state.SubsystemPay
 	base := b.payload(frameID)
 	if payload.SessionID == "" {
 		payload.SessionID = base.SessionID
+	}
+	if payload.ColdStartSessionID == "" {
+		payload.ColdStartSessionID = base.ColdStartSessionID
 	}
 	if payload.TargetID == "" {
 		payload.TargetID = base.TargetID

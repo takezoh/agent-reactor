@@ -20,6 +20,7 @@ import (
 	"github.com/takezoh/agent-reactor/platform/agent/codexclient"
 	"github.com/takezoh/agent-reactor/platform/agentlaunch"
 	libcodex "github.com/takezoh/agent-reactor/platform/lib/codex"
+	"github.com/takezoh/agent-reactor/platform/pathmap"
 	"github.com/takezoh/agent-reactor/platform/procgroup"
 )
 
@@ -63,6 +64,7 @@ type Backend struct {
 	conn        *codexclient.Conn
 	listenSock  string // UDS path the app-server binds (container-absolute under a devcontainer)
 	dialSock    string // host-side UDS path the daemon dials; resolved from listenSock + bind mounts in spawnServer
+	mounts      pathmap.Mounts
 	mu          sync.Mutex
 	frames      map[state.FrameID]*frameBinding
 	threads     map[string]state.FrameID
@@ -73,6 +75,8 @@ type frameBinding struct {
 	startDir        string
 	worktreePath    string // non-empty when a managed worktree was adopted or created
 	threadID        string
+	sessionID       string
+	rolloutPath     string
 	requestedID     string
 	observedID      string
 	resumePhase     string
@@ -182,6 +186,59 @@ func resolveDialSock(listenSock string, wrapped agentlaunch.WrappedLaunch) strin
 	return listenSock
 }
 
+func toPathmapMounts(ms []agentlaunch.Mount) pathmap.Mounts {
+	if len(ms) == 0 {
+		return nil
+	}
+	out := make(pathmap.Mounts, len(ms))
+	for i, m := range ms {
+		out[i] = pathmap.Mount{Host: m.Host, Container: m.Container}
+	}
+	return out
+}
+
+type normalizedResumeTarget struct {
+	rpc state.ResumeTarget
+}
+
+func normalizeResumeTarget(target state.ResumeTarget, mounts pathmap.Mounts) (normalizedResumeTarget, error) {
+	target.ThreadID = strings.TrimSpace(target.ThreadID)
+	target.RolloutPath = strings.TrimSpace(target.RolloutPath)
+	if target.ThreadID == "" && target.RolloutPath == "" {
+		return normalizedResumeTarget{}, nil
+	}
+	if target.ThreadID == "" {
+		return normalizedResumeTarget{}, errors.New("stream backend: codex resume requires thread id")
+	}
+	if target.RolloutPath == "" {
+		return normalizedResumeTarget{rpc: state.ResumeTarget{ThreadID: target.ThreadID}}, nil
+	}
+	cliPath, _, err := translateRolloutPath(target.RolloutPath, mounts)
+	if err != nil {
+		return normalizedResumeTarget{}, err
+	}
+	return normalizedResumeTarget{
+		rpc: state.ResumeTarget{ThreadID: target.ThreadID, RolloutPath: cliPath},
+	}, nil
+}
+
+func translateRolloutPath(path string, mounts pathmap.Mounts) (cliPath, hostPath string, err error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", "", errors.New("stream backend: codex resume requires rollout path")
+	}
+	if len(mounts) == 0 {
+		return path, path, nil
+	}
+	if container, ok := mounts.ToContainer(path); ok {
+		return container, path, nil
+	}
+	if host, ok := mounts.ToHost(path); ok {
+		return path, host, nil
+	}
+	return "", "", fmt.Errorf("stream backend: rollout path %q is not reachable from current sandbox mounts", path)
+}
+
 // spawnServer wraps the app-server using the dispatcher, resolves the host dial
 // path from the launch's bind mounts, and spawns the process.
 // The returned *strings.Builder accumulates the app-server's stderr; read it
@@ -209,6 +266,7 @@ func (b *Backend) spawnServer(ctx context.Context) (agentlaunch.SpawnResult, *st
 	}
 
 	b.dialSock = resolveDialSock(b.listenSock, wrapped)
+	b.mounts = toPathmapMounts(wrapped.Mounts)
 	// Clear any stale socket before the app-server binds it (e.g. a crashed
 	// predecessor left the file behind). Removing the host path also clears the
 	// bind-mounted container path.
@@ -260,13 +318,18 @@ func (b *Backend) BindFrame(ctx context.Context, req subsystem.BindRequest) (sub
 	}
 
 	// Thread binding.
-	threadID, err := b.bindThread(req.FrameID, startDir, worktreePath, req.Plan.Stream, req.Stdin)
+	_, sessionID, resumeTarget, err := b.bindThread(req.FrameID, startDir, worktreePath, req.Plan.Stream, req.Stdin)
 	if err != nil {
 		return subsystem.BindResult{}, err
 	}
-	result.Plan.Command = strings.Join(libcodex.RemoteAttachArgs(b.listenSock, threadID, startDir), " ")
+	stableSessionID := strings.TrimSpace(req.Plan.Stream.ColdStartSessionID)
+	if stableSessionID == "" {
+		stableSessionID = sessionID
+	}
+	result.Plan.Command = strings.Join(libcodex.RemoteAttachArgs(b.listenSock, startDir), " ")
 	result.Plan.Stdin = nil
-	result.Plan.Stream.ResumeThreadID = threadID
+	result.Plan.Stream.ResumeTarget = resumeTarget
+	result.Plan.Stream.ColdStartSessionID = stableSessionID
 	return result, nil
 }
 
@@ -312,7 +375,7 @@ func (b *Backend) OnServerRequest(id int64, method string, params json.RawMessag
 // bindThread associates a new frame with a thread in the app-server and returns
 // the bound thread ID — resumed for a warm start, or created synchronously via
 // thread/start for a cold start.
-func (b *Backend) bindThread(frameID state.FrameID, startDir, worktreePath string, opts state.StreamLaunchOptions, stdin []byte) (string, error) {
+func (b *Backend) bindThread(frameID state.FrameID, startDir, worktreePath string, opts state.StreamLaunchOptions, stdin []byte) (string, string, state.ResumeTarget, error) {
 	b.mu.Lock()
 	b.frames[frameID] = &frameBinding{
 		frameID:      frameID,
@@ -320,40 +383,78 @@ func (b *Backend) bindThread(frameID state.FrameID, startDir, worktreePath strin
 		worktreePath: worktreePath,
 	}
 	b.mu.Unlock()
-	if opts.ResumeThreadID != "" {
-		raw, err := codexclient.ResumeThread(b.conn, opts.ResumeThreadID, startDir)
+	resumeTarget, err := normalizeResumeTarget(opts.ResumeTarget, b.mounts)
+	if err != nil {
+		return "", "", state.ResumeTarget{}, err
+	}
+	if resumeTarget.rpc.ThreadID != "" || resumeTarget.rpc.RolloutPath != "" {
+		session, err := codexclient.ResumeThread(b.conn, codexclient.ResumeOptions{
+			ThreadID:    resumeTarget.rpc.ThreadID,
+			RolloutPath: resumeTarget.rpc.RolloutPath,
+			Cwd:         startDir,
+		})
 		if err != nil {
-			return "", err
+			return "", "", state.ResumeTarget{}, err
 		}
-		threadID := extractThreadID(raw)
+		threadID := strings.TrimSpace(session.ThreadID)
 		if threadID == "" {
-			threadID = opts.ResumeThreadID
+			return "", "", state.ResumeTarget{}, errors.New("stream backend: thread/resume returned an empty thread id")
 		}
+		hostPath := strings.TrimSpace(opts.ResumeTarget.RolloutPath)
+		if session.RolloutPath != "" {
+			_, hostPath, err = translateRolloutPath(session.RolloutPath, b.mounts)
+			if err != nil {
+				slog.Debug("stream backend: ignoring unusable rollout path from thread/resume",
+					"subsystem", b.subsystemID,
+					"thread", threadID,
+					"rollout_path", session.RolloutPath,
+					"err", err)
+				hostPath = strings.TrimSpace(opts.ResumeTarget.RolloutPath)
+			}
+		}
+		stableSessionID := firstNonEmpty(strings.TrimSpace(session.SessionID), strings.TrimSpace(opts.ColdStartSessionID))
 		b.mu.Lock()
 		if binding := b.frames[frameID]; binding != nil {
 			binding.threadID = threadID
-			binding.requestedID = opts.ResumeThreadID
+			binding.sessionID = stableSessionID
+			binding.rolloutPath = hostPath
+			binding.requestedID = opts.ResumeTarget.ThreadID
 			binding.observedID = threadID
 			binding.resumePhase = resumePhasePending
 			b.threads[threadID] = frameID
 		}
 		b.mu.Unlock()
-		return threadID, nil
+		return threadID, stableSessionID, state.ResumeTarget{ThreadID: threadID, RolloutPath: hostPath}, nil
 	}
 	// Cold start: create the thread synchronously (thread/start request) so its
 	// id is known here and the frame binds deterministically — no async
 	// thread.started guessing, no cwd/active-frame heuristic. The spawned frame
 	// then resumes this id (RemoteAttachArgs with a non-empty threadID).
-	threadID, err := codexclient.StartThread(b.conn, startDir, nil, codexclient.ThreadOptions{})
+	session, err := codexclient.StartThread(b.conn, startDir, nil, codexclient.ThreadOptions{})
 	if err != nil {
-		return "", err
+		return "", "", state.ResumeTarget{}, err
 	}
+	threadID := strings.TrimSpace(session.ThreadID)
 	if threadID == "" {
-		return "", fmt.Errorf("stream backend: app-server returned an empty thread id on cold start")
+		return "", "", state.ResumeTarget{}, fmt.Errorf("stream backend: app-server returned an empty thread id on cold start")
+	}
+	hostPath := ""
+	if session.RolloutPath != "" {
+		_, hostPath, err = translateRolloutPath(session.RolloutPath, b.mounts)
+		if err != nil {
+			slog.Debug("stream backend: ignoring unusable rollout path from thread/start",
+				"subsystem", b.subsystemID,
+				"thread", threadID,
+				"rollout_path", session.RolloutPath,
+				"err", err)
+			hostPath = ""
+		}
 	}
 	b.mu.Lock()
 	if binding := b.frames[frameID]; binding != nil {
 		binding.threadID = threadID
+		binding.sessionID = strings.TrimSpace(session.SessionID)
+		binding.rolloutPath = hostPath
 		binding.requestedID = threadID
 		binding.observedID = threadID
 		binding.resumePhase = resumePhaseAttached
@@ -368,10 +469,10 @@ func (b *Backend) bindThread(frameID state.FrameID, startDir, worktreePath strin
 	// interactive frames drive their own turns.
 	if len(stdin) > 0 {
 		if err := codexclient.StartTurn(b.conn, threadID, startDir, stdin, codexclient.TurnOptions{}); err != nil {
-			return "", err
+			return "", "", state.ResumeTarget{}, err
 		}
 	}
-	return threadID, nil
+	return threadID, strings.TrimSpace(session.SessionID), state.ResumeTarget{ThreadID: threadID, RolloutPath: hostPath}, nil
 }
 
 func (b *Backend) waitProcess() {

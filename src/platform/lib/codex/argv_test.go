@@ -133,7 +133,6 @@ func TestRemoteAttachArgs(t *testing.T) {
 	tests := []struct {
 		name         string
 		sock         string
-		threadID     string
 		startDir     string
 		wantContains []string
 		wantAbsent   []string
@@ -143,12 +142,6 @@ func TestRemoteAttachArgs(t *testing.T) {
 			sock:         "/opt/agent-reactor/run/codex-sess1.sock",
 			wantContains: []string{"codex", "--remote", "unix:///opt/agent-reactor/run/codex-sess1.sock"},
 			wantAbsent:   []string{"resume"},
-		},
-		{
-			name:         "warm start with thread",
-			sock:         "/opt/agent-reactor/run/codex-sess2.sock",
-			threadID:     "thread-abc",
-			wantContains: []string{"resume", "thread-abc", "--remote"},
 		},
 		{
 			name:         "with startDir",
@@ -164,7 +157,7 @@ func TestRemoteAttachArgs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := RemoteAttachArgs(tt.sock, tt.threadID, tt.startDir)
+			got := RemoteAttachArgs(tt.sock, tt.startDir)
 			for _, want := range tt.wantContains {
 				found := false
 				for _, g := range got {

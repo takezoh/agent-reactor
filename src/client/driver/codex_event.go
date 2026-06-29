@@ -60,6 +60,9 @@ func (d CodexDriver) handleSubsystem(cs CodexState, ctx state.FrameContext, e st
 	if p.ResumePhase != "" {
 		cs.ResumePhase = p.ResumePhase
 	}
+	if p.ColdStartSessionID != "" {
+		cs.SessionID = p.ColdStartSessionID
+	}
 	if p.TargetID != "" {
 		cs.ThreadID = p.TargetID
 	}
@@ -72,7 +75,7 @@ func (d CodexDriver) handleSubsystem(cs CodexState, ctx state.FrameContext, e st
 		return cs, nil
 	}
 	if p.TranscriptPath != "" {
-		cs.TranscriptPath = p.TranscriptPath
+		cs.setRolloutPath(p.TranscriptPath)
 	}
 	if p.StatusLine != "" {
 		cs.StatusLine = p.StatusLine

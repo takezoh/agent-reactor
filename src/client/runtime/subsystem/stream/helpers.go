@@ -28,6 +28,38 @@ func extractThreadID(raw json.RawMessage) string {
 	return ""
 }
 
+func extractThreadPath(raw json.RawMessage) string {
+	var data map[string]any
+	if json.Unmarshal(raw, &data) != nil {
+		return ""
+	}
+	if s, _ := data["path"].(string); s != "" {
+		return s
+	}
+	if thread, ok := data["thread"].(map[string]any); ok {
+		if s, _ := thread["path"].(string); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func extractThreadSessionID(raw json.RawMessage) string {
+	var data map[string]any
+	if json.Unmarshal(raw, &data) != nil {
+		return ""
+	}
+	if s, _ := data["sessionId"].(string); s != "" {
+		return s
+	}
+	if thread, ok := data["thread"].(map[string]any); ok {
+		if s, _ := thread["sessionId"].(string); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 func extractTurnID(raw json.RawMessage) string {
 	var data map[string]any
 	if json.Unmarshal(raw, &data) != nil {
