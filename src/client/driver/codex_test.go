@@ -25,9 +25,9 @@ func TestRecoverableOnColdStart(t *testing.T) {
 		{"thread only recoverable", "019e727e-fde4-7432-9036-ae6604ce1b27", "", "", true},
 		{"thread and rollout path", "019e727e-fde4-7432-9036-ae6604ce1b27", "/tmp/rollout.jsonl", "", true},
 		{"legacy transcript only recoverable", "019e727e-fde4-7432-9036-ae6604ce1b27", "", "/tmp/legacy.jsonl", true},
-		{"empty thread not recoverable", "", "/tmp/rollout.jsonl", "", false},
+		{"empty thread still preserves codex frame", "", "/tmp/rollout.jsonl", "", true},
 		{"missing rollout path still recoverable via thread id", "019e727e-fde4-7432-9036-ae6604ce1b27", "", "", true},
-		{"non-resumable thread not recoverable", "/tmp/not a thread", "/tmp/rollout.jsonl", "", false},
+		{"non-resumable thread still preserves codex frame", "/tmp/not a thread", "/tmp/rollout.jsonl", "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -415,13 +415,27 @@ func TestCodexWindowTitleViaStepIgnoresNonRoot(t *testing.T) {
 
 func TestCodexPrepareLaunchAllowsThreadIDOnlySnapshot(t *testing.T) {
 	d, cs, _ := newCodex(t)
-	cs.ThreadID = "thread-abc-123"
+	rollout, sessionID := writeCodexRollout(t)
+	cs.ThreadID = sessionID
 	plan, err := d.PrepareLaunch(cs, state.LaunchModeColdStart, "/repo", "codex --model gpt-5-codex", state.LaunchOptions{}, false)
 	if err != nil {
-		t.Fatalf("PrepareLaunch error = %v, want thread_id-only resume support", err)
+		t.Fatalf("PrepareLaunch error = %v, want thread_id lookup resume support", err)
 	}
-	if plan.Stream.ResumeTarget != (state.ResumeTarget{ThreadID: "thread-abc-123"}) {
-		t.Fatalf("ResumeTarget = %+v, want thread-only target", plan.Stream.ResumeTarget)
+	if plan.Stream.ResumeTarget != (state.ResumeTarget{ThreadID: sessionID, RolloutPath: rollout}) {
+		t.Fatalf("ResumeTarget = %+v, want db-backed target", plan.Stream.ResumeTarget)
+	}
+}
+
+func TestCodexPrepareLaunchAllowsRolloutPathOnlySnapshot(t *testing.T) {
+	d, cs, _ := newCodex(t)
+	rollout, _ := writeCodexRollout(t)
+	cs.RolloutPath = rollout
+	plan, err := d.PrepareLaunch(cs, state.LaunchModeColdStart, "/repo", "codex --model gpt-5-codex", state.LaunchOptions{}, false)
+	if err != nil {
+		t.Fatalf("PrepareLaunch error = %v, want rollout_path-only resume support", err)
+	}
+	if plan.Stream.ResumeTarget != (state.ResumeTarget{RolloutPath: rollout}) {
+		t.Fatalf("ResumeTarget = %+v, want path-only target", plan.Stream.ResumeTarget)
 	}
 }
 
@@ -442,7 +456,8 @@ func TestCodexPrepareLaunchNoDoubleResume(t *testing.T) {
 
 func TestCodexPrepareLaunchStripsWorktreeOnResume(t *testing.T) {
 	d, cs, _ := newCodex(t)
-	cs.ThreadID = "thread-abc-123"
+	rollout, sessionID := writeCodexRollout(t)
+	cs.ThreadID = sessionID
 	cs.StartDir = "/repo/.agent-reactor/worktrees/codex-1234"
 	plan, err := d.PrepareLaunch(cs, state.LaunchModeColdStart, "/repo", "codex --worktree feature --model gpt-5-codex", state.LaunchOptions{}, false)
 	if err != nil {
@@ -451,7 +466,7 @@ func TestCodexPrepareLaunchStripsWorktreeOnResume(t *testing.T) {
 	if plan.Command != "codex --model gpt-5-codex" {
 		t.Fatalf("PrepareLaunch.Command = %q, want %q", plan.Command, "codex --model gpt-5-codex")
 	}
-	if plan.Stream.ResumeTarget != (state.ResumeTarget{ThreadID: "thread-abc-123"}) {
+	if plan.Stream.ResumeTarget != (state.ResumeTarget{ThreadID: sessionID, RolloutPath: rollout}) {
 		t.Fatalf("ResumeTarget = %+v", plan.Stream.ResumeTarget)
 	}
 }
@@ -548,16 +563,13 @@ func TestCodexPrepareLaunchAllowsLegacyTranscriptPathFallback(t *testing.T) {
 	}
 }
 
-func TestCodexPrepareLaunchFallsBackToThreadResumeWhenRolloutMissing(t *testing.T) {
+func TestCodexPrepareLaunchFailsWhenRolloutMissingAndLookupFails(t *testing.T) {
 	d, cs, _ := newCodex(t)
 	cs.ThreadID = "thread-abc-123"
 	cs.RolloutPath = filepath.Join(t.TempDir(), "missing.jsonl")
-	plan, err := d.PrepareLaunch(cs, state.LaunchModeColdStart, "/repo", "codex --model gpt-5-codex", state.LaunchOptions{}, false)
-	if err != nil {
-		t.Fatalf("PrepareLaunch error = %v, want thread-only fallback", err)
-	}
-	if plan.Stream.ResumeTarget != (state.ResumeTarget{ThreadID: "thread-abc-123"}) {
-		t.Fatalf("ResumeTarget = %+v, want thread-only fallback", plan.Stream.ResumeTarget)
+	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "missing-codex-home"))
+	if _, err := d.PrepareLaunch(cs, state.LaunchModeColdStart, "/repo", "codex --model gpt-5-codex", state.LaunchOptions{}, false); err == nil {
+		t.Fatal("PrepareLaunch error = nil, want failure instead of fresh thread when rollout lookup fails")
 	}
 }
 
@@ -600,20 +612,21 @@ func TestCodexPrepareLaunchSetsColdStartSessionID(t *testing.T) {
 	}
 }
 
-func TestCodexPrepareLaunchFallsBackWhenRolloutIsZeroByte(t *testing.T) {
+func TestCodexPrepareLaunchRepairsZeroByteRolloutFromSQLite(t *testing.T) {
 	d, cs, _ := newCodex(t)
-	cs.ThreadID = "thread-abc-123"
-	cs.SessionID = "019e727e-fde4-7432-9036-ae6604ce1b27"
+	rollout, sessionID := writeCodexRollout(t)
+	cs.ThreadID = sessionID
+	cs.SessionID = sessionID
 	cs.RolloutPath = filepath.Join(t.TempDir(), "rollout-019e727e-fde4-7432-9036-ae6604ce1b27.jsonl")
 	if err := os.WriteFile(cs.RolloutPath, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := d.PrepareLaunch(cs, state.LaunchModeColdStart, "/repo", "codex", state.LaunchOptions{}, false)
 	if err != nil {
-		t.Fatalf("PrepareLaunch error = %v, want thread-only fallback", err)
+		t.Fatalf("PrepareLaunch error = %v, want sqlite rollout repair", err)
 	}
-	if plan.Stream.ResumeTarget != (state.ResumeTarget{ThreadID: "thread-abc-123"}) {
-		t.Fatalf("ResumeTarget = %+v, want thread-only fallback", plan.Stream.ResumeTarget)
+	if plan.Stream.ResumeTarget != (state.ResumeTarget{ThreadID: sessionID, RolloutPath: rollout}) {
+		t.Fatalf("ResumeTarget = %+v, want repaired rollout target", plan.Stream.ResumeTarget)
 	}
 	if plan.Stream.ColdStartSessionID != cs.SessionID {
 		t.Fatalf("ColdStartSessionID = %q, want %q", plan.Stream.ColdStartSessionID, cs.SessionID)

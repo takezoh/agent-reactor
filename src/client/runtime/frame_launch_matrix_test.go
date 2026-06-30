@@ -372,18 +372,26 @@ func TestFrameLaunch_ColdStart_Shared(t *testing.T) {
 }
 
 // TestFrameLaunch_ColdStart_RecoverableCodexSpawnsResume guards the headline
-// regression: a stopped codex frame with a resumable thread is relaunched via
-// the stream subsystem; a stopped generic frame (no durable state) is skipped.
+// regression: a stopped codex frame with a usable rollout path is relaunched via
+// the stream subsystem for resume; a stopped generic frame (no durable state) is skipped.
 func TestFrameLaunch_ColdStart_RecoverableCodexSpawnsResume(t *testing.T) {
 	h := newLaunchHarness(t, envHost)
 	now := time.Now()
+	rolloutPath := filepath.Join(t.TempDir(), "rollout-"+codexThreadID+".jsonl")
+	if err := os.WriteFile(rolloutPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	codex := state.GetDriver("codex")
 	generic := state.GetDriver("generic")
 	sess := state.Session{
 		ID: "s1", Project: "/proj",
 		Frames: []state.SessionFrame{
 			{ID: "f-codex", Project: "/proj", Command: "codex",
-				Driver: codex.Restore(map[string]string{"status": "stopped", "thread_id": codexThreadID}, now)},
+				Driver: codex.Restore(map[string]string{
+					"status":       "stopped",
+					"thread_id":    codexThreadID,
+					"rollout_path": rolloutPath,
+				}, now)},
 			{ID: "f-gen", Project: "/proj", Command: "generic",
 				Driver: generic.Restore(map[string]string{"status": "stopped"}, now)},
 		},

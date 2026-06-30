@@ -161,10 +161,10 @@ func TestLoadSnapshot_ColdStartKeepsRecoverableStoppedCodexFrame(t *testing.T) {
 	}
 }
 
-// TestLoadSnapshot_ColdStartDropsStoppedCodexFrameWithoutThread ensures the
-// recovery is gated on an actual resumable thread: with no thread id there is
-// nothing to resume, so the stopped frame is dropped like any other.
-func TestLoadSnapshot_ColdStartDropsStoppedCodexFrameWithoutThread(t *testing.T) {
+// TestLoadSnapshot_ColdStartDropsStoppedCodexFrameWithoutLocator ensures the
+// recovery is gated on an actual resume locator: with no thread/session/path
+// there is nothing to resume, so the stopped frame is dropped like any other.
+func TestLoadSnapshot_ColdStartDropsStoppedCodexFrameWithoutLocator(t *testing.T) {
 	persist := &snapLoader{snaps: []SessionSnapshot{{
 		ID: "codex-nothread",
 		Frames: []SessionFrameSnapshot{{
@@ -179,7 +179,34 @@ func TestLoadSnapshot_ColdStartDropsStoppedCodexFrameWithoutThread(t *testing.T)
 		t.Fatalf("LoadSnapshot(true): %v", err)
 	}
 	if _, ok := r.state.Sessions["codex-nothread"]; ok {
-		t.Error("stopped codex frame with no resumable thread should be dropped on cold start")
+		t.Error("stopped codex frame without a resume locator should be dropped on cold start")
+	}
+}
+
+func TestLoadSnapshot_ColdStartKeepsStoppedCodexFrameWithRolloutPath(t *testing.T) {
+	persist := &snapLoader{snaps: []SessionSnapshot{{
+		ID: "codex-rollout",
+		Frames: []SessionFrameSnapshot{{
+			ID:      "f1",
+			Command: "codex",
+			DriverState: map[string]string{
+				"status":       "stopped",
+				"rollout_path": "/repo/rollout.jsonl",
+			},
+		}},
+	}}}
+	r := New(Config{Persist: persist})
+
+	if err := r.LoadSnapshot(true); err != nil {
+		t.Fatalf("LoadSnapshot(true): %v", err)
+	}
+	if _, ok := r.state.Sessions["codex-rollout"]; !ok {
+		t.Error("stopped codex frame with rollout_path must remain after cold start")
+	}
+	for _, id := range persist.deleted {
+		if id == "codex-rollout" {
+			t.Error("codex snapshot with rollout_path must not be deleted from disk")
+		}
 	}
 }
 

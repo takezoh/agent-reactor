@@ -147,6 +147,7 @@ func (d CodexDriver) PrepareLaunch(s state.DriverState, mode state.LaunchMode, p
 	switch {
 	case err != nil:
 		logCodexResumeSkip(project, cs.ThreadID, cs.RolloutPath, "invalid_resume_locator")
+		return state.LaunchPlan{}, err
 	case ok:
 		stream.ResumeTarget = resume
 		stream.ColdStartSessionID = sessionID
@@ -212,15 +213,19 @@ func (d CodexDriver) Step(prev state.DriverState, ctx state.FrameContext, ev sta
 	return cs, nil, d.view(cs)
 }
 
-// RecoverableOnColdStart reports whether a stopped codex frame can be restored
-// on cold start. A valid thread id is sufficient; rollout_path/session_id are
-// optional locators that improve attach fidelity when they are available.
+// RecoverableOnColdStart reports whether a stopped codex frame has enough
+// durable identity to attempt resume on cold start. The actual launch path will
+// resolve a usable rollout path before calling thread/resume; it must not fall
+// back to a fresh thread for an existing session.
 func (CodexDriver) RecoverableOnColdStart(s state.DriverState) bool {
 	cs, ok := s.(CodexState)
 	if !ok {
 		return false
 	}
-	return isAlphanumHyphen(cs.ThreadID)
+	if strings.TrimSpace(cs.resolvedRolloutPath()) != "" {
+		return true
+	}
+	return isAlphanumHyphen(cs.ThreadID) || isAlphanumHyphen(cs.SessionID)
 }
 
 func (d CodexDriver) WarmStartRecover(s state.DriverState, now time.Time) (state.DriverState, []state.Effect) {

@@ -74,9 +74,10 @@ func restoreSession(snap SessionSnapshot, coldStart bool, now time.Time) (state.
 		// Cold start has no live frame to inherit the dead command's
 		// tail output, so a stopped frame turns into a zombie (no
 		// surface to display, no session to close). Drop it here instead
-		// — unless the driver's durable state survives the frame (codex
-		// resumes its thread against a fresh app-server), in which case
-		// it is kept and relaunched by the cold-start spawn path.
+		// — unless the driver declares the frame should survive a cold
+		// start. Codex does this because a runtime restart can persist a
+		// stopped status before its app-server locator is available; deleting
+		// that snapshot would discard the user's session entry.
 		if coldStart && drv.Status(driverState) == state.StatusStopped && !coldStartRecoverable(drv, driverState) {
 			continue
 		}

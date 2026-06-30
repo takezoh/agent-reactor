@@ -85,8 +85,8 @@ func (r *Runtime) recreateSessionFrames(id state.SessionID, sess state.Session) 
 // skipColdStartSpawn returns true when a stopped frame must not be respawned
 // on cold start. The command exited in a prior session and the frame is kept
 // for inspection; resurrecting it as a fresh process would destroy the very
-// state the user wants to look at. The exception is a driver whose durable
-// state survives the dead frame (codex resumes its thread) — such a frame is
+// state the user wants to look at. The exception is a driver that declares the
+// stopped frame should survive a runtime cold start — such a frame is
 // relaunched, so it is not skipped.
 func skipColdStartSpawn(frame state.SessionFrame) bool {
 	drv := state.GetDriver(frame.Command)

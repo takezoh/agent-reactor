@@ -36,16 +36,51 @@ func logCodexResumeSkip(project, threadID, rolloutPath, reason string) {
 }
 
 func (cs CodexState) coldStartResumePlan() (state.ResumeTarget, string, bool, error) {
-	threadID := strings.TrimSpace(cs.ThreadID)
-	rolloutPath := usableRolloutPath(cs.resolvedRolloutPath())
+	rawThreadID := strings.TrimSpace(cs.ThreadID)
 	sessionID := strings.TrimSpace(cs.SessionID)
-	if threadID == "" && rolloutPath == "" && sessionID == "" {
+	rawRolloutPath := strings.TrimSpace(cs.resolvedRolloutPath())
+	threadID := ""
+	if isAlphanumHyphen(rawThreadID) {
+		threadID = rawThreadID
+	} else if isAlphanumHyphen(sessionID) {
+		threadID = sessionID
+	}
+	rolloutPath := usableRolloutPath(rawRolloutPath)
+	if rolloutPath == "" && threadID != "" {
+		rolloutPath = resolveCodexRolloutPath(threadID)
+	}
+	if threadID == "" && rawRolloutPath == "" {
 		return state.ResumeTarget{}, "", false, nil
 	}
-	if !isAlphanumHyphen(threadID) {
-		return state.ResumeTarget{}, "", false, fmt.Errorf("codex cold-start resume requires a valid thread_id, got %q", threadID)
+	if rawThreadID != "" && threadID == "" {
+		if rolloutPath == "" {
+			return state.ResumeTarget{}, "", false, fmt.Errorf("codex cold-start resume requires a valid thread_id, got %q", rawThreadID)
+		}
+	}
+	if rolloutPath == "" {
+		return state.ResumeTarget{}, "", false, fmt.Errorf("codex cold-start resume requires a usable rollout_path for thread_id %q", threadID)
 	}
 	return state.ResumeTarget{ThreadID: threadID, RolloutPath: rolloutPath}, resolveCodexSessionID(rolloutPath, sessionID), true, nil
+}
+
+func resolveCodexRolloutPath(threadID string) string {
+	codexHome, err := codexHomeDir()
+	if err != nil {
+		slog.Debug("codex: rollout path lookup skipped", "thread", threadID, "err", err)
+		return ""
+	}
+	rolloutPath, err := lookupCodexRolloutByThread(codexHome, threadID)
+	if err != nil {
+		slog.Debug("codex: rollout path lookup skipped",
+			"thread", threadID, "codex_home", codexHome, "err", err)
+		return ""
+	}
+	if usable := usableRolloutPath(rolloutPath); usable != "" {
+		return usable
+	}
+	slog.Debug("codex: rollout path lookup skipped",
+		"thread", threadID, "rollout_path", rolloutPath, "reason", "unusable_rollout_path")
+	return ""
 }
 
 func resolveCodexSessionID(rolloutPath, persistedSessionID string) string {
@@ -91,6 +126,14 @@ func codexHomeDir() (string, error) {
 }
 
 func lookupCodexThreadByRollout(codexHome, rolloutPath string) (string, error) {
+	return lookupCodexThreadValue(codexHome, "id", "rollout_path", rolloutPath)
+}
+
+func lookupCodexRolloutByThread(codexHome, threadID string) (string, error) {
+	return lookupCodexThreadValue(codexHome, "rollout_path", "id", threadID)
+}
+
+func lookupCodexThreadValue(codexHome, selectColumn, whereColumn, value string) (string, error) {
 	dbPath := filepath.Join(codexHome, codexStateDBName)
 	if _, err := os.Stat(dbPath); err != nil {
 		return "", fmt.Errorf("codex cold-start resume local session source missing %s: %w", dbPath, err)
@@ -100,30 +143,31 @@ func lookupCodexThreadByRollout(codexHome, rolloutPath string) (string, error) {
 		return "", fmt.Errorf("codex cold-start resume failed to open local session source %s: %w", dbPath, err)
 	}
 	defer func() { _ = db.Close() }()
-	rows, err := db.Query("SELECT id FROM threads WHERE rollout_path = ? LIMIT 2", rolloutPath)
+	query := fmt.Sprintf("SELECT %s FROM threads WHERE %s = ? LIMIT 2", selectColumn, whereColumn)
+	rows, err := db.Query(query, value)
 	if err != nil {
 		return "", fmt.Errorf("codex cold-start resume failed to query local session source %s: %w", dbPath, err)
 	}
 	defer func() { _ = rows.Close() }()
 	var matches []string
 	for rows.Next() {
-		var sessionID string
-		if err := rows.Scan(&sessionID); err != nil {
-			return "", fmt.Errorf("codex cold-start resume got malformed sqlite row for rollout_path %s: %w", rolloutPath, err)
+		var match string
+		if err := rows.Scan(&match); err != nil {
+			return "", fmt.Errorf("codex cold-start resume got malformed sqlite row for %s %s: %w", whereColumn, value, err)
 		}
-		matches = append(matches, strings.TrimSpace(sessionID))
+		matches = append(matches, strings.TrimSpace(match))
 	}
 	if err := rows.Err(); err != nil {
 		return "", fmt.Errorf("codex cold-start resume failed to read local session source %s: %w", dbPath, err)
 	}
 	if len(matches) == 0 {
-		return "", fmt.Errorf("codex cold-start resume local session source has no thread row for rollout_path %s", rolloutPath)
+		return "", fmt.Errorf("codex cold-start resume local session source has no thread row for %s %s", whereColumn, value)
 	}
 	if len(matches) > 1 {
-		return "", fmt.Errorf("codex cold-start resume local session source returned multiple rows for rollout_path %s", rolloutPath)
+		return "", fmt.Errorf("codex cold-start resume local session source returned multiple rows for %s %s", whereColumn, value)
 	}
 	if matches[0] == "" {
-		return "", fmt.Errorf("codex cold-start resume local session source returned empty session_id for rollout_path %s", rolloutPath)
+		return "", fmt.Errorf("codex cold-start resume local session source returned empty %s for %s %s", selectColumn, whereColumn, value)
 	}
 	return matches[0], nil
 }

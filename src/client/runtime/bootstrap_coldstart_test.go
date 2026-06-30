@@ -275,9 +275,14 @@ func TestSkipColdStartSpawn(t *testing.T) {
 			wantSkip: false,
 		},
 		{
-			name:     "stopped codex without thread is skipped",
+			name:     "stopped codex without locator is skipped",
 			frame:    mk(codex, "codex", map[string]string{"status": "stopped"}),
 			wantSkip: true,
+		},
+		{
+			name:     "stopped codex with rollout path is relaunched",
+			frame:    mk(codex, "codex", map[string]string{"status": "stopped", "rollout_path": "/repo/rollout.jsonl"}),
+			wantSkip: false,
 		},
 		{
 			name:     "idle codex is not skipped",

@@ -289,6 +289,33 @@ func TestBackendBindFrameResumeAllowsThreadIDOnly(t *testing.T) {
 	}
 }
 
+func TestBackendBindFrameResumeAllowsRolloutPathOnly(t *testing.T) {
+	const listen = "/opt/agent-reactor/run/codex-sess3.sock"
+	h := newBoundBackend(t, listen)
+	rollout := writeRollout(t)
+
+	res, err := h.backend.BindFrame(context.Background(), subsystem.BindRequest{
+		FrameID: "f1",
+		Plan: state.LaunchPlan{StartDir: "/repo", Stream: state.StreamLaunchOptions{
+			ResumeTarget: state.ResumeTarget{RolloutPath: rollout},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("BindFrame: %v", err)
+	}
+	if strings.Contains(res.Plan.Command, "resume ") {
+		t.Fatalf("Command = %q, want plain remote attach", res.Plan.Command)
+	}
+	h.server.mu.Lock()
+	defer h.server.mu.Unlock()
+	if h.server.lastResume["threadId"] != nil {
+		t.Fatalf("thread/resume threadId = %v, want omitted", h.server.lastResume["threadId"])
+	}
+	if h.server.lastResume["path"] != rollout {
+		t.Fatalf("thread/resume path = %v, want %q", h.server.lastResume["path"], rollout)
+	}
+}
+
 func TestBackendBindFrameResumeTranslatesHostRolloutPathForSandboxedRPC(t *testing.T) {
 	const listen = "/opt/agent-reactor/run/codex-sess4.sock"
 	h := newBoundBackend(t, listen)

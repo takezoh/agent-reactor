@@ -207,9 +207,6 @@ func normalizeResumeTarget(target state.ResumeTarget, mounts pathmap.Mounts) (no
 	if target.ThreadID == "" && target.RolloutPath == "" {
 		return normalizedResumeTarget{}, nil
 	}
-	if target.ThreadID == "" {
-		return normalizedResumeTarget{}, errors.New("stream backend: codex resume requires thread id")
-	}
 	if target.RolloutPath == "" {
 		return normalizedResumeTarget{rpc: state.ResumeTarget{ThreadID: target.ThreadID}}, nil
 	}
