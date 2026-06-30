@@ -32,6 +32,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -44,6 +45,11 @@ var (
 	serverBinaryPath string
 	serverBinaryErr  error
 )
+
+type daemonInstance struct {
+	sockPath string
+	homeDir  string
+}
 
 // buildServerOnce builds the server binary under t.TempDir() (shared across
 // tests in the same package run) and returns its absolute path. Subsequent
@@ -112,10 +118,11 @@ func moduleRoot(t *testing.T) string {
 // another listener; the test does not exercise it directly — instead it
 // drives its own in-test mux against the daemon socket. Killed at the end
 // of the test via t.Cleanup so a panicking test still reaps the child.
-func startServerDaemon(t *testing.T) string {
+func startServerDaemon(t *testing.T) daemonInstance {
 	t.Helper()
 	bin := buildServerOnce(t)
 	dataDir := t.TempDir()
+	homeDir := t.TempDir()
 
 	cmd := exec.Command(bin,
 		"-data-dir", dataDir,
@@ -123,7 +130,7 @@ func startServerDaemon(t *testing.T) string {
 		"-no-auth",
 		"-addr", "127.0.0.1:0",
 	)
-	cmd.Env = os.Environ()
+	cmd.Env = replaceEnv(os.Environ(), "HOME", homeDir)
 	logFile, err := os.Create(filepath.Join(dataDir, "server.log"))
 	if err != nil {
 		t.Fatalf("create log: %v", err)
@@ -143,7 +150,8 @@ func startServerDaemon(t *testing.T) string {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if fi, err := os.Stat(sockPath); err == nil && fi.Mode()&os.ModeSocket != 0 {
-			return sockPath
+			waitForHookSettings(t, homeDir, time.Now().Add(5*time.Second))
+			return daemonInstance{sockPath: sockPath, homeDir: homeDir}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -151,7 +159,7 @@ func startServerDaemon(t *testing.T) string {
 	// Daemon never bound the socket — surface the log so a reader can debug.
 	tail, _ := os.ReadFile(filepath.Join(dataDir, "server.log"))
 	t.Fatalf("daemon did not bind %s within 5s. log tail:\n%s", sockPath, string(tail))
-	return ""
+	return daemonInstance{}
 }
 
 // withRealDaemonMux is the entry point for tests that need a fully-wired
@@ -161,13 +169,42 @@ func startServerDaemon(t *testing.T) string {
 // registered on t.Cleanup so a panicking test still releases resources.
 func withRealDaemonMux(t *testing.T) http.Handler {
 	t.Helper()
-	sock := startServerDaemon(t)
-	d := NewDaemonClient(sock)
+	daemon := startServerDaemon(t)
+	d := NewDaemonClient(daemon.sockPath)
 	t.Cleanup(d.Close)
 	if !waitHealth(d, true, 3*time.Second) {
-		t.Fatalf("DaemonClient never became healthy against real daemon at %s", sock)
+		t.Fatalf("DaemonClient never became healthy against real daemon at %s", daemon.sockPath)
 	}
 	return NewMux(d, "tok")
+}
+
+func replaceEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return append(out, prefix+value)
+}
+
+func waitForHookSettings(t *testing.T, homeDir string, deadline time.Time) {
+	t.Helper()
+	for time.Now().Before(deadline) {
+		for _, rel := range []string{".claude/settings.json", ".gemini/settings.json"} {
+			if _, err := os.Stat(filepath.Join(homeDir, rel)); err == nil {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	tail := []string{
+		filepath.Join(homeDir, ".claude/settings.json"),
+		filepath.Join(homeDir, ".gemini/settings.json"),
+	}
+	t.Fatalf("server did not create isolated hook settings under HOME=%s within deadline; checked %v", homeDir, tail)
 }
 
 // TestE2E_ListEmptyAtStartup exercises the path the user's complaint pinned
@@ -193,6 +230,26 @@ func TestE2E_ListEmptyAtStartup(t *testing.T) {
 	body, _ := io.ReadAll(w.Body)
 	if string(bytes.TrimSpace(body)) != "[]" {
 		t.Fatalf("body = %q, want \"[]\"", string(body))
+	}
+}
+
+func TestE2E_ServerRegistersHooksUnderIsolatedHome(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real-daemon e2e in -short mode")
+	}
+	t.Parallel()
+
+	daemon := startServerDaemon(t)
+
+	var created []string
+	for _, rel := range []string{".claude/settings.json", ".gemini/settings.json"} {
+		path := filepath.Join(daemon.homeDir, rel)
+		if _, err := os.Stat(path); err == nil {
+			created = append(created, path)
+		}
+	}
+	if len(created) == 0 {
+		t.Fatalf("isolated HOME %s has no hook settings files", daemon.homeDir)
 	}
 }
 

@@ -34,6 +34,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/sys/unix"
 )
 
 // Spec captures one agent's hook-registration parameters. The same Install
@@ -171,6 +173,14 @@ func Install(settingsPath, hookCmd string, spec Spec) ([]string, error) {
 	if len(spec.Events) == 0 {
 		return nil, fmt.Errorf("agenthook[%s]: spec.Events is empty", spec.Name)
 	}
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		return nil, fmt.Errorf("agenthook[%s]: mkdir parent of %s: %w", spec.Name, settingsPath, err)
+	}
+	lock, err := acquireSettingsLock(settingsPath, spec.Name)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.release()
 	prev, err := readOrInit(settingsPath, spec.Name)
 	if err != nil {
 		return nil, err
@@ -192,6 +202,32 @@ func Install(settingsPath, hookCmd string, spec Spec) ([]string, error) {
 		return registered, err
 	}
 	return registered, nil
+}
+
+type settingsLock struct {
+	f *os.File
+}
+
+func acquireSettingsLock(settingsPath, name string) (*settingsLock, error) {
+	lockPath := settingsPath + ".lock"
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("agenthook[%s]: open lock %s: %w", name, lockPath, err)
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("agenthook[%s]: flock %s: %w", name, lockPath, err)
+	}
+	return &settingsLock{f: f}, nil
+}
+
+func (l *settingsLock) release() {
+	if l == nil || l.f == nil {
+		return
+	}
+	_ = unix.Flock(int(l.f.Fd()), unix.LOCK_UN)
+	_ = l.f.Close()
+	l.f = nil
 }
 
 // applyToHooks rewrites the map under settings.hooks so each event in
@@ -407,9 +443,9 @@ func listField(m map[string]any, key string) []any {
 	return existing
 }
 
-// readOrInit reads settingsPath. If the file is missing, the parent
-// directory is created and `{}` bytes are returned so the caller can
-// proceed against a fresh empty document. Any other read failure is fatal.
+// readOrInit reads settingsPath. If the file is missing, `{}` bytes are
+// returned so the caller can proceed against a fresh empty document. Any
+// other read failure is fatal.
 func readOrInit(settingsPath, name string) ([]byte, error) {
 	raw, err := os.ReadFile(settingsPath)
 	if err == nil {
@@ -418,16 +454,13 @@ func readOrInit(settingsPath, name string) ([]byte, error) {
 	if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("agenthook[%s]: read %s: %w", name, settingsPath, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
-		return nil, fmt.Errorf("agenthook[%s]: mkdir parent of %s: %w", name, settingsPath, err)
-	}
 	return []byte("{}"), nil
 }
 
 // backupAndWrite writes prevRaw to settingsPath+".bak" (best-effort, logged
-// on failure but does not abort), then writes the encoded root to
-// settingsPath. The settings write itself is fatal because losing the
-// rewrite means the next session starts without hooks.
+// on failure but does not abort), then atomically replaces settingsPath
+// with the encoded root. The settings write itself is fatal because losing
+// the rewrite means the next session starts without hooks.
 func backupAndWrite(settingsPath string, prevRaw []byte, root map[string]any, name string) error {
 	if err := os.WriteFile(settingsPath+".bak", prevRaw, 0o644); err != nil {
 		slog.Warn("agenthook: backup write failed",
@@ -438,8 +471,32 @@ func backupAndWrite(settingsPath string, prevRaw []byte, root map[string]any, na
 		return fmt.Errorf("agenthook[%s]: encode: %w", name, err)
 	}
 	out = append(out, '\n')
-	if err := os.WriteFile(settingsPath, out, 0o644); err != nil {
-		return fmt.Errorf("agenthook[%s]: write %s: %w", name, settingsPath, err)
+	dir := filepath.Dir(settingsPath)
+	tmp, err := os.CreateTemp(dir, filepath.Base(settingsPath)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("agenthook[%s]: create temp for %s: %w", name, settingsPath, err)
 	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("agenthook[%s]: chmod temp %s: %w", name, tmpPath, err)
+	}
+	if _, err := tmp.Write(out); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("agenthook[%s]: write temp %s: %w", name, tmpPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("agenthook[%s]: close temp %s: %w", name, tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, settingsPath); err != nil {
+		return fmt.Errorf("agenthook[%s]: rename temp %s to %s: %w", name, tmpPath, settingsPath, err)
+	}
+	cleanup = false
 	return nil
 }

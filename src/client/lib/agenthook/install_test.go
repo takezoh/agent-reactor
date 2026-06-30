@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -281,6 +282,115 @@ func TestInstall_WritesBackupBeforeOverwrite(t *testing.T) {
 	}
 	if string(bak) != string(original) {
 		t.Errorf("backup content mismatch:\n  got:  %q\n  want: %q", bak, original)
+	}
+}
+
+func TestInstall_ConcurrentInstallSerializesSameSettingsFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	seed := map[string]any{
+		"awsAuthRefresh": "aws sso login",
+		"permissions": map[string]any{
+			"allow": []any{"Bash(git *)"},
+		},
+		"hooks": map[string]any{
+			"PostToolUse": []any{
+				map[string]any{
+					"matcher": "Bash",
+					"hooks": []any{
+						map[string]any{"type": "command", "command": "~/.claude/hooks/bash-audit.sh"},
+					},
+				},
+			},
+			"SessionStart": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{"type": "command", "command": "/seed/path/server event claude"},
+					},
+				},
+			},
+		},
+	}
+	raw, _ := json.MarshalIndent(seed, "", "  ")
+	raw = append(raw, '\n')
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	oldCmd := "/old/path/server event claude -data-dir /tmp/reactor-old"
+	newCmd := "/new/path/server event claude -data-dir /tmp/reactor-new"
+
+	const workers = 24
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		cmd := oldCmd
+		if i%2 == 1 {
+			cmd = newCmd
+		}
+		go func(hookCmd string) {
+			defer wg.Done()
+			<-start
+			_, err := Install(path, hookCmd, Claude)
+			errCh <- err
+		}(cmd)
+	}
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("concurrent Install: %v", err)
+		}
+	}
+
+	settings := readSettings(t, path)
+	if settings["awsAuthRefresh"] != "aws sso login" {
+		t.Fatalf("awsAuthRefresh changed: %v", settings["awsAuthRefresh"])
+	}
+	if _, ok := settings["permissions"].(map[string]any); !ok {
+		t.Fatalf("permissions block lost: %v", settings["permissions"])
+	}
+
+	finalCmds := commandsFor(t, settings, "SessionStart")
+	if len(finalCmds) != 1 {
+		t.Fatalf("SessionStart cmds = %v, want exactly one reactor command", finalCmds)
+	}
+	finalCmd := finalCmds[0]
+	if finalCmd != oldCmd && finalCmd != newCmd {
+		t.Fatalf("final reactor command = %q, want one of the concurrent commands", finalCmd)
+	}
+
+	for _, ev := range Claude.Events {
+		cmds := commandsFor(t, settings, ev)
+		var reactorCount int
+		for _, cmd := range cmds {
+			if cmd == oldCmd || cmd == newCmd {
+				reactorCount++
+				if cmd != finalCmd {
+					t.Fatalf("event %s contains mixed reactor commands: %v", ev, cmds)
+				}
+			}
+		}
+		if reactorCount != 1 {
+			t.Fatalf("event %s reactorCount = %d, want 1; cmds=%v", ev, reactorCount, cmds)
+		}
+	}
+
+	postToolUse := commandsFor(t, settings, "PostToolUse")
+	if !strings.Contains(strings.Join(postToolUse, ","), "~/.claude/hooks/bash-audit.sh") {
+		t.Fatalf("unrelated PostToolUse hook lost: %v", postToolUse)
+	}
+
+	tmpFiles, err := filepath.Glob(filepath.Join(dir, "settings.json.*.tmp"))
+	if err != nil {
+		t.Fatalf("glob tmp files: %v", err)
+	}
+	if len(tmpFiles) != 0 {
+		t.Fatalf("temporary files left behind: %v", tmpFiles)
 	}
 }
 
