@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { useMobileGate } from "../hooks/useMobileGate";
 import type { Connection } from "../socket/connection";
+import { useDaemonStore } from "../store/daemon";
 import { TerminalMobileOverlay } from "./TerminalMobileOverlay";
 import { useXtermTheme } from "./ThemeProvider";
 
@@ -78,6 +79,17 @@ export function TerminalPane({
   const xtermThemeRef = useRef(xtermTheme);
   xtermThemeRef.current = xtermTheme;
 
+  // [terminal] font_family / font_size from settings.toml, delivered over
+  // GET /api/session-config (ADR-0041) and cached in the daemon store. Empty
+  // string / 0 mean "unset" — we then pass no font option to xterm.js so its
+  // built-in monospace default is preserved. Same ref pattern as the theme:
+  // read at construction time, and re-apply on change via the effect below,
+  // so a late-landing session-config fetch does not re-run the heavy lifecycle.
+  const fontFamily = useDaemonStore((s) => s.sessionConfig?.fontFamily ?? "");
+  const fontSize = useDaemonStore((s) => s.sessionConfig?.fontSize ?? 0);
+  const fontRef = useRef({ family: fontFamily, size: fontSize });
+  fontRef.current = { family: fontFamily, size: fontSize };
+
   // ─── Mobile overlay wiring (ADR 0069 / 0072 / 0074) ──────────────────────
   // These refs / signals are populated by the main lifecycle effect after the
   // terminal is opened, then handed to the conditionally-mounted mobile overlay.
@@ -104,6 +116,21 @@ export function TerminalPane({
     term.options.theme = xtermTheme;
   }, [xtermTheme]);
 
+  // Apply [terminal] font_family / font_size to the live terminal whenever the
+  // cached session-config changes (e.g. the initial REST fetch lands after the
+  // terminal already mounted, or the user edits settings.toml and reconnects).
+  // Changing the font alters the character cell size, so re-fit afterwards to
+  // recompute cols/rows. Empty / zero are treated as "keep current" so an
+  // unset config never blanks the grid font. Mirrors the theme effect above;
+  // the pre-mount null case is a normal no-op (construction applies the ref).
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    if (fontFamily) term.options.fontFamily = fontFamily;
+    if (fontSize > 0) term.options.fontSize = fontSize;
+    scheduleFitRef.current();
+  }, [fontFamily, fontSize]);
+
   // Main lifecycle: create terminal, attach to host, wire conn.onOutput,
   // window resize, and ResizeObserver. Runs once per (conn) mount.
   // ADR 0030: keyed remount via <TerminalPane key={activeSessionID}> in
@@ -122,10 +149,15 @@ export function TerminalPane({
     // (settings.toml [terminal] scrollback_lines, default 10000 — ADR-0066).
     // Otherwise the seed frame for a late-joining client carries lines the
     // browser silently discards before the user can scroll them into view.
+    // Only pass font options when configured: an empty fontFamily / zero
+    // fontSize would override xterm.js's built-in default with a blank value.
+    const font = fontRef.current;
     const term = new Terminal({
       convertEol: true,
       scrollback: 10000,
       theme: xtermThemeRef.current,
+      ...(font.family ? { fontFamily: font.family } : {}),
+      ...(font.size > 0 ? { fontSize: font.size } : {}),
     });
     termRef.current = term;
     const fit = new FitAddon();

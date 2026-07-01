@@ -115,6 +115,11 @@ type apiSessionConfig struct {
 	ProjectRoots   []string         `json:"project_roots"`
 	ProjectPaths   []string         `json:"project_paths"`
 	Projects       []apiProjectMeta `json:"projects"`
+	// FontFamily / FontSize surface [terminal] font_family / font_size from
+	// settings.toml so the web client can apply them to the xterm.js grid
+	// without a rebuild. Empty / zero mean "leave the xterm.js default".
+	FontFamily string `json:"font_family"`
+	FontSize   int    `json:"font_size"`
 }
 
 // apiCreateReq is the POST /api/sessions body. Required: project (absolute
@@ -293,6 +298,8 @@ func handleSessionConfig() http.HandlerFunc {
 			ProjectRoots:   projectRoots,
 			ProjectPaths:   projectPaths,
 			Projects:       projects,
+			FontFamily:     cfg.Terminal.FontFamily,
+			FontSize:       cfg.Terminal.FontSize,
 		})
 	}
 }

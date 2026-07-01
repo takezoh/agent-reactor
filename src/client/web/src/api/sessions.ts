@@ -98,6 +98,12 @@ export interface SessionConfig {
   projects: SessionConfigProject[];
   commands: string[];
   pushCommands: string[];
+  // fontFamily / fontSize mirror [terminal] font_family / font_size from
+  // settings.toml (surfaced by the gateway). Empty string / 0 mean "unset —
+  // keep the xterm.js built-in default"; TerminalPane only overrides the grid
+  // font when these are non-empty / positive.
+  fontFamily: string;
+  fontSize: number;
 }
 
 export interface SessionsApi {
@@ -391,12 +397,20 @@ export function makeSessionsApi(fetchImpl?: typeof fetch): SessionsApi {
       const commands = normalizeStringList(raw.commands, "commands");
       const pushCommands = normalizeStringList(raw.push_commands, "push_commands");
       const projects = normalizeProjects(raw.projects);
+      // font_family / font_size are optional forward-compat fields. Absent (old
+      // gateway) or wrong-typed → fall back to "unset" ("" / 0) so the terminal
+      // keeps the xterm.js default rather than blanking the grid font.
+      const fontFamily = typeof raw.font_family === "string" ? raw.font_family : "";
+      const fontSize =
+        typeof raw.font_size === "number" && Number.isFinite(raw.font_size) ? raw.font_size : 0;
       return {
         projectRoots,
         projectPaths,
         projects,
         commands,
         pushCommands,
+        fontFamily,
+        fontSize,
       };
     },
   };

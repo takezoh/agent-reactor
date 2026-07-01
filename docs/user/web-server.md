@@ -85,6 +85,22 @@ web port (`ssh -L 8080:localhost:8080 <host>`).
   notification reaches the operating client, not the server host).
 - **Stop** — the ✕ next to a session terminates it.
 
+## Terminal font
+
+The web terminal font is set from `~/.agent-reactor/settings.toml`. Both keys are
+optional; leaving them unset keeps the xterm.js built-in monospace default.
+
+```toml
+[terminal]
+font_family = "HackGen Console NF"   # any CSS font-family value
+font_size   = 14                     # px; omit or 0 keeps the default
+```
+
+The gateway re-reads `settings.toml` on every `GET /api/session-config`, so a
+change takes effect on the next page load — no rebuild or restart needed. The
+font must be installed on the machine running the **browser** (it is applied as a
+local font, not downloaded); if it is missing, xterm falls back to its default.
+
 ## Flags
 
 `server` (backend) and `web` (web-client host) share the same transport flags:

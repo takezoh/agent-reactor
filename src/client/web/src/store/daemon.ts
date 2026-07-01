@@ -29,6 +29,11 @@ export type SessionConfigSlice = {
   projects: SessionConfigProject[];
   commands: string[];
   pushCommands: string[];
+  // fontFamily / fontSize mirror [terminal] font_family / font_size from
+  // settings.toml (ADR-0041 REST path). "" / 0 mean "unset — keep the
+  // xterm.js default"; TerminalPane reads these to override the grid font.
+  fontFamily: string;
+  fontSize: number;
 };
 
 export type DaemonState = {
@@ -348,6 +353,8 @@ export const useDaemonStore = create<DaemonState>()((set) => ({
         projects: cfg.projects,
         commands: cfg.commands,
         pushCommands: cfg.pushCommands,
+        fontFamily: cfg.fontFamily,
+        fontSize: cfg.fontSize,
       },
     }),
   setSelectedWorkspace: (workspace) => set({ selectedWorkspace: workspace }),
