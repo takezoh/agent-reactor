@@ -145,6 +145,67 @@ The `RespawnFrame` interface still exists on `FrameLifecycle` and `PtyBackend` i
 
 For Codex, the daemon starts **one `codex app-server` per session managed by the client** (keyed by `stream:session:<sessionID>`). All frames within the same Session (root + peers) share one app-server; different Sessions get separate processes. The app-server is launched via `agentlaunch.Dispatcher.Wrap` + `agentlaunch.Spawn` (argv-direct, no host shell); the listen argv is built by `libcodex.AppServerListenArgs`, binding a per-session UDS `codex-<sessionID>.sock`. The path the app-server binds comes from `Factory.ResolveSockPath` (container-absolute under the run dir in container mode); the host-side path the daemon dials is derived from that path plus the launch's bind mounts (`resolveDialSock` → `WrappedLaunch.HostPath`). The stream daemon uses a dedicated non-TTY `DevcontainerLauncher` (`docker exec -i`) that shares the same `sandbox.Manager` as the per-frame interactive launcher. The daemon connects via **WebSocket-over-UDS** (HTTP Upgrade — the transport codex app-server speaks). Structured RPC events are converted to `DEvSubsystem` and dispatched to the owning frame. Each frame runs in the same sandbox as the app-server and attaches to that UDS directly with `codex --remote unix://<sock>` (cold start) or `codex resume <id> --remote unix://<sock>` (warm start); these remote-attach strings are built by `libcodex.RemoteAttachArgs`. There is no TCP routing bridge. Codex state is not driven by hooks. When a session's last frame is released, `Factory.Remove` stops the corresponding app-server process (reap on exit).
 
+### Codex process topology
+
+The paragraph above compresses two spawn paths, two daemon-internal backends, and a host/container boundary into one line. Concretely, a Codex client-Session runs **1 + N processes**: one `codex app-server` shared across the session's frames, and one `codex --remote` TUI per frame. `stream.Backend` and `PtyBackend` own the two spawn paths independently — `stream.Backend` is *not* layered on top of `PtyBackend`.
+
+| Component | Scope | Layer | Spawns | pty? |
+|---|---|---|---|---|
+| `stream.Backend` (`client/runtime/subsystem/stream/`) | session (`SubsystemID` keyed on session) | `Subsystem` interface | `codex app-server --listen unix://...` via `agentlaunch.Spawn` (argv-direct) | no — plain stdio pipes, `procgroup` |
+| `PtyBackend` (`client/runtime/pty_backend.go`) | frame (1 per FrameID) | `FrameBackend` interface | rewritten `Plan.Command` = `codex --remote unix://...` via `termvt.Manager` | yes — `/dev/ptmx` master owned by daemon |
+
+Every Codex frame flows through **both**: `stream.Backend.BindFrame` binds a thread on the app-server and rewrites `Plan.Command`, then `PtyBackend.SpawnFrame` runs that rewritten command in a pty.
+
+#### Host mode
+
+```mermaid
+flowchart TB
+    subgraph host["Host — daemon process"]
+        SB["stream.Backend<br/>(session-scoped, 1 per session)<br/>agentlaunch.Spawn — no pty<br/>codexclient.Conn (WS-over-UDS)<br/>BindFrame rewrites Plan.Command"]
+        PB["PtyBackend<br/>(frame-scoped, N per session)<br/>termvt.Manager → termvt.Session<br/>pty master + exec.Cmd"]
+        UDS[("dataDir/run/stream/<br/>codex-SID.sock")]
+    end
+    APP["codex app-server<br/>--listen unix://SOCK<br/>(no pty, 1 per session)"]
+    TUI["codex --remote unix://SOCK<br/>(Ink TUI, pty child, N per session)"]
+
+    SB -->|Spawn| APP
+    APP -->|listen| UDS
+    SB -.->|dial WS| UDS
+    PB -->|SpawnFrame| TUI
+    TUI -.->|dial WS| UDS
+```
+
+#### Devcontainer mode
+
+```mermaid
+flowchart TB
+    subgraph host["Host — daemon process"]
+        SB["stream.Backend<br/>Dispatcher.Wrap → docker exec -i"]
+        PB["PtyBackend<br/>Plan.Command wrapped as<br/>docker exec -it sh -c '...'"]
+        HUDS[("dataDir/run/CONTAINERKEY/<br/>codex-SID.sock<br/>(host path)")]
+    end
+    subgraph container["Devcontainer"]
+        CUDS[("/opt/agent-reactor/run/<br/>codex-SID.sock<br/>(container path)")]
+        APP["codex app-server<br/>--listen unix://SOCK"]
+        TUI["codex --remote unix://SOCK<br/>(Ink TUI; docker-exec grandchild)"]
+    end
+
+    HUDS <-. bind mount, same inode .-> CUDS
+    SB -->|Spawn: docker exec -i| APP
+    APP -->|listen| CUDS
+    SB -.->|dial WS via HostPath| HUDS
+    PB -->|SpawnFrame: docker exec -it| TUI
+    TUI -.->|dial WS in-container| CUDS
+```
+
+Reading notes:
+
+- **The pty master always lives on the host** — it is created by `termvt.NewSession` (`platform/termvt/session.go:79`, `pty.StartWithSize`) inside the daemon process. In devcontainer mode the pty's immediate child is the `docker exec` CLI on the host; the actual `codex --remote` TUI runs in the container as its grandchild.
+- **The dial socket and the listen socket are the same file.** In devcontainer mode the listen path is container-absolute and the dial path is its host-side alias via bind mount; `resolveDialSock` → `WrappedLaunch.HostPath` (`stream/backend.go:182`) is the translator. In host mode the two paths are identical.
+- **Client disconnect / reconnect does not touch either process.** `reduceConnClosed` only tears down `Subscribers` / `SurfaceSubs` and emits `EffSurfaceSubscribeStop`; it never emits `EffKillFrame` or stops the subsystem. Both the app-server and the per-frame TUI survive until the frame is explicitly killed (or, for the app-server, until `reapSubsystemIfLast` runs after the session's last frame is released).
+- **Thread selection is done by the daemon, not the TUI.** `libcodex.RemoteAttachArgs` deliberately does not pass `resume <id>` — `stream.Backend.bindThread` has already called `thread/start` or `thread/resume` on the app-server before the TUI connects (`platform/lib/codex/argv.go:78-81`).
+- **This two-process topology is Codex-specific.** Claude / Gemini drivers do not set `Plan.Subsystem`, so `ensureSubsystemOnce` falls back to `LaunchSubsystemCLI` (`interpret_spawn.go:272-274`) and only the per-frame CLI process is spawned — no app-server counterpart.
+
 ### Shutdown semantics
 
 | Trigger | sessions.json | Sandboxes | Next boot |
