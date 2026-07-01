@@ -1,12 +1,16 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"syscall"
 )
 
 // Handler builds the web-client host: it serves the embedded browser UI and
@@ -59,7 +63,30 @@ func backendProxy(target *url.URL) *httputil.ReverseProxy {
 			pr.Out.Host = target.Host
 			pr.Out.Header.Del("Origin")
 		},
+		ErrorHandler: proxyErrorHandler,
 	}
+}
+
+func proxyErrorHandler(w http.ResponseWriter, _ *http.Request, err error) {
+	if isProxyUpstreamNotReady(err) {
+		slog.Info("proxy: upstream not ready", "err", err)
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "upstream not ready", http.StatusServiceUnavailable)
+		return
+	}
+	slog.Error("proxy: request failed", "err", err)
+	http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+}
+
+func isProxyUpstreamNotReady(err error) bool {
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return dnsErr.IsNotFound || dnsErr.IsTemporary || dnsErr.IsTimeout
+	}
+	return false
 }
 
 // sameOrigin reports whether r may open a WebSocket: a browser request must

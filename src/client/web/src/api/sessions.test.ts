@@ -53,6 +53,7 @@ beforeEach(() => {
 afterEach(() => {
   window.location.hash = originalHash;
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 // ---------------------------------------------------------------------------
@@ -608,6 +609,61 @@ describe("getSessionConfig", () => {
       const err = asApiHttpError(e);
       expect(err.status).toBe(401);
     }
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("TestGetSessionConfig_503Then200_RetriesAndRespectsRetryAfter", async () => {
+    vi.useFakeTimers();
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(makeResponse("upstream not ready", 503, { "Retry-After": "1" }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            commands: ["claude"],
+            projects: ["/p"],
+          },
+          200,
+        ),
+      );
+    const api = makeSessionsApi(fetchFn);
+
+    const promise = api.getSessionConfig();
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    const cfg = await promise;
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(cfg.commands).toEqual(["claude"]);
+    expect(cfg.projects).toEqual([{ path: "/p", isGit: false, isSandboxed: false }]);
+  });
+
+  it("TestGetSessionConfig_5xxEventuallyThrowsAfterRetryBudget", async () => {
+    vi.useFakeTimers();
+    const fetchFn = vi.fn().mockResolvedValue(makeResponse("settings.toml broken", 500));
+    const api = makeSessionsApi(fetchFn);
+
+    const settled = api.getSessionConfig().then(
+      (value) => ({ ok: true as const, value }),
+      (error) => ({ ok: false as const, error }),
+    );
+    await vi.advanceTimersByTimeAsync(1400);
+
+    const result = await settled;
+    try {
+      if (result.ok) {
+        throw new Error("expected throw");
+      }
+      throw result.error;
+    } catch (e) {
+      const err = asApiHttpError(e);
+      expect(err.status).toBe(500);
+      expect(err.body).toBe("settings.toml broken");
+    }
+    expect(fetchFn).toHaveBeenCalledTimes(4);
   });
 
   it("TestGetSessionConfig_500_ThrowsApiHttpError500", async () => {
@@ -641,6 +697,7 @@ describe("getSessionConfig", () => {
     const fakeResponse = {
       ok: false,
       status: 500,
+      headers: new Headers(),
       text: () => Promise.reject(new TypeError("stream drained")),
     } as unknown as Response;
     const fetchFn = vi.fn().mockResolvedValue(fakeResponse);

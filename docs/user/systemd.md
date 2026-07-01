@@ -55,6 +55,11 @@ The cascade is by `Requires=` / `BindsTo=`: enabling `web` pulls in
 `server` (the daemon + gateway). There is no need to enable the lower unit
 separately.
 
+`agent-reactor-server.service` now uses `Type=notify`, so `web` waits until
+the server has bound its HTTP listener before it starts proxying requests.
+On interactive launches, where `NOTIFY_SOCKET` is unset, the readiness call
+is a silent no-op and startup behaves as before.
+
 ## Connect from a browser
 
 ```sh
@@ -128,6 +133,11 @@ the drop-in is silently ignored and the unit keeps the shipped
 `127.0.0.1:8080` binding. `systemctl --user show agent-reactor-web -p
 ExecStart -p DropInPaths` is the fastest way to confirm an override is in
 effect.
+
+If you override `agent-reactor-server.service`, keep its `Type=notify`
+setting unless you intentionally want to reintroduce the startup race. The
+server still starts normally when launched outside systemd; readiness
+notification simply becomes a no-op there.
 
 Plain HTTP on `0.0.0.0` means the bearer token (`server.token`) crosses the
 LAN in cleartext. Acceptable only on a trusted segment; otherwise add TLS

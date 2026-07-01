@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/charmbracelet/x/vt v0.0.0-20260615091924-bb3af1bbe712
 	github.com/coder/websocket v1.8.15
+	github.com/coreos/go-systemd/v22 v22.6.0
 	github.com/creack/pty v1.1.24
 	github.com/dustinkirkland/golang-petname v0.0.0-20260215035315-f0c533e9ce9b
 	github.com/fsnotify/fsnotify v1.9.0

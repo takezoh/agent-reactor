@@ -13,7 +13,8 @@ Description=agent-reactor server (session daemon + HTTP/WS gateway)
 # Operator guide: docs/user/systemd.md in the agent-reactor source repo.
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 StateDirectory=agent-reactor
 # -data-dir tells the server where to write its socket, pid file, sessions
 # snapshot and logs. -token-file persists a bearer token across restarts so

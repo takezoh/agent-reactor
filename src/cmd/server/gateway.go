@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/takezoh/agent-reactor/platform/lib/systemdnotify"
 	"github.com/takezoh/agent-reactor/platform/lib/tlsdev"
 	serverweb "github.com/takezoh/agent-reactor/server/web"
 )
@@ -25,6 +26,8 @@ import (
 // belt-and-braces Close() path on the daemon's exit and by the ctx-cancel
 // goroutine that watches the shared daemon context.
 const shutdownGracePeriod = 5 * time.Second
+
+var notifyReady = systemdnotify.Ready
 
 // gatewayHandle keeps the resources the gateway goroutine owns so the daemon
 // can reap them on shutdown.
@@ -103,6 +106,9 @@ func startGateway(ctx context.Context, cancel context.CancelFunc, sockPath strin
 			}
 		}()
 		logStartup(df.addr, df.insecure, df.noAuth, sockPath, token)
+		if err := notifyReady(); err != nil {
+			slog.Warn("gateway: readiness notify failed", "err", err)
+		}
 		serveErr := tlsdev.ServeListener(srv, ln, df.insecure, df.certFile, df.keyFile)
 		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			slog.Error("gateway: serve failed", "err", serveErr)

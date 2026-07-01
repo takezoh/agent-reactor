@@ -160,6 +160,13 @@ linters:
               desc: "proto/ must not import lib (see ARCHITECTURE.md)"
             - pkg: github.com/takezoh/agent-reactor/client/runtime
               desc: "proto/ must not import runtime (see ARCHITECTURE.md)"
+        systemdnotify-coreos-go-systemd-only:
+          files:
+            - "**/*.go"
+            - "!**/platform/lib/systemdnotify/**"
+          deny:
+            - pkg: github.com/coreos/go-systemd/v22/daemon
+              desc: "sd_notify is isolated behind platform/lib/systemdnotify"
         runtime-no-driver:
           # runtime/ root must not import driver/ (tool-specific) — subsystem-specific code lives in runtime/subsystem/<kind>/
           # Exceptions handled in exclusions.rules: driver/vt (VT emulator) is generic; test files are exempt.

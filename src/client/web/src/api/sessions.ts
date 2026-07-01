@@ -193,7 +193,60 @@ function makeNetworkError(cause: unknown): Error {
   return new Error("network", { cause });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const trimmed = header.trim();
+  if (trimmed === "") return null;
+  if (/^\d+$/.test(trimmed)) {
+    return Number(trimmed) * 1000;
+  }
+  const parsed = Date.parse(trimmed);
+  if (Number.isNaN(parsed)) return null;
+  return Math.max(0, parsed - Date.now());
+}
+
+interface RetryOpts {
+  maxAttempts?: number;
+  baseDelayMs?: number;
+  capMs?: number;
+}
+
+function retryDelayMs(attempt: number, res: Response, baseDelayMs: number, capMs: number): number {
+  const backoff = baseDelayMs * 2 ** attempt;
+  const retryAfter = parseRetryAfter(res.headers.get("Retry-After"));
+  const desired = retryAfter ?? backoff;
+  return Math.max(0, Math.min(desired, capMs));
+}
+
+async function throwHttpError(url: string, res: Response): Promise<never> {
+  let body = "";
+  try {
+    body = await res.text();
+  } catch (e) {
+    const reason = e instanceof Error ? e.name : String(e);
+    body = `<unreadable: ${reason}>`;
+    // eslint-disable-next-line no-console -- diagnostic, see comment above
+    console.warn(
+      `[api/sessions] failed to read error body for ${url} status=${res.status}: ${reason}`,
+      e,
+    );
+  }
+  throw makeHttpError(res.status, body);
+}
+
 async function request(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<Response> {
+  const res = await doFetch(fetchImpl, url, init);
+  if (!res.ok) {
+    await throwHttpError(url, res);
+  }
+  return res;
+}
+
+async function doFetch(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<Response> {
   let res: Response;
   try {
     res = await fetchImpl(url, init);
@@ -210,28 +263,43 @@ async function request(fetchImpl: typeof fetch, url: string, init: RequestInit):
     }
     throw makeNetworkError(e);
   }
-  if (!res.ok) {
-    // Read the body for diagnostics. response.text() can itself throw if the
-    // body is already consumed or the stream errors. We do NOT swallow that
-    // silently — empty catch is forbidden by project rules. Instead we
-    // record a sentinel that preserves the failure mode so 5xx and
-    // 5xx+body-read-error are distinguishable in logs.
-    // (Spec: review finding "major — res.text() empty catch".)
-    let body = "";
-    try {
-      body = await res.text();
-    } catch (e) {
-      const reason = e instanceof Error ? e.name : String(e);
-      body = `<unreadable: ${reason}>`;
-      // eslint-disable-next-line no-console -- diagnostic, see comment above
-      console.warn(
-        `[api/sessions] failed to read error body for ${url} status=${res.status}: ${reason}`,
-        e,
-      );
-    }
-    throw makeHttpError(res.status, body);
-  }
   return res;
+}
+
+async function requestWithRetry(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+  opts: RetryOpts = {},
+): Promise<Response> {
+  // Defaults to 4 total attempts: the initial request plus 3 retries, with
+  // 200ms / 400ms / 800ms backoff capped at 1.4s total.
+  const maxAttempts = opts.maxAttempts ?? 4;
+  const baseDelayMs = opts.baseDelayMs ?? 200;
+  const capMs = opts.capMs ?? 1400;
+  let attempt = 0;
+  let elapsed = 0;
+
+  for (;;) {
+    const res = await doFetch(fetchImpl, url, init);
+    if (res.ok) {
+      return res;
+    }
+    if (res.status < 500 || res.status >= 600 || attempt >= maxAttempts - 1) {
+      await throwHttpError(url, res);
+    }
+
+    const remaining = Math.max(0, capMs - elapsed);
+    if (remaining === 0) {
+      await throwHttpError(url, res);
+    }
+    const delay = retryDelayMs(attempt, res, baseDelayMs, remaining);
+    if (delay > 0) {
+      await sleep(delay);
+      elapsed += delay;
+    }
+    attempt++;
+  }
 }
 
 // Distinguishes "field absent" (legitimate forward/backward compat) from
@@ -373,7 +441,7 @@ export function makeSessionsApi(fetchImpl?: typeof fetch): SessionsApi {
 
     async getSessionConfig(): Promise<SessionConfig> {
       const url = "/api/session-config";
-      const res = await request(f, url, {
+      const res = await requestWithRetry(f, url, {
         method: "GET",
         headers: { ...authHeader(url) },
       });

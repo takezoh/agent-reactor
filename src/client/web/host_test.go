@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -129,6 +130,70 @@ func TestProxyForwardsAPI(t *testing.T) {
 	}
 }
 
+func TestProxyDialRefusedMaps503WithRetryAfter(t *testing.T) {
+	h := backendProxy(mustParseURL(t, "http://127.0.0.1:1"))
+	req := httptest.NewRequest(http.MethodGet, "/api/session-config", nil)
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", w.Code)
+	}
+	if got := w.Header().Get("Retry-After"); got != "1" {
+		t.Fatalf("Retry-After = %q, want 1", got)
+	}
+	if body := strings.TrimSpace(w.Body.String()); body != "upstream not ready" {
+		t.Fatalf("body = %q, want upstream not ready", body)
+	}
+}
+
+func TestProxyBackend502PassesThrough(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "backend bad gateway", http.StatusBadGateway)
+	}))
+	defer backend.Close()
+
+	h, err := Handler(backend.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/session-config", nil)
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", w.Code)
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != "backend bad gateway" {
+		t.Fatalf("body = %q, want backend bad gateway", got)
+	}
+	if got := w.Header().Get("Retry-After"); got != "" {
+		t.Fatalf("Retry-After = %q, want empty", got)
+	}
+}
+
+func TestProxyTLSErrorStays502(t *testing.T) {
+	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, "tls-backend")
+	}))
+	defer backend.Close()
+
+	h, err := Handler(backend.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/session-config", nil)
+	w := httptest.NewRecorder()
+
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", w.Code)
+	}
+}
+
 // TestWSProxyHandshake drives a real WebSocket upgrade through the host proxy to
 // a backend ws endpoint and back — proving the core attach path survives the
 // proxy hop (the Origin-stripping + Rewrite must not break the upgrade).
@@ -220,4 +285,13 @@ func getOrigin(t *testing.T, url, origin string) (int, string) {
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(b)
+}
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse url %q: %v", raw, err)
+	}
+	return u
 }
