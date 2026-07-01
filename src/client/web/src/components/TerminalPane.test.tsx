@@ -36,6 +36,22 @@ const VIEW_MODE_TEXT = "\u95B2\u89A7\u30E2\u30FC\u30C9\u306B\u623B\u308A\u307E\u
 
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import type { SessionConfig } from "../api/sessions";
+import { useDaemonStore } from "../store/daemon";
+
+// fontSessionConfig builds a minimal GET /api/session-config client view that
+// only carries the [terminal] font_family / font_size fields under test.
+function fontSessionConfig(fontFamily: string, fontSize: number): SessionConfig {
+  return {
+    projectRoots: [],
+    projectPaths: [],
+    projects: [],
+    commands: [],
+    pushCommands: [],
+    fontFamily,
+    fontSize,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Minimal fakeConn factory (fresh per test to avoid state bleed)
@@ -1316,6 +1332,74 @@ describe("TerminalPane — cross-task mobile UAC integration (gate=true)", () =>
     expect(reOpened.getAttribute("aria-pressed")).toBe("false");
     expect(helper.hasAttribute("readonly")).toBe(true);
     expect(document.activeElement).not.toBe(helper);
+    unmount();
+  });
+});
+
+// ===========================================================================
+// [terminal] font_family / font_size (settings.toml → GET /api/session-config
+// → daemon store → xterm grid). Empty / zero must leave the xterm.js default
+// untouched; configured values apply both at construction and reactively when
+// the REST fetch lands after the terminal already mounted.
+// ===========================================================================
+
+describe("[terminal] font_family / font_size apply to the xterm grid", () => {
+  let createdTerminals: Terminal[];
+  let openSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    createdTerminals = [];
+    openSpy = vi.spyOn(Terminal.prototype, "open").mockImplementation(function (this: Terminal) {
+      createdTerminals.push(this);
+    });
+    useDaemonStore.setState({ sessionConfig: null });
+  });
+
+  afterEach(() => {
+    openSpy.mockRestore();
+    useDaemonStore.setState({ sessionConfig: null });
+  });
+
+  function firstOptions(): Record<string, unknown> {
+    expect(createdTerminals.length).toBeGreaterThan(0);
+    return (createdTerminals[0] as unknown as { options: Record<string, unknown> }).options;
+  }
+
+  it("passes the configured font to new Terminal at construction", () => {
+    act(() => {
+      useDaemonStore.getState().setSessionConfig(fontSessionConfig("HackGen Console NF", 16));
+    });
+    const { conn } = makeFakeConn();
+    const { unmount } = render(<TerminalPane conn={conn} sessionId="s1" />);
+
+    const opts = firstOptions();
+    expect(opts.fontFamily).toBe("HackGen Console NF");
+    expect(opts.fontSize).toBe(16);
+    unmount();
+  });
+
+  it("leaves the xterm.js default font when config is unset (empty / 0)", () => {
+    const { conn } = makeFakeConn();
+    const { unmount } = render(<TerminalPane conn={conn} sessionId="s1" />);
+
+    const opts = firstOptions();
+    // We never forward an empty fontFamily; the grid keeps xterm.js's built-in
+    // monospace default rather than a blanked font.
+    expect(opts.fontFamily).not.toBe("");
+    unmount();
+  });
+
+  it("applies the font to a live terminal when session-config lands after mount", () => {
+    const { conn } = makeFakeConn();
+    const { unmount } = render(<TerminalPane conn={conn} sessionId="s1" />);
+    const opts = firstOptions();
+
+    act(() => {
+      useDaemonStore.getState().setSessionConfig(fontSessionConfig("Iosevka", 18));
+    });
+
+    expect(opts.fontFamily).toBe("Iosevka");
+    expect(opts.fontSize).toBe(18);
     unmount();
   });
 });

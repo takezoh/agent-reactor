@@ -79,6 +79,15 @@ type TerminalConfig struct {
 	// frame on subscribe so it can scroll up through history printed before
 	// it attached. Zero leaves the underlying emulator's default in place.
 	ScrollbackLines int `toml:"scrollback_lines"`
+	// FontFamily overrides the Web UI terminal font (a CSS font-family value,
+	// e.g. "HackGen Console NF"). Surfaced to the browser over
+	// GET /api/session-config and applied to the xterm.js grid. Empty leaves
+	// the xterm.js built-in monospace default in place.
+	FontFamily string `toml:"font_family"`
+	// FontSize sets the Web UI terminal font size in CSS px. Surfaced over
+	// GET /api/session-config. Zero leaves the xterm.js built-in default
+	// (15px) in place.
+	FontSize int `toml:"font_size"`
 }
 
 func LoadFrom(path string) (*Config, error) {

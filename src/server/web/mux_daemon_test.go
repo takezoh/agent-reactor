@@ -820,6 +820,8 @@ func TestMux_SessionConfigSurfacesConfigFields(t *testing.T) {
 		cfg.Session.PushCommands = []string{"/clear", "/compact"}
 		cfg.Projects.ProjectPaths = []string{"/home/me/repo-a", "/home/me/repo-b"}
 		cfg.Projects.ProjectRoots = []string{"/home/me/code"}
+		cfg.Terminal.FontFamily = "HackGen Console NF"
+		cfg.Terminal.FontSize = 16
 		return cfg, nil
 	})
 	defer restore()
@@ -864,6 +866,14 @@ func TestMux_SessionConfigSurfacesConfigFields(t *testing.T) {
 	// so the UI's projects.map(...) doesn't blow up.
 	if got.Projects == nil {
 		t.Errorf("Projects = nil, want non-nil array")
+	}
+	// font_family / font_size flow verbatim from cfg.Terminal so the web client
+	// can apply the [terminal] font to the xterm.js grid without a rebuild.
+	if got.FontFamily != "HackGen Console NF" {
+		t.Errorf("FontFamily = %q, want %q", got.FontFamily, "HackGen Console NF")
+	}
+	if got.FontSize != 16 {
+		t.Errorf("FontSize = %d, want 16", got.FontSize)
 	}
 }
 

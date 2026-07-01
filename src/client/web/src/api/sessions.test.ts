@@ -580,6 +580,8 @@ describe("getSessionConfig", () => {
             { path: "/home/me/extra", isGit: false, isSandboxed: true },
           ],
           push_commands: ["/clear", "/exit"],
+          font_family: "HackGen Console NF",
+          font_size: 16,
         },
         200,
       ),
@@ -595,6 +597,32 @@ describe("getSessionConfig", () => {
       { path: "/home/me/extra", isGit: false, isSandboxed: true },
     ]);
     expect(cfg.pushCommands).toEqual(["/clear", "/exit"]);
+    // [terminal] font_family / font_size flow through to the client view.
+    expect(cfg.fontFamily).toBe("HackGen Console NF");
+    expect(cfg.fontSize).toBe(16);
+  });
+
+  it("TestGetSessionConfig_FontFieldsAbsent_DefaultToUnset", async () => {
+    // Old gateway (or unset [terminal] font_* keys): font_family / font_size
+    // are absent from the wire. The client must default to "" / 0 so
+    // TerminalPane leaves the xterm.js built-in font untouched rather than
+    // blanking the grid font.
+    const fetchFn = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          default_command: "claude",
+          commands: ["claude"],
+          projects: [],
+        },
+        200,
+      ),
+    );
+    const api = makeSessionsApi(fetchFn);
+
+    const cfg = await api.getSessionConfig();
+
+    expect(cfg.fontFamily).toBe("");
+    expect(cfg.fontSize).toBe(0);
   });
 
   it("TestGetSessionConfig_401_ThrowsApiHttpError401", async () => {
