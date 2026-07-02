@@ -182,5 +182,5 @@ func fakeMintCounter() string {
 	mintSeq++
 	// json import kept for future use (payload assertions).
 	_ = json.RawMessage(nil)
-	return string(rune('a'-1+mintSeq)) // 'a', 'b', 'c' … enough for isolation tests
+	return string(rune('a' - 1 + mintSeq)) // 'a', 'b', 'c' … enough for isolation tests
 }

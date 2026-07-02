@@ -1,6 +1,6 @@
 node_modules/
 dist/*
-!dist/.gitkeep
+!dist/index.html
 coverage/
 .vite/
 *.tsbuildinfo

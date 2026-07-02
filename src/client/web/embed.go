@@ -15,11 +15,11 @@ import (
 // no inline scripts, no CDN dependencies, eliminating third-party-script
 // supply-chain risk (FR-β03 / FR-β13).
 //
-// The all: prefix keeps dist/.gitkeep (the fresh-clone placeholder that lets
-// this directive compile before Vite has run) matched — plain //go:embed
-// excludes dotfiles and would fail with "no matching files" on a bare tree.
+// dist/index.html is tracked as a fresh-clone placeholder (CI runs `go test`
+// without a Vite build); `npm run build` overwrites it with the real bundle
+// before `go build`/`make build-web` produce the shipped binary.
 //
-//go:embed all:dist
+//go:embed dist
 var Assets embed.FS
 
 // DistFS returns a sub-FS rooted at dist/ so that http.FileServer serves

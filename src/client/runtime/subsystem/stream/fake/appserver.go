@@ -211,7 +211,7 @@ func (a *AppServer) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer c.CloseNow()
+	defer func() { _ = c.CloseNow() }()
 	transport := &wsServerTransport{c: c}
 	conn := codexclient.NewConn(transport, 30*time.Second)
 	sc := &serverConn{conn: conn, server: codexclient.NewServer(conn), app: a}

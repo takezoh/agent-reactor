@@ -132,4 +132,3 @@ func (h *CLIHandle) Close() {
 	_ = h.Ptmx.Close()
 	h.Ptmx = nil
 }
-

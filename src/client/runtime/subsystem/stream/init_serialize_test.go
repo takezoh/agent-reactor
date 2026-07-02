@@ -412,4 +412,3 @@ func makeBindReq(frameID state.FrameID, startDir string) subsystem.BindRequest {
 		Plan:    state.LaunchPlan{StartDir: startDir},
 	}
 }
-
