@@ -317,6 +317,74 @@ crash 自体の直接原因は上流 lib bug だが、**被害が silent corrupt
 - 第 2 段 (VT layer 設計是正) の詳細スコープと ADR
 - `buf.Height() = 63` の**厳密な**由来 (browser resize の中間状態、と考察したが実測は未確認) — A2 で invalid state 自体が発生しなくなるので、race 詳細の実測は fix の後には不要
 
+## 他セッションからの再開情報
+
+### この issue を作成したセッションの成果
+
+作成セッション (2026-07-02) は本 issue の作成と付随する commit のみを実施しており、**実装 patch (A2 / A1) は未投入**。関連 commit:
+
+- `a847a5b` docs(issues): 本レポートを構造起点の最終方針に改訂
+- `6b3718e` docs(issues): 本レポート初版
+- `0f38bb0` chore(client): cold-start recovery の到達点を Info log 化 (crash 調査中に確認した未 commit 差分を確定した副次成果、本 crash とは無関係)
+- `0a6bb21` refactor(client/web): dist を全 ignore + `.gitkeep` 化 (Vite build と placeholder の衝突整理、本 crash とは無関係)
+
+### codex MCP thread
+
+多段検証は codex MCP に依頼して行った。同じ context で反復対話を継続したいなら thread ID: `019f2086-4879-77d1-9d82-9cb050c525ea` を渡して `mcp__codex__codex-reply` で resume する。thread は codex app-server (agent-reactor daemon 内) が生きている間有効。
+
+### verified negatives (再検証不要)
+
+以下は作成セッションで確認済で、次のセッションが再度試す必要はない:
+
+- **`SafeEmulator` (`x/vt.NewSafeEmulator`)**: `RWMutex` を掛けているだけの concurrency-safe wrapper、bounds-safe ではない。`Write()` は素で `se.Emulator.Write(data)` を呼ぶだけで今回のバグは貫通する
+- **80×24 emulator + 実 codex 起動 capture の replay**: standalone では panic しない (Phase 3)。production 特有の追加要因 (browser resize 系) が絡む
+- **「worktree cwd で必ず落ちる」静的仮説**: 07-02 01:47:50 の `profound-goblin` spawn (crash 2/2 と同一静的条件 = `exec codex --dangerously-bypass-approvals-and-sandbox -C .../worktrees/... `、resume 引数なし) が panic せず反証
+- **上流 HEAD (2026-06-22 `f39628c8`)**: `buffer.go` 未修正で同じコード。`go get -u` では直らない
+- **`SetLogger` / `Screen.buf` wrap / library 全替**: いずれも該当バグに無効か過剰コスト (§修正方針 の「明示的に採用しない案」参照)
+
+### 現状の live server 状態 (作成セッション時点)
+
+- 07-02 01:26:42 に手動再起動 (binary は observability log 追加分の rebuild)、以降 crash なし
+- 07-02 01:47:50 の新規 worktree codex spawn (`profound-goblin`, thread `019f2082-cbd4-...`) は panic なしで稼働継続
+- 依然として race 経路は残存、trigger を引かないだけの状態
+- ライブラリ pin: `ultraviolet@v0.0.0-20260303162955-0b88c25f3fff`, `x/vt@v0.0.0-20260615091924-bb3af1bbe712`, `x/ansi@v0.11.7` (`src/go.mod`)
+- server.log path: `/home/dev/.local/state/agent-reactor/server.log{,.1..5}`
+
+### TBD (次セッションで判断)
+
+- **fork 先 GitHub organization / repo 名**: 現時点で未決定 (`takezoh/x-vt`, `takezoh/ultraviolet` あたりの命名になりそうだが git remote は未追加)
+- **上流 PR の tone と scope**: producer 側 (`x/vt`) と consumer 側 (`ultraviolet`) を 1 PR ずつに分けるか、それぞれ ADR / 補足 test も含めるかの判断
+- **`feedSafe` 撤去のタイミング**: 順序 A (A2/A1 投入・動作確認後) を推奨しているが、tap の silent OSC loss をどこまで許容するかで順序 B (先に撤去して panic を露出) も選択肢
+- **第 2 段の開始時期**: 本 issue closed → 別 issue を切るタイミング。tap 再設計と `Emulator` interface 分割は独立して進められるが、ADR 必要
+
+### 検証環境の再構築 (scratchpad `/tmp/claude-.../scratchpad/vt-repro/` が失われた場合)
+
+- **Phase 1** (bounds bug 直接再現): 空 module + `github.com/charmbracelet/ultraviolet` を依存に追加 (作成セッション時 `v0.0.0-20260303162955-0b88c25f3fff`) して以下:
+
+  ```go
+  b := uv.NewBuffer(80, 63)
+  area := uv.Rect(0, 0, 80, 64)
+  b.InsertLineArea(0, 1, nil, area) // → runtime error: index out of range [63] with length 63
+  ```
+
+- **Phase 2** (codex 起動 escape capture): container `d73e8870030b` (`reactor-shared`) 上で:
+
+  ```
+  docker exec -u ubuntu -w /home/dev/dev/agent-grid/.agent-reactor/worktrees/<any> \
+      d73e8870030b bash -c 'export TERM=xterm-256color; \
+      timeout 1.5 script -q -c "stty cols 80 rows 24; \
+      codex --dangerously-bypass-approvals-and-sandbox 2>&1" /tmp/probe.log \
+      >/dev/null 2>&1; base64 -w0 /tmp/probe.log'
+  ```
+
+- **Phase 3** (replay): `vt.NewEmulator(80, 24)` + `em.SetScrollbackSize(10000)` + `go io.Copy(io.Discard, em)` で drainer を立ててから `em.Write(bytes)`。CSI reply pipe を drain しないと block する。1×1 emulator (`vt.NewEmulator(1, 1)`) では両 capture とも panic する
+
+### memory への相互参照
+
+作成セッションで残した persistent memory (auto memory `~/.claude/projects/-home-dev-dev-agent-grid/memory/`):
+
+- `feedback_no_recover_for_reproducible_bugs.md` — 再現性のある panic に defer recover を提案するなという教訓 (本 issue の C 案却下と同根)
+
 ## 変更履歴
 
 - **2026-07-02 (初版)**: 三層防御 (A1 + A2 + C + D) を推奨
