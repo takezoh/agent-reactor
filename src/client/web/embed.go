@@ -15,7 +15,11 @@ import (
 // no inline scripts, no CDN dependencies, eliminating third-party-script
 // supply-chain risk (FR-β03 / FR-β13).
 //
-//go:embed dist
+// The all: prefix keeps dist/.gitkeep (the fresh-clone placeholder that lets
+// this directive compile before Vite has run) matched — plain //go:embed
+// excludes dotfiles and would fail with "no matching files" on a bare tree.
+//
+//go:embed all:dist
 var Assets embed.FS
 
 // DistFS returns a sub-FS rooted at dist/ so that http.FileServer serves
